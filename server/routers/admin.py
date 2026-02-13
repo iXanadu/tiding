@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.config import settings
+from server.dependencies import admin_or_open
 from server.models import (
     BulkDeleteRequest,
     BulkDeleteResponse,
@@ -34,6 +35,7 @@ async def list_memories_endpoint(
     sort_order: str = Query("asc"),
     include_value: bool = Query(False),
     value_max_length: int = Query(200, ge=1, le=10000),
+    _caller=Depends(admin_or_open),
 ):
     logger.debug(f"LIST ns={namespace} scope={scope} prefix={key_prefix}")
     try:
@@ -61,6 +63,7 @@ async def list_memories_endpoint(
 async def stats_endpoint(
     namespace: str | None = Query(None),
     by_scope: bool = Query(False),
+    _caller=Depends(admin_or_open),
 ):
     logger.debug(f"STATS ns={namespace} by_scope={by_scope}")
     try:
@@ -72,7 +75,10 @@ async def stats_endpoint(
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
-async def bulk_delete_endpoint(req: BulkDeleteRequest):
+async def bulk_delete_endpoint(
+    req: BulkDeleteRequest,
+    _caller=Depends(admin_or_open),
+):
     logger.debug(f"BULK DELETE ns={req.namespace} prefix={req.key_prefix}")
     try:
         deleted = await bulk_delete(
@@ -91,6 +97,7 @@ async def bulk_delete_endpoint(req: BulkDeleteRequest):
 @router.post("/cleanup", response_model=CleanupResponse)
 async def cleanup_endpoint(
     batch_size: int = Query(None, ge=1, le=10000),
+    _caller=Depends(admin_or_open),
 ):
     logger.debug("CLEANUP triggered manually")
     try:

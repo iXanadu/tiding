@@ -154,6 +154,8 @@ class PrincipalCreate(BaseModel):
     is_admin: bool = False
     password: str | None = None
     token: str | None = None
+    read_namespaces: list[str] | None = None
+    write_namespaces: list[str] | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -195,6 +197,12 @@ class PrincipalResponse(BaseModel):
 class PrincipalListResponse(BaseModel):
     status: str
     principals: list[PrincipalResponse]
+
+
+class PrincipalCreateResponse(BaseModel):
+    status: str
+    principal: PrincipalResponse
+    raw_token: str | None = None
 
 
 class AliasCreate(BaseModel):

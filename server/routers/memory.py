@@ -1,7 +1,8 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from server.dependencies import check_namespace_access, get_current_principal
 from server.models import (
     MemoryForgetRequest,
     MemoryForgetResponse,
@@ -25,8 +26,9 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 
 @router.post("/set", response_model=MemorySetResponse)
-async def set_memory(req: MemorySetRequest):
+async def set_memory(req: MemorySetRequest, request: Request):
     logger.debug(f"SET ns={req.namespace} key={req.key} user_id={req.user_id} scope={req.scope}")
+    check_namespace_access(get_current_principal(request), req.namespace, "write")
     try:
         key = await memory_set(
             namespace=req.namespace,
@@ -45,8 +47,9 @@ async def set_memory(req: MemorySetRequest):
 
 
 @router.post("/get", response_model=MemoryGetResponse)
-async def get_memory(req: MemoryGetRequest):
+async def get_memory(req: MemoryGetRequest, request: Request):
     logger.debug(f"GET ns={req.namespace} key={req.key} scope={req.scope} user_id={req.user_id}")
+    check_namespace_access(get_current_principal(request), req.namespace, "read")
     try:
         item = await memory_get(
             namespace=req.namespace,
@@ -63,8 +66,9 @@ async def get_memory(req: MemoryGetRequest):
 
 
 @router.post("/search", response_model=MemorySearchResponse)
-async def search_memory(req: MemorySearchRequest):
+async def search_memory(req: MemorySearchRequest, request: Request):
     logger.debug(f"SEARCH ns={req.namespace} query={req.query!r} user_id={req.user_id} scope={req.scope}")
+    check_namespace_access(get_current_principal(request), req.namespace, "read")
     try:
         results = await memory_search(
             namespace=req.namespace,
@@ -80,8 +84,9 @@ async def search_memory(req: MemorySearchRequest):
 
 
 @router.post("/forget", response_model=MemoryForgetResponse)
-async def forget_memory(req: MemoryForgetRequest):
+async def forget_memory(req: MemoryForgetRequest, request: Request):
     logger.debug(f"FORGET ns={req.namespace} key={req.key} scope={req.scope} user_id={req.user_id}")
+    check_namespace_access(get_current_principal(request), req.namespace, "write")
     try:
         deleted = await memory_forget(
             namespace=req.namespace,

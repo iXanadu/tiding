@@ -11,6 +11,7 @@ async def authed_client(services):
     """Client for an app with ENGRAM_API_TOKEN='test-secret'."""
     with patch("server.auth.settings") as mock_settings:
         mock_settings.api_token = "test-secret"
+        mock_settings.require_auth = False
         from server.main import app
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
