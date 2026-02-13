@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Optional API token — if set, all requests must include Authorization: Bearer <token>
     api_token: str = ""
 
+    # Require principal-based auth (Phase 2 enforcement; reserved in Phase 1)
+    require_auth: bool = False
+
     # Expiration cleanup
     cleanup_enabled: bool = True
     cleanup_interval_hours: int = 6

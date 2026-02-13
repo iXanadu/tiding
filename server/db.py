@@ -37,6 +37,55 @@ CREATE INDEX IF NOT EXISTS idx_memories_search_text_trgm ON memories
     USING gin (search_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories (expires_at)
     WHERE expires_at IS NOT NULL;
+
+-- Principals: identity & access control
+CREATE TABLE IF NOT EXISTS principals (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                TEXT NOT NULL UNIQUE,
+    type                TEXT NOT NULL CHECK (type IN ('human', 'agent')),
+    is_admin            BOOLEAN NOT NULL DEFAULT FALSE,
+    token_hash          TEXT,
+    password_hash       TEXT,
+    read_namespaces     TEXT[] NOT NULL DEFAULT '{}',
+    write_namespaces    TEXT[] NOT NULL DEFAULT '{}',
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_principals_type ON principals (type);
+CREATE INDEX IF NOT EXISTS idx_principals_active ON principals (id)
+    WHERE active = TRUE;
+
+CREATE TABLE IF NOT EXISTS principal_aliases (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    principal_id        UUID NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    alias               TEXT NOT NULL,
+    source              TEXT NOT NULL,
+    UNIQUE (alias, source)
+);
+CREATE INDEX IF NOT EXISTS idx_principal_aliases_principal ON principal_aliases (principal_id);
+CREATE INDEX IF NOT EXISTS idx_principal_aliases_alias ON principal_aliases (alias);
+
+CREATE TABLE IF NOT EXISTS consent_grants (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    granter_id          UUID NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    grantee_id          UUID NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+    granted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ,
+    revoked_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_consent_grants_granter ON consent_grants (granter_id);
+CREATE INDEX IF NOT EXISTS idx_consent_grants_grantee ON consent_grants (grantee_id);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    principal_id            UUID REFERENCES principals(id) ON DELETE SET NULL,
+    action                  TEXT NOT NULL,
+    target_principal_id     UUID REFERENCES principals(id) ON DELETE SET NULL,
+    detail                  TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_principal ON audit_log (principal_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at);
 """
 
 # Migration: add namespace column to tables created before this column existed.

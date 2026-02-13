@@ -144,3 +144,86 @@ class BulkDeleteResponse(BaseModel):
 class CleanupResponse(BaseModel):
     status: str
     deleted_count: int
+
+
+# --- Principal models ---
+
+class PrincipalCreate(BaseModel):
+    name: str
+    type: str
+    is_admin: bool = False
+    password: str | None = None
+    token: str | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("name must not be empty")
+        return v.strip().lower()
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def validate_type(cls, v):
+        if v not in ("human", "agent"):
+            raise ValueError("type must be 'human' or 'agent'")
+        return v
+
+
+class PrincipalUpdate(BaseModel):
+    is_admin: bool | None = None
+    password: str | None = None
+    token: str | None = None
+    read_namespaces: list[str] | None = None
+    write_namespaces: list[str] | None = None
+    active: bool | None = None
+
+
+class PrincipalResponse(BaseModel):
+    id: str
+    name: str
+    type: str
+    is_admin: bool
+    has_token: bool
+    has_password: bool
+    read_namespaces: list[str]
+    write_namespaces: list[str]
+    active: bool
+    created_at: datetime
+
+
+class PrincipalListResponse(BaseModel):
+    status: str
+    principals: list[PrincipalResponse]
+
+
+class AliasCreate(BaseModel):
+    alias: str
+    source: str
+
+    @field_validator("alias", mode="before")
+    @classmethod
+    def alias_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("alias must not be empty")
+        return v.strip()
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def source_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("source must not be empty")
+        return v.strip()
+
+
+class AliasResponse(BaseModel):
+    id: str
+    principal_id: str
+    alias: str
+    source: str
+
+
+class TokenResponse(BaseModel):
+    status: str
+    principal_name: str
+    raw_token: str
