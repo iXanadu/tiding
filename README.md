@@ -77,10 +77,11 @@ Store or update a memory.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `namespace` | string | required | System identifier (`claude-code`, `ha`, etc.) |
 | `key` | string | required | Unique identifier (snake_case recommended) |
 | `value` | string | required | The memory content |
-| `scope` | string | `"user"` | Grouping dimension |
-| `user_id` | string | `"default"` | User/agent isolation |
+| `scope` | string | `"user"` | Visibility level (`shared`, `machine`, `project`, `user`) |
+| `user_id` | string | `"default"` | Identity within namespace |
 | `tags` | string | `""` | Comma-separated keywords for search boosting |
 | `tags_search` | string | `""` | Additional search-optimized tags |
 | `expiration_days` | int | `180` | Auto-expire after N days (0 = never) |
@@ -88,7 +89,7 @@ Store or update a memory.
 ```bash
 curl -X POST http://localhost:8920/memory/set \
   -H "Content-Type: application/json" \
-  -d '{"key": "user_location", "value": "Portland, OR", "tags": "home, address"}'
+  -d '{"namespace": "my-agent", "key": "user_location", "value": "Portland, OR", "tags": "home, address"}'
 ```
 
 ### `POST /memory/get`
@@ -97,8 +98,10 @@ Retrieve a memory by exact key.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `namespace` | string | required | System identifier |
 | `key` | string | required | Exact key to look up |
-| `user_id` | string | `"default"` | User/agent scope |
+| `scope` | string | `"user"` | Scope filter |
+| `user_id` | string | `"default"` | Identity within namespace |
 
 ### `POST /memory/search`
 
@@ -106,15 +109,16 @@ Semantic search across memories.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `namespace` | string | required | System identifier |
 | `query` | string | required | Natural language search query |
 | `scope` | string | `"user"` | Scope filter |
-| `user_id` | string | `"default"` | User/agent scope |
+| `user_id` | string | `"default"` | Identity within namespace |
 | `limit` | int | `5` | Max results |
 
 ```bash
 curl -X POST http://localhost:8920/memory/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "where do I live", "limit": 3}'
+  -d '{"namespace": "my-agent", "query": "where do I live", "limit": 3}'
 ```
 
 ### `POST /memory/forget`
@@ -123,8 +127,10 @@ Delete a memory by key.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `namespace` | string | required | System identifier |
 | `key` | string | required | Key to delete |
-| `user_id` | string | `"default"` | User/agent scope |
+| `scope` | string | `"user"` | Scope filter |
+| `user_id` | string | `"default"` | Identity within namespace |
 
 ## Configuration
 
@@ -171,7 +177,31 @@ Pyscript client + Blueprint for HA voice assistants. See [integrations/homeassis
 
 ### Claude Code
 
-Use via [claude-memory-mcp](https://github.com/ixanadu/claude-memory-mcp), an MCP server that wraps the engram API.
+MCP server for Claude Code lives in [integrations/claude-code/](integrations/claude-code/). Install it in its own pyenv virtualenv:
+
+```bash
+pyenv virtualenv 3.12 cc-memory-3.12
+cd integrations/claude-code
+PYENV_VERSION=cc-memory-3.12 pip install -e .
+```
+
+Then register in `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "claude-memory": {
+      "type": "stdio",
+      "command": "path/to/pyenv/versions/cc-memory-3.12/bin/python",
+      "args": ["-m", "engram_mcp.server"],
+      "env": {
+        "memory_api_url": "http://localhost:8920",
+        "memory_api_token": ""
+      }
+    }
+  }
+}
+```
 
 ### Custom
 
@@ -215,14 +245,19 @@ engram/
 │   ├── db.py                        # asyncpg pool, schema creation
 │   ├── models.py                    # Pydantic request/response models
 │   ├── embeddings.py                # Ollama embedding client
-│   ├── auth.py                      # Optional bearer token middleware
+│   ├── auth.py                      # Principal auth middleware (two-mode)
+│   ├── dependencies.py              # Auth helpers (require_admin, etc.)
 │   ├── routers/
 │   │   ├── memory.py                # /memory/* CRUD endpoints
+│   │   ├── admin.py                 # /admin/memories management
+│   │   ├── principals.py            # /admin/principals CRUD
 │   │   └── health.py                # /health endpoint
 │   └── services/
-│       └── memory_service.py        # Core CRUD + hybrid search logic
+│       ├── memory_service.py        # Core CRUD + hybrid search logic
+│       └── principal_service.py     # Identity + access control
 ├── integrations/
 │   ├── homeassistant/               # HA Pyscript client + Blueprint
+│   ├── claude-code/                 # MCP server for Claude Code (engram-mcp)
 │   └── README.md                    # How to build a custom wrapper
 ├── scripts/                         # Service management (install/start/restart/uninstall)
 ├── launchd/com.engram.plist         # macOS LaunchDaemon template
