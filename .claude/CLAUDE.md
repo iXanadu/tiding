@@ -5,17 +5,22 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + Ollama embed
 ## Project Structure
 
 - `server/` — FastAPI app (config, db, embeddings, auth, routers, services)
+  - `server/services/` — memory_service.py (all CRUD), principal_service.py (identity/auth)
+  - `server/routers/` — memory.py, admin.py, principals.py
+  - `server/auth.py` — PrincipalAuthMiddleware (two-mode: enrichment vs enforcement)
+  - `server/dependencies.py` — auth helpers (get_current_principal, require_admin, check_namespace_access)
 - `integrations/homeassistant/` — Pyscript client + Blueprint for HA voice assistants
-- `integrations/README.md` — How to build a custom integration wrapper
+- `integrations/claude-code/` — MCP bridge (engram-mcp) for Claude Code
 - `scripts/` — install/start/restart/uninstall + ollama-warmup + migrate_ha_memory
 - `launchd/` + `systemd/` — Service templates
-- `tests/` — 28 tests (API, auth, embeddings, e2e, memory_service)
-- `docs/` — System prompts, model selection notes
+- `tests/` — 88 tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, principals_api, permissions, bootstrap)
+- `docs/` — System prompts, model selection, project-migration guide, CLAUDE.md.global
 
 ## Commands
 
 - Run server: `uvicorn server.main:app --host 0.0.0.0 --port 8920`
-- Run tests: `pytest tests/ -v`
+- Run server tests: `pytest tests/ -v`
+- Run MCP tests: `cd integrations/claude-code && PYENV_VERSION=cc-memory-3.12 pytest tests/ -v`
 - Health check: `curl http://localhost:8920/health`
 
 ## Conventions
@@ -40,18 +45,32 @@ Three independent dimensions scope every memory:
 
 UNIQUE constraint: `(namespace, key, scope, user_id)`
 
+## Principals (Auth System)
+
+Identity and access control for the API. Two phases implemented:
+
+- **Tables**: principals, principal_aliases, consent_grants, audit_log
+- **Config**: `ENGRAM_REQUIRE_AUTH` (bool) — when true, enforces principal token auth on all requests
+- **Bootstrap**: auto-creates `_bootstrap` admin when require_auth=true + no admins exist
+- **Endpoints**: full CRUD under `/admin/principals` (9 endpoints)
+- **Namespace enforcement**: read/write permission checks on memory and admin endpoints
+- **Token format**: `engram_<random>` (bcrypt-hashed in DB, raw shown once at creation)
+
+Auth modes:
+- `require_auth=false` (default): legacy `ENGRAM_API_TOKEN` check, anonymous allowed if no token configured
+- `require_auth=true`: Bearer token must match a principal in the principals table
+
 ## Critical Gotchas
 
 - `namespace` is **required** on all API calls — no default. Omitting it returns 422.
-- The `engram` DB and `ha_memory` DB both use port 5432. Don't confuse them.
-- ha-semantic-memory production at `/opt/srv/ha-semantic-memory` is SEPARATE — don't touch it.
-- Both engram and ha-semantic-memory default to port 8920 — can't run simultaneously without overriding `ENGRAM_PORT`.
 - Pyscript `@service` decorators MUST use `supports_response="optional"` for HA 2024.10+.
+- Dev (`~/projects/engram`) and prod (`/opt/srv/engram`) can both be `pip install -e` in the same pyenv virtualenv — last install wins for import resolution. After editing locally, run `pip install -e .` from dev dir.
 
 ## Related Projects
 
-- `~/projects/ha-semantic-memory` — The original (superseded). Config prefix `HAMEM_`, DB `ha_memory`.
-- `integrations/claude-code/` — MCP bridge (engram-mcp) that CC uses to talk to engram. Installed in `cc-memory-3.12` pyenv. Replaces the old standalone `claude-memory-mcp` repo.
+- `integrations/claude-code/` — MCP bridge (engram-mcp) that CC uses to talk to engram. Installed in `cc-memory-3.12` pyenv. Replaces the old standalone `claude-memory-mcp` repo (archived).
+- ha-semantic-memory — The original (deprecated, archived on GitHub 2026-02-13). Data migrated to engram DB.
+- `docs/CLAUDE.md.global` — Global `~/.claude/CLAUDE.md` template for new machines. Copy to `~/.claude/CLAUDE.md` after cloning.
 
 ## State Management
 
