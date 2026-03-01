@@ -18,14 +18,14 @@ async def _cleanup_principal(name: str):
 
 @pytest.mark.asyncio
 async def test_password_hash_roundtrip(db_pool):
-    hashed = ps._hash_password("secret123")
-    assert ps._check_password("secret123", hashed)
-    assert not ps._check_password("wrong", hashed)
+    hashed = await ps._hash_password("secret123")
+    assert await ps._check_password("secret123", hashed)
+    assert not await ps._check_password("wrong", hashed)
 
 
 @pytest.mark.asyncio
 async def test_token_format_and_hash(db_pool):
-    raw, hashed = ps.generate_token()
+    raw, hashed = await ps.generate_token()
     assert raw.startswith("engram_")
     assert len(raw) > 20
     import bcrypt

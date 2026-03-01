@@ -1,14 +1,36 @@
+import asyncio
+
 import httpx
 
 
 class MemoryClient:
-    """Async HTTP client for the engram semantic memory REST API."""
+    """Async HTTP client for the engram semantic memory REST API.
+
+    Uses a persistent httpx.AsyncClient to reuse TCP connections across calls,
+    avoiding connection setup overhead when multiple calls fire in parallel.
+    """
 
     def __init__(self, base_url: str = "http://localhost:8920", api_token: str = ""):
         self.base_url = base_url.rstrip("/")
-        self._headers = {}
+        headers = {}
         if api_token:
-            self._headers["Authorization"] = f"Bearer {api_token}"
+            headers["Authorization"] = f"Bearer {api_token}"
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, headers=headers, timeout=30.0,
+        )
+
+    async def _request(self, method: str, path: str, **kwargs) -> dict:
+        """Send a request with one retry on transient connection/timeout errors."""
+        for attempt in range(2):
+            try:
+                resp = await self._client.request(method, path, **kwargs)
+                resp.raise_for_status()
+                return resp.json()
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+                    continue
+                raise
 
     async def store(
         self,
@@ -19,21 +41,18 @@ class MemoryClient:
         user_id: str,
         tags: str = "",
     ) -> dict:
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.post(
-                f"{self.base_url}/memory/set",
-                json={
-                    "namespace": namespace,
-                    "key": key,
-                    "value": value,
-                    "scope": scope,
-                    "user_id": user_id,
-                    "tags": tags,
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await self._request(
+            "POST",
+            "/memory/set",
+            json={
+                "namespace": namespace,
+                "key": key,
+                "value": value,
+                "scope": scope,
+                "user_id": user_id,
+                "tags": tags,
+            },
+        )
 
     async def get(
         self,
@@ -42,19 +61,16 @@ class MemoryClient:
         scope: str,
         user_id: str,
     ) -> dict:
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.post(
-                f"{self.base_url}/memory/get",
-                json={
-                    "namespace": namespace,
-                    "key": key,
-                    "scope": scope,
-                    "user_id": user_id,
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await self._request(
+            "POST",
+            "/memory/get",
+            json={
+                "namespace": namespace,
+                "key": key,
+                "scope": scope,
+                "user_id": user_id,
+            },
+        )
 
     async def search(
         self,
@@ -64,20 +80,17 @@ class MemoryClient:
         user_id: str,
         limit: int = 5,
     ) -> dict:
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.post(
-                f"{self.base_url}/memory/search",
-                json={
-                    "namespace": namespace,
-                    "query": query,
-                    "scope": scope,
-                    "user_id": user_id,
-                    "limit": limit,
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await self._request(
+            "POST",
+            "/memory/search",
+            json={
+                "namespace": namespace,
+                "query": query,
+                "scope": scope,
+                "user_id": user_id,
+                "limit": limit,
+            },
+        )
 
     async def forget(
         self,
@@ -86,25 +99,19 @@ class MemoryClient:
         scope: str,
         user_id: str,
     ) -> dict:
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.post(
-                f"{self.base_url}/memory/forget",
-                json={
-                    "namespace": namespace,
-                    "key": key,
-                    "scope": scope,
-                    "user_id": user_id,
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await self._request(
+            "POST",
+            "/memory/forget",
+            json={
+                "namespace": namespace,
+                "key": key,
+                "scope": scope,
+                "user_id": user_id,
+            },
+        )
 
     async def health(self) -> dict:
-        async with httpx.AsyncClient(headers=self._headers) as client:
-            resp = await client.get(
-                f"{self.base_url}/health",
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await self._request("GET", "/health", timeout=10.0)
+
+    async def close(self):
+        await self._client.aclose()

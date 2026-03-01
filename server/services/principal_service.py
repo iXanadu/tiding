@@ -1,5 +1,6 @@
 """Principal management service: CRUD, token/password hashing, alias resolution."""
 
+import asyncio
 import secrets
 from uuid import UUID
 
@@ -10,18 +11,28 @@ from server.db import get_pool
 
 # --- Hashing helpers ---
 
-def _hash_password(plaintext: str) -> str:
+def _hash_password_sync(plaintext: str) -> str:
     return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
 
 
-def _check_password(plaintext: str, hashed: str) -> bool:
+async def _hash_password(plaintext: str) -> str:
+    return await asyncio.to_thread(_hash_password_sync, plaintext)
+
+
+def _check_password_sync(plaintext: str, hashed: str) -> bool:
     return bcrypt.checkpw(plaintext.encode(), hashed.encode())
 
 
-def generate_token() -> tuple[str, str]:
+async def _check_password(plaintext: str, hashed: str) -> bool:
+    return await asyncio.to_thread(_check_password_sync, plaintext, hashed)
+
+
+async def generate_token() -> tuple[str, str]:
     """Return (raw_token, bcrypt_hash). The raw token is shown once at creation."""
     raw = "engram_" + secrets.token_urlsafe(32)
-    hashed = bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
+    hashed = await asyncio.to_thread(
+        lambda: bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
+    )
     return raw, hashed
 
 
@@ -64,11 +75,13 @@ async def create_principal(
     raw_token = None
     if token:
         raw_token = token
-        token_hash = bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode()
+        token_hash = await asyncio.to_thread(
+            lambda: bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode()
+        )
     elif type == "agent":
-        raw_token, token_hash = generate_token()
+        raw_token, token_hash = await generate_token()
 
-    password_hash = _hash_password(password) if password else None
+    password_hash = await _hash_password(password) if password else None
 
     rns = read_namespaces or []
     wns = write_namespaces or []
@@ -108,7 +121,10 @@ async def get_principal_by_token(raw_token: str) -> dict | None:
             "SELECT * FROM principals WHERE active = TRUE AND token_hash IS NOT NULL"
         )
     for row in rows:
-        if bcrypt.checkpw(raw_token.encode(), row["token_hash"].encode()):
+        match = await asyncio.to_thread(
+            bcrypt.checkpw, raw_token.encode(), row["token_hash"].encode()
+        )
+        if match:
             return _principal_dict(row)
     return None
 
@@ -160,12 +176,14 @@ async def update_principal(
         idx += 1
     if password is not None:
         sets.append(f"password_hash = ${idx}")
-        params.append(_hash_password(password))
+        params.append(await _hash_password(password))
         idx += 1
     if token is not None:
         raw_token = token
         sets.append(f"token_hash = ${idx}")
-        params.append(bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode())
+        params.append(await asyncio.to_thread(
+            lambda: bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode()
+        ))
         idx += 1
     if read_namespaces is not None:
         sets.append(f"read_namespaces = ${idx}")
@@ -305,6 +323,6 @@ async def verify_password(name: str, password: str) -> dict | None:
         )
     if not row or not row["password_hash"]:
         return None
-    if _check_password(password, row["password_hash"]):
+    if await _check_password(password, row["password_hash"]):
         return _principal_dict(row)
     return None

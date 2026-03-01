@@ -110,7 +110,7 @@ async def regenerate_token(
     name: str,
     _caller=Depends(admin_or_open),
 ):
-    raw, _ = ps.generate_token()
+    raw, _ = await ps.generate_token()
     updated, _ = await ps.update_principal(name=name, token=raw)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Principal '{name}' not found.")
