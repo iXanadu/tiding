@@ -105,7 +105,7 @@ async def test_health(mock_api, client):
     mock_api.get("/health").mock(
         return_value=httpx.Response(
             200,
-            json={"status": "ok", "checks": {"postgres": True, "ollama": True}},
+            json={"status": "ok", "checks": {"postgres": True, "embeddings": True}},
         )
     )
     result = await client.health()

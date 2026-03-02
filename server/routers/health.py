@@ -1,14 +1,14 @@
 from fastapi import APIRouter
 
 from server.db import get_pool
-from server.embeddings import check_health as check_ollama
+from server.embeddings import check_health as check_embeddings
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
 async def health():
-    checks = {"postgres": False, "ollama": False}
+    checks = {"postgres": False, "embeddings": False}
 
     try:
         pool = await get_pool()
@@ -18,7 +18,7 @@ async def health():
     except Exception:
         pass
 
-    checks["ollama"] = await check_ollama()
+    checks["embeddings"] = await check_embeddings()
 
     ok = all(checks.values())
     return {"status": "ok" if ok else "degraded", "checks": checks}

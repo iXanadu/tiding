@@ -129,7 +129,7 @@ async def test_memory_status_ok(respx_mock):
     respx_mock.get("/health").mock(
         return_value=httpx.Response(
             200,
-            json={"status": "ok", "checks": {"postgres": True, "ollama": True}},
+            json={"status": "ok", "checks": {"postgres": True, "embeddings": True}},
         )
     )
     result = await memory_status()

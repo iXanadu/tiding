@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "ENGRAM_", "env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_prefix": "ENGRAM_", "env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     # PostgreSQL
     db_host: str = "localhost"
@@ -11,9 +11,8 @@ class Settings(BaseSettings):
     db_user: str = "engram"
     db_password: str = "engram"
 
-    # Ollama
-    ollama_url: str = "http://localhost:11434"
-    embed_model: str = "nomic-embed-text"
+    # Embeddings
+    embed_model: str = "nomic-ai/nomic-embed-text-v1.5"
 
     # Server
     host: str = "0.0.0.0"
