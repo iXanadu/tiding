@@ -89,6 +89,7 @@ class MemoryForgetResponse(BaseModel):
 # --- Admin models ---
 
 class MemoryListItem(BaseModel):
+    namespace: str
     key: str
     value: str | None = None
     scope: str
@@ -97,6 +98,22 @@ class MemoryListItem(BaseModel):
     created_at: datetime
     last_used_at: datetime
     expires_at: datetime | None = None
+
+
+class MemoryUpdateRequest(BaseModel):
+    namespace: str
+    key: str
+    scope: str
+    user_id: str
+    new_namespace: str | None = None
+    new_scope: str | None = None
+    new_user_id: str | None = None
+    new_key: str | None = None
+    new_tags: str | None = None
+
+
+class MemoryUpdateResponse(BaseModel):
+    status: str
 
 
 class MemoryListResponse(BaseModel):

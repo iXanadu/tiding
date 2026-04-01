@@ -28,6 +28,7 @@
     <style>
         [x-cloak] { display: none !important; }
         body { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
+        .modal-backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
     </style>
 </head>
 <body class="bg-engram-darker text-slate-200 min-h-screen" x-data="engramDashboard()" x-init="init()" x-cloak>
@@ -64,7 +65,7 @@
         <section>
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Namespaces</h2>
-                <button @click="namespace = ''; fetchMemories()"
+                <button @click="namespace = ''; offset = 0; fetchMemories()"
                         x-show="namespace"
                         class="text-xs text-engram-accent hover:text-engram-accent/80 transition">
                     clear filter
@@ -96,7 +97,7 @@
 
         <!-- Memory Browser -->
         <section class="bg-engram-surface border border-engram-border rounded-lg">
-            <!-- Filters -->
+            <!-- Filters Row 1 -->
             <div class="p-4 border-b border-engram-border flex flex-wrap gap-3 items-end">
                 <div>
                     <label class="block text-xs text-slate-500 mb-1">Namespace</label>
@@ -126,27 +127,61 @@
                            placeholder="any"
                            class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-32">
                 </div>
-                <div class="flex-1 min-w-[200px]">
+                <div>
                     <label class="block text-xs text-slate-500 mb-1">Key prefix</label>
                     <input type="text" x-model.debounce.400ms="keyPrefix"
                            @input="offset = 0; fetchMemories()"
                            placeholder="e.g. session/"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-40">
+                </div>
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-xs text-slate-500 mb-1">Search (key + value)</label>
+                    <input type="text" x-model.debounce.400ms="search"
+                           @input="offset = 0; fetchMemories()"
+                           placeholder="fuzzy search across keys and values..."
                            class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
                 </div>
             </div>
 
+            <!-- Filters Row 2: Date Range -->
+            <div class="px-4 py-2.5 border-b border-engram-border/50 flex flex-wrap gap-2 items-center">
+                <span class="text-xs text-slate-500 mr-1">Created:</span>
+                <template x-for="preset in datePresets" :key="preset.label">
+                    <button @click="applyDatePreset(preset)"
+                            class="px-2.5 py-1 rounded text-xs border transition"
+                            :class="activeDatePreset === preset.label
+                                ? 'border-engram-accent text-engram-accent bg-engram-accent/10'
+                                : 'border-engram-border text-slate-400 hover:text-slate-200 hover:border-engram-accent/50'"
+                            x-text="preset.label">
+                    </button>
+                </template>
+                <span class="text-slate-600 mx-1">|</span>
+                <div class="flex items-center gap-1.5">
+                    <input type="date" x-model="customDateFrom"
+                           @change="applyCustomDates()"
+                           class="bg-engram-dark border border-engram-border rounded px-2 py-1 text-xs text-slate-300 w-[130px]">
+                    <span class="text-slate-500 text-xs">to</span>
+                    <input type="date" x-model="customDateTo"
+                           @change="applyCustomDates()"
+                           class="bg-engram-dark border border-engram-border rounded px-2 py-1 text-xs text-slate-300 w-[130px]">
+                </div>
+                <button x-show="activeDatePreset || customDateFrom || customDateTo"
+                        @click="clearDateFilter()"
+                        class="text-xs text-red-400/70 hover:text-red-400 transition ml-1">
+                    clear dates
+                </button>
+            </div>
+
             <!-- Table -->
             <div class="overflow-x-auto">
-                <div x-show="!namespace && memories.length === 0 && !loading" class="py-12 text-center text-slate-500 text-sm">
-                    Select a namespace to browse memories.
-                </div>
-                <table x-show="namespace" class="w-full text-sm">
+                <table class="w-full text-sm">
                     <thead>
                         <tr class="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-engram-border">
                             <th class="px-4 py-2.5 cursor-pointer hover:text-slate-300 select-none" @click="toggleSort('key')">
                                 Key
                                 <span x-show="sortBy === 'key'" x-text="sortOrder === 'asc' ? ' &uarr;' : ' &darr;'"></span>
                             </th>
+                            <th class="px-4 py-2.5">NS</th>
                             <th class="px-4 py-2.5">Scope</th>
                             <th class="px-4 py-2.5">User</th>
                             <th class="px-4 py-2.5">Tags</th>
@@ -159,26 +194,35 @@
                                 <span x-show="sortBy === 'last_used_at'" x-text="sortOrder === 'asc' ? ' &uarr;' : ' &darr;'"></span>
                             </th>
                             <th class="px-4 py-2.5">Expires</th>
+                            <th class="px-4 py-2.5 w-16"></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <template x-for="(m, idx) in memories" :key="m.key + m.scope + m.user_id">
+                        <template x-for="(m, idx) in memories" :key="m.namespace + '|' + m.key + '|' + m.scope + '|' + m.user_id">
                             <tr>
-                                <td colspan="7" class="p-0">
+                                <td colspan="9" class="p-0">
                                     <div class="border-b border-engram-border/50">
-                                        <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] cursor-pointer hover:bg-engram-dark/40 transition"
+                                        <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] cursor-pointer hover:bg-engram-dark/40 transition"
                                              @click="expandRow(m)">
-                                            <div class="px-4 py-2 truncate max-w-[300px]" :title="m.key">
+                                            <div class="px-4 py-2 truncate max-w-[260px]" :title="m.key">
                                                 <span class="text-engram-accent" x-text="m.key"></span>
                                             </div>
-                                            <div class="px-4 py-2 text-slate-400 w-24" x-text="m.scope"></div>
-                                            <div class="px-4 py-2 text-slate-400 truncate w-32 max-w-[128px]" :title="m.user_id" x-text="m.user_id"></div>
-                                            <div class="px-4 py-2 text-slate-500 truncate w-32 max-w-[128px]" :title="m.tags" x-text="m.tags || '—'"></div>
+                                            <div class="px-4 py-2 text-slate-400 w-24 truncate" :title="m.namespace" x-text="m.namespace"></div>
+                                            <div class="px-4 py-2 text-slate-400 w-20" x-text="m.scope"></div>
+                                            <div class="px-4 py-2 text-slate-400 truncate w-28 max-w-[112px]" :title="m.user_id" x-text="m.user_id"></div>
+                                            <div class="px-4 py-2 text-slate-500 truncate w-28 max-w-[112px]" :title="m.tags" x-text="m.tags || '—'"></div>
                                             <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.created_at)"></div>
                                             <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.last_used_at)"></div>
                                             <div class="px-4 py-2 w-28"
                                                  :class="isExpired(m.expires_at) ? 'text-amber-400' : 'text-slate-500'"
                                                  x-text="m.expires_at ? formatDate(m.expires_at) : '—'"></div>
+                                            <div class="px-4 py-2 w-16 flex justify-end">
+                                                <button @click.stop="openEdit(m)"
+                                                        class="text-slate-500 hover:text-engram-accent transition text-xs px-1.5 py-0.5 rounded border border-transparent hover:border-engram-accent/30"
+                                                        title="Edit memory">
+                                                    edit
+                                                </button>
+                                            </div>
                                         </div>
                                         <!-- Expanded value -->
                                         <div x-show="expandedId === rowId(m)"
@@ -193,15 +237,15 @@
                                 </td>
                             </tr>
                         </template>
-                        <tr x-show="namespace && memories.length === 0 && !loading">
-                            <td colspan="7" class="py-8 text-center text-slate-500">No memories found.</td>
+                        <tr x-show="memories.length === 0 && !loading">
+                            <td colspan="9" class="py-8 text-center text-slate-500">No memories found.</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
 
             <!-- Pagination -->
-            <div x-show="namespace && total > 0" class="px-4 py-3 border-t border-engram-border flex items-center justify-between text-sm">
+            <div x-show="total > 0" class="px-4 py-3 border-t border-engram-border flex items-center justify-between text-sm">
                 <span class="text-slate-500">
                     <span x-text="offset + 1"></span>–<span x-text="Math.min(offset + limit, total)"></span>
                     of <span class="text-slate-300" x-text="total"></span>
@@ -225,6 +269,95 @@
         </div>
     </main>
 
+    <!-- Edit Modal -->
+    <div x-show="editModal.open" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @keydown.escape.window="editModal.open = false">
+        <div class="bg-engram-surface border border-engram-border rounded-xl shadow-2xl w-full max-w-lg mx-4"
+             @click.outside="editModal.open = false">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-engram-border flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-engram-accent uppercase tracking-wider">Edit Memory</h3>
+                <button @click="editModal.open = false" class="text-slate-500 hover:text-slate-300 text-lg">&times;</button>
+            </div>
+            <!-- Modal Body -->
+            <div class="px-6 py-4 space-y-4">
+                <!-- Current identity (read-only context) -->
+                <div class="bg-engram-dark/60 rounded-lg p-3 text-xs text-slate-500">
+                    <div>Original key: <span class="text-slate-300" x-text="editModal.origKey"></span></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Namespace</label>
+                        <select x-model="editModal.namespace"
+                                class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                            <template x-for="s in stats" :key="s.namespace">
+                                <option :value="s.namespace" x-text="s.namespace"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Scope</label>
+                        <select x-model="editModal.scope"
+                                class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                            <option value="shared">shared</option>
+                            <option value="machine">machine</option>
+                            <option value="project">project</option>
+                            <option value="user">user</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">User ID</label>
+                    <input type="text" x-model="editModal.userId"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Key</label>
+                    <input type="text" x-model="editModal.key"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Tags</label>
+                    <input type="text" x-model="editModal.tags"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+
+                <!-- Value preview (read-only) -->
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Value (read-only)</label>
+                    <pre class="bg-engram-dark/60 border border-engram-border/50 rounded p-3 text-xs text-slate-400 whitespace-pre-wrap break-all max-h-40 overflow-y-auto"
+                         x-text="editModal.value || '(loading...)'"></pre>
+                </div>
+
+                <!-- Error -->
+                <div x-show="editModal.error" class="text-red-400 text-xs" x-text="editModal.error"></div>
+            </div>
+            <!-- Modal Footer -->
+            <div class="px-6 py-4 border-t border-engram-border flex items-center justify-between">
+                <div class="text-xs text-slate-600" x-show="editModal.dirty()"
+                     x-text="editModal.changesSummary()"></div>
+                <div class="flex gap-2 ml-auto">
+                    <button @click="editModal.open = false"
+                            class="px-4 py-1.5 rounded border border-engram-border text-slate-400 hover:text-slate-200 text-sm transition">
+                        Cancel
+                    </button>
+                    <button @click="saveEdit()"
+                            :disabled="!editModal.dirty() || editModal.saving"
+                            class="px-4 py-1.5 rounded bg-engram-accent text-engram-darker font-semibold text-sm hover:bg-engram-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                        <span x-text="editModal.saving ? 'Saving...' : 'Save'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
     function engramDashboard() {
         return {
@@ -240,10 +373,25 @@
             scope: '',
             userId: '',
             keyPrefix: '',
+            search: '',
+            createdAfter: null,
+            createdBefore: null,
             offset: 0,
             limit: 50,
-            sortBy: 'key',
-            sortOrder: 'asc',
+            sortBy: 'created_at',
+            sortOrder: 'desc',
+
+            // Date presets
+            activeDatePreset: null,
+            customDateFrom: '',
+            customDateTo: '',
+            datePresets: [
+                { label: 'Today', days: 0 },
+                { label: 'This week', days: 7 },
+                { label: 'Last week', daysFrom: 14, daysTo: 7 },
+                { label: 'Last month', days: 30 },
+                { label: 'Last 3 months', days: 90 },
+            ],
 
             // UI
             expandedId: null,
@@ -252,8 +400,46 @@
             autoRefresh: true,
             lastRefresh: null,
 
+            // Edit modal
+            editModal: {
+                open: false,
+                saving: false,
+                error: '',
+                // Original values (for identifying the row and detecting changes)
+                origNamespace: '',
+                origScope: '',
+                origUserId: '',
+                origKey: '',
+                origTags: '',
+                value: '',
+                // Editable fields
+                namespace: '',
+                scope: '',
+                userId: '',
+                key: '',
+                tags: '',
+                dirty() {
+                    return this.namespace !== this.origNamespace
+                        || this.scope !== this.origScope
+                        || this.userId !== this.origUserId
+                        || this.key !== this.origKey
+                        || this.tags !== this.origTags;
+                },
+                changesSummary() {
+                    const changes = [];
+                    if (this.namespace !== this.origNamespace) changes.push('namespace');
+                    if (this.scope !== this.origScope) changes.push('scope');
+                    if (this.userId !== this.origUserId) changes.push('user_id');
+                    if (this.key !== this.origKey) changes.push('key');
+                    if (this.tags !== this.origTags) changes.push('tags');
+                    return changes.length ? 'Changing: ' + changes.join(', ') : '';
+                },
+            },
+
             async init() {
                 await Promise.all([this.fetchHealth(), this.fetchStats()]);
+                // Auto-load all memories on init (sorted by created_at desc)
+                await this.fetchMemories();
                 setInterval(() => {
                     if (this.autoRefresh) this.refresh();
                 }, 30000);
@@ -262,7 +448,7 @@
             async refresh() {
                 await this.fetchHealth();
                 await this.fetchStats();
-                if (this.namespace) await this.fetchMemories();
+                await this.fetchMemories();
                 this.lastRefresh = new Date().toLocaleTimeString();
             },
 
@@ -286,23 +472,21 @@
             },
 
             async fetchMemories() {
-                if (!this.namespace) {
-                    this.memories = [];
-                    this.total = 0;
-                    return;
-                }
                 this.loading = true;
                 try {
                     const params = new URLSearchParams({
-                        namespace: this.namespace,
                         offset: this.offset,
                         limit: this.limit,
                         sort_by: this.sortBy,
                         sort_order: this.sortOrder,
                     });
+                    if (this.namespace) params.set('namespace', this.namespace);
                     if (this.scope) params.set('scope', this.scope);
                     if (this.userId) params.set('user_id', this.userId);
                     if (this.keyPrefix) params.set('key_prefix', this.keyPrefix);
+                    if (this.search) params.set('search', this.search);
+                    if (this.createdAfter) params.set('created_after', this.createdAfter);
+                    if (this.createdBefore) params.set('created_before', this.createdBefore);
 
                     const r = await fetch('/admin/memories?' + params);
                     const data = await r.json();
@@ -316,8 +500,64 @@
                 }
             },
 
+            // Date presets
+            applyDatePreset(preset) {
+                const now = new Date();
+                this.activeDatePreset = preset.label;
+                this.customDateFrom = '';
+                this.customDateTo = '';
+
+                if (preset.daysFrom !== undefined) {
+                    // Range like "last week" (14 days ago to 7 days ago)
+                    const from = new Date(now);
+                    from.setDate(from.getDate() - preset.daysFrom);
+                    from.setHours(0, 0, 0, 0);
+                    const to = new Date(now);
+                    to.setDate(to.getDate() - preset.daysTo);
+                    to.setHours(0, 0, 0, 0);
+                    this.createdAfter = from.toISOString();
+                    this.createdBefore = to.toISOString();
+                } else {
+                    // "Last N days" or "Today"
+                    const from = new Date(now);
+                    from.setDate(from.getDate() - preset.days);
+                    from.setHours(0, 0, 0, 0);
+                    this.createdAfter = from.toISOString();
+                    this.createdBefore = null;
+                }
+                this.offset = 0;
+                this.fetchMemories();
+            },
+
+            applyCustomDates() {
+                this.activeDatePreset = null;
+                if (this.customDateFrom) {
+                    this.createdAfter = new Date(this.customDateFrom + 'T00:00:00').toISOString();
+                } else {
+                    this.createdAfter = null;
+                }
+                if (this.customDateTo) {
+                    // End of day
+                    this.createdBefore = new Date(this.customDateTo + 'T23:59:59').toISOString();
+                } else {
+                    this.createdBefore = null;
+                }
+                this.offset = 0;
+                this.fetchMemories();
+            },
+
+            clearDateFilter() {
+                this.activeDatePreset = null;
+                this.customDateFrom = '';
+                this.customDateTo = '';
+                this.createdAfter = null;
+                this.createdBefore = null;
+                this.offset = 0;
+                this.fetchMemories();
+            },
+
             rowId(m) {
-                return m.key + '|' + m.scope + '|' + m.user_id;
+                return m.namespace + '|' + m.key + '|' + m.scope + '|' + m.user_id;
             },
 
             async expandRow(m) {
@@ -331,7 +571,7 @@
                 this.expandedValue = '';
                 try {
                     const params = new URLSearchParams({
-                        namespace: this.namespace,
+                        namespace: m.namespace,
                         key_prefix: m.key,
                         scope: m.scope,
                         user_id: m.user_id,
@@ -353,6 +593,80 @@
                 }
             },
 
+            // Edit modal
+            async openEdit(m) {
+                this.editModal.error = '';
+                this.editModal.saving = false;
+                this.editModal.origNamespace = m.namespace;
+                this.editModal.origScope = m.scope;
+                this.editModal.origUserId = m.user_id;
+                this.editModal.origKey = m.key;
+                this.editModal.origTags = m.tags || '';
+                this.editModal.namespace = m.namespace;
+                this.editModal.scope = m.scope;
+                this.editModal.userId = m.user_id;
+                this.editModal.key = m.key;
+                this.editModal.tags = m.tags || '';
+                this.editModal.value = '';
+                this.editModal.open = true;
+
+                // Load full value
+                try {
+                    const params = new URLSearchParams({
+                        namespace: m.namespace,
+                        key_prefix: m.key,
+                        scope: m.scope,
+                        user_id: m.user_id,
+                        include_value: 'true',
+                        value_max_length: '10000',
+                        limit: '1',
+                    });
+                    const r = await fetch('/admin/memories?' + params);
+                    const data = await r.json();
+                    if (data.items && data.items.length > 0) {
+                        this.editModal.value = data.items[0].value || '(empty)';
+                    }
+                } catch {
+                    this.editModal.value = '(error loading)';
+                }
+            },
+
+            async saveEdit() {
+                this.editModal.saving = true;
+                this.editModal.error = '';
+                try {
+                    const body = {
+                        namespace: this.editModal.origNamespace,
+                        key: this.editModal.origKey,
+                        scope: this.editModal.origScope,
+                        user_id: this.editModal.origUserId,
+                    };
+                    if (this.editModal.namespace !== this.editModal.origNamespace) body.new_namespace = this.editModal.namespace;
+                    if (this.editModal.scope !== this.editModal.origScope) body.new_scope = this.editModal.scope;
+                    if (this.editModal.userId !== this.editModal.origUserId) body.new_user_id = this.editModal.userId;
+                    if (this.editModal.key !== this.editModal.origKey) body.new_key = this.editModal.key;
+                    if (this.editModal.tags !== this.editModal.origTags) body.new_tags = this.editModal.tags;
+
+                    const r = await fetch('/admin/memories', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) {
+                        this.editModal.error = data.detail || 'Update failed';
+                        return;
+                    }
+                    this.editModal.open = false;
+                    this.expandedId = null;
+                    await Promise.all([this.fetchStats(), this.fetchMemories()]);
+                } catch (e) {
+                    this.editModal.error = 'Network error: ' + e.message;
+                } finally {
+                    this.editModal.saving = false;
+                }
+            },
+
             // Pagination
             prevPage() {
                 this.offset = Math.max(0, this.offset - this.limit);
@@ -371,7 +685,7 @@
                     this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
                 } else {
                     this.sortBy = col;
-                    this.sortOrder = 'asc';
+                    this.sortOrder = col === 'key' ? 'asc' : 'desc';
                 }
                 this.offset = 0;
                 this.expandedId = null;
