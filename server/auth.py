@@ -11,7 +11,7 @@ Two modes controlled by ENGRAM_REQUIRE_AUTH:
   true — Enforcement mode:
     - Bearer token MUST match a principal → request.state.principal = principal_dict
     - No token or unrecognized token → 401
-    - Exempt paths: /health, /dashboard*
+    - Exempt paths: /health, /dashboard*, /bridge
 """
 
 import logging
@@ -29,7 +29,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Always allow exempt paths without auth
         path = request.url.path
-        if path == "/health" or path.startswith("/dashboard"):
+        if path == "/health" or path.startswith("/dashboard") or path == "/bridge":
             request.state.principal = None
             return await call_next(request)
 
