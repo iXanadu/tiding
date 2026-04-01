@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from server.auth import PrincipalAuthMiddleware
 from server.config import settings
@@ -92,6 +93,12 @@ app = FastAPI(
 )
 
 app.add_middleware(PrincipalAuthMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://claude.ai"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(memory.router)
 app.include_router(admin.router)

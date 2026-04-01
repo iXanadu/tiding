@@ -113,13 +113,13 @@ async def memory_get(
 
 
 async def memory_search(
-    namespace: str,
+    namespaces: list[str],
     query: str,
     scope: str = "user",
     user_id: str = "default",
     limit: int = 5,
 ) -> list[MemoryItem]:
-    """Hybrid vector + trigram search, scoped to a namespace and user."""
+    """Hybrid vector + trigram search, scoped to namespace(s) and user."""
     pool = await get_pool()
     query_embedding = await embed(query)
 
@@ -133,7 +133,7 @@ async def memory_search(
                     similarity(search_text, $2) AS trgm_score
                 FROM memories
                 WHERE (expires_at IS NULL OR expires_at > NOW())
-                  AND namespace = $3
+                  AND namespace = ANY($3::text[])
                   AND scope = $4
                   AND user_id = $5
                 ORDER BY embedding <=> $1
@@ -148,7 +148,7 @@ async def memory_search(
             """,
             query_embedding,
             query,
-            namespace,
+            namespaces,
             scope,
             user_id,
             limit,
@@ -158,7 +158,7 @@ async def memory_search(
         )
 
         results = []
-        keys_to_update = []
+        keys_to_update: dict[str, list[str]] = {}
         for row in rows:
             results.append(
                 MemoryItem(
@@ -172,14 +172,14 @@ async def memory_search(
                     score=round(float(row["combined_score"]), 4),
                 )
             )
-            keys_to_update.append(row["key"])
+            keys_to_update.setdefault(row["namespace"], []).append(row["key"])
 
-        if keys_to_update:
+        for ns, keys in keys_to_update.items():
             await conn.execute(
                 """UPDATE memories SET last_used_at = NOW()
                    WHERE namespace = $1 AND key = ANY($2) AND scope = $3 AND user_id = $4""",
-                namespace,
-                keys_to_update,
+                ns,
+                keys,
                 scope,
                 user_id,
             )

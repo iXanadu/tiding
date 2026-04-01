@@ -165,6 +165,32 @@ async def test_list_namespace_required(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_list_cross_namespace(client):
+    """List memories across multiple namespaces using comma-separated param."""
+    ns_a = "test-cross-a"
+    ns_b = "test-cross-b"
+    keys_a = ["cross-list-1"]
+    keys_b = ["cross-list-2"]
+    await _seed(client, keys_a, ns=ns_a)
+    await _seed(client, keys_b, ns=ns_b)
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": f"{ns_a},{ns_b}",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        result_keys = {i["key"] for i in data["items"]}
+        result_ns = {i["namespace"] for i in data["items"]}
+        assert "cross-list-1" in result_keys
+        assert "cross-list-2" in result_keys
+        assert ns_a in result_ns
+        assert ns_b in result_ns
+    finally:
+        await _cleanup(client, keys_a, ns=ns_a)
+        await _cleanup(client, keys_b, ns=ns_b)
+
+
 # --- /admin/stats ---
 
 @pytest.mark.asyncio

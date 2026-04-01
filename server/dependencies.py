@@ -41,6 +41,16 @@ def admin_or_open(request: Request) -> dict | None:
     return get_current_principal(request)
 
 
+def check_namespaces_access(
+    principal: dict | None,
+    namespaces: list[str],
+    mode: str,
+) -> None:
+    """Check access for multiple namespaces. Raises 403 on first failure."""
+    for ns in namespaces:
+        check_namespace_access(principal, ns, mode)
+
+
 def check_namespace_access(
     principal: dict | None,
     namespace: str,

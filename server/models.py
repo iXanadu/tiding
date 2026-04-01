@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 # --- Request models (match original Pyscript tool interface) ---
@@ -32,11 +32,18 @@ class MemoryGetRequest(BaseModel):
 
 
 class MemorySearchRequest(BaseModel):
-    namespace: str
+    namespace: str | None = None
+    namespaces: list[str] | None = None
     query: str
     scope: str = "user"
     user_id: str = "default"
     limit: int = 5
+
+    @model_validator(mode="after")
+    def require_namespace(self):
+        if not self.namespace and not self.namespaces:
+            raise ValueError("Either 'namespace' or 'namespaces' is required")
+        return self
 
     @field_validator("query", mode="before")
     @classmethod
@@ -44,6 +51,12 @@ class MemorySearchRequest(BaseModel):
         if isinstance(v, str) and not v.strip():
             raise ValueError("query must not be empty")
         return v
+
+    def resolved_namespaces(self) -> list[str]:
+        """Return the list of namespaces to search (normalizes both fields)."""
+        if self.namespaces:
+            return self.namespaces
+        return [self.namespace]
 
 
 class MemoryForgetRequest(BaseModel):
@@ -89,6 +102,7 @@ class MemoryForgetResponse(BaseModel):
 # --- Admin models ---
 
 class MemoryListItem(BaseModel):
+    namespace: str
     key: str
     value: str | None = None
     scope: str

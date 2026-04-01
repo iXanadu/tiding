@@ -169,3 +169,61 @@ async def test_namespace_required(client):
 
     resp = await client.post("/memory/forget", json={"key": "no_ns"})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_cross_namespace_search(client):
+    """Search across multiple namespaces using the 'namespaces' field."""
+    # Store in two different namespaces
+    await client.post("/memory/set", json={
+        "namespace": "ns-alpha",
+        "key": "cross-ns-color",
+        "value": "the sky is blue",
+        "tags": "color preference",
+    })
+    await client.post("/memory/set", json={
+        "namespace": "ns-beta",
+        "key": "cross-ns-food",
+        "value": "pizza is the best food",
+        "tags": "food preference",
+    })
+
+    try:
+        # Search across both namespaces
+        resp = await client.post("/memory/search", json={
+            "namespaces": ["ns-alpha", "ns-beta"],
+            "query": "what are the preferences",
+            "limit": 10,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        result_ns = {r["namespace"] for r in data["results"]}
+        result_keys = {r["key"] for r in data["results"]}
+        assert "ns-alpha" in result_ns
+        assert "ns-beta" in result_ns
+        assert "cross-ns-color" in result_keys
+        assert "cross-ns-food" in result_keys
+
+        # Single namespace still works (backward compat)
+        resp = await client.post("/memory/search", json={
+            "namespace": "ns-alpha",
+            "query": "what are the preferences",
+            "limit": 10,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        result_ns = {r["namespace"] for r in data["results"]}
+        assert result_ns == {"ns-alpha"}
+    finally:
+        await client.post("/memory/forget", json={"namespace": "ns-alpha", "key": "cross-ns-color"})
+        await client.post("/memory/forget", json={"namespace": "ns-beta", "key": "cross-ns-food"})
+
+
+@pytest.mark.asyncio
+async def test_search_namespace_or_namespaces_required(client):
+    """Must provide either namespace or namespaces, not neither."""
+    resp = await client.post("/memory/search", json={
+        "query": "anything",
+    })
+    assert resp.status_code == 422

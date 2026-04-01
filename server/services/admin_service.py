@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 async def list_memories(
-    namespace: str,
+    namespaces: list[str],
     scope: str | None = None,
     user_id: str | None = None,
     key_prefix: str | None = None,
@@ -21,8 +21,8 @@ async def list_memories(
 ) -> tuple[int, list[MemoryListItem]]:
     pool = await get_pool()
 
-    conditions = ["namespace = $1"]
-    params: list = [namespace]
+    conditions = ["namespace = ANY($1::text[])"]
+    params: list = [namespaces]
     idx = 2
 
     if scope is not None:
@@ -52,7 +52,7 @@ async def list_memories(
         value_expr = f"LEFT(value, {int(value_max_length)})" if include_value else "NULL"
         rows = await conn.fetch(
             f"""
-            SELECT key, {value_expr} AS value, scope, user_id, tags,
+            SELECT namespace, key, {value_expr} AS value, scope, user_id, tags,
                    created_at, last_used_at, expires_at
             FROM memories
             WHERE {where}
@@ -66,6 +66,7 @@ async def list_memories(
 
     items = [
         MemoryListItem(
+            namespace=r["namespace"],
             key=r["key"],
             value=r["value"],
             scope=r["scope"],

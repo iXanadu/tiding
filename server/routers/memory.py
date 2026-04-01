@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.dependencies import check_namespace_access, get_current_principal
+from server.dependencies import check_namespace_access, check_namespaces_access, get_current_principal
 from server.models import (
     MemoryForgetRequest,
     MemoryForgetResponse,
@@ -67,11 +67,12 @@ async def get_memory(req: MemoryGetRequest, request: Request):
 
 @router.post("/search", response_model=MemorySearchResponse)
 async def search_memory(req: MemorySearchRequest, request: Request):
-    logger.debug(f"SEARCH ns={req.namespace} query={req.query!r} user_id={req.user_id} scope={req.scope}")
-    check_namespace_access(get_current_principal(request), req.namespace, "read")
+    ns_list = req.resolved_namespaces()
+    logger.debug(f"SEARCH ns={ns_list} query={req.query!r} user_id={req.user_id} scope={req.scope}")
+    check_namespaces_access(get_current_principal(request), ns_list, "read")
     try:
         results = await memory_search(
-            namespace=req.namespace,
+            namespaces=ns_list,
             query=req.query,
             scope=req.scope,
             user_id=req.user_id,

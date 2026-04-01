@@ -25,7 +25,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.get("/memories", response_model=MemoryListResponse)
 async def list_memories_endpoint(
-    namespace: str = Query(...),
+    namespace: str = Query(..., description="Namespace(s) to list, comma-separated for multiple"),
     scope: str | None = Query(None),
     user_id: str | None = Query(None),
     key_prefix: str | None = Query(None),
@@ -37,10 +37,11 @@ async def list_memories_endpoint(
     value_max_length: int = Query(200, ge=1, le=10000),
     _caller=Depends(admin_or_open),
 ):
-    logger.debug(f"LIST ns={namespace} scope={scope} prefix={key_prefix}")
+    ns_list = [ns.strip() for ns in namespace.split(",") if ns.strip()]
+    logger.debug(f"LIST ns={ns_list} scope={scope} prefix={key_prefix}")
     try:
         total, items = await list_memories(
-            namespace=namespace,
+            namespaces=ns_list,
             scope=scope,
             user_id=user_id,
             key_prefix=key_prefix,
