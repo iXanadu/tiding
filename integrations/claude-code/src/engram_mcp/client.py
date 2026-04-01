@@ -75,22 +75,23 @@ class MemoryClient:
     async def search(
         self,
         query: str,
-        namespace: str,
         scope: str,
         user_id: str,
         limit: int = 5,
+        namespace: str | None = None,
+        namespaces: list[str] | None = None,
     ) -> dict:
-        return await self._request(
-            "POST",
-            "/memory/search",
-            json={
-                "namespace": namespace,
-                "query": query,
-                "scope": scope,
-                "user_id": user_id,
-                "limit": limit,
-            },
-        )
+        body: dict = {
+            "query": query,
+            "scope": scope,
+            "user_id": user_id,
+            "limit": limit,
+        }
+        if namespaces:
+            body["namespaces"] = namespaces
+        elif namespace:
+            body["namespace"] = namespace
+        return await self._request("POST", "/memory/search", json=body)
 
     async def forget(
         self,

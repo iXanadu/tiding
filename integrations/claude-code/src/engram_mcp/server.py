@@ -94,9 +94,10 @@ async def memory_search(
     resolved_scope, user_id = resolve_scope_and_user_id(
         scope or None, settings.memory_default_scope
     )
+    read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
     result = await _client.search(
         query=query,
-        namespace=settings.memory_namespace,
+        namespaces=read_ns,
         scope=resolved_scope,
         user_id=user_id,
         limit=limit,
