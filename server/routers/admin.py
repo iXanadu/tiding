@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -10,12 +11,15 @@ from server.models import (
     CleanupResponse,
     MemoryListResponse,
     MemoryStatsResponse,
+    MemoryUpdateRequest,
+    MemoryUpdateResponse,
 )
 from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
     get_stats,
     list_memories,
+    update_memory,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,10 +29,13 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.get("/memories", response_model=MemoryListResponse)
 async def list_memories_endpoint(
-    namespace: str = Query(..., description="Namespace(s) to list, comma-separated for multiple"),
+    namespace: str | None = Query(None, description="Namespace(s) to list, comma-separated for multiple"),
     scope: str | None = Query(None),
     user_id: str | None = Query(None),
     key_prefix: str | None = Query(None),
+    search: str | None = Query(None),
+    created_after: datetime | None = Query(None),
+    created_before: datetime | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     sort_by: str = Query("key"),
@@ -37,14 +44,17 @@ async def list_memories_endpoint(
     value_max_length: int = Query(200, ge=1, le=10000),
     _caller=Depends(admin_or_open),
 ):
-    ns_list = [ns.strip() for ns in namespace.split(",") if ns.strip()]
-    logger.debug(f"LIST ns={ns_list} scope={scope} prefix={key_prefix}")
+    ns_list = [ns.strip() for ns in namespace.split(",") if ns.strip()] if namespace else None
+    logger.debug(f"LIST ns={ns_list} scope={scope} prefix={key_prefix} search={search}")
     try:
         total, items = await list_memories(
             namespaces=ns_list,
             scope=scope,
             user_id=user_id,
             key_prefix=key_prefix,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
             offset=offset,
             limit=limit,
             sort_by=sort_by,
@@ -57,6 +67,34 @@ async def list_memories_endpoint(
         )
     except Exception as e:
         logger.exception("list_memories failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/memories", response_model=MemoryUpdateResponse)
+async def update_memory_endpoint(
+    req: MemoryUpdateRequest,
+    _caller=Depends(admin_or_open),
+):
+    logger.debug(f"UPDATE ns={req.namespace} key={req.key} scope={req.scope}")
+    try:
+        updated = await update_memory(
+            namespace=req.namespace,
+            key=req.key,
+            scope=req.scope,
+            user_id=req.user_id,
+            new_namespace=req.new_namespace,
+            new_scope=req.new_scope,
+            new_user_id=req.new_user_id,
+            new_key=req.new_key,
+            new_tags=req.new_tags,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Memory not found or no changes")
+        return MemoryUpdateResponse(status="ok")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("update_memory failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -160,9 +160,13 @@ async def test_list_sort(client):
 
 
 @pytest.mark.asyncio
-async def test_list_namespace_required(client):
+async def test_list_all_namespaces(client):
+    """Listing without namespace returns memories across all namespaces."""
     resp = await client.get("/admin/memories")
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["total"] >= 0
 
 
 @pytest.mark.asyncio
@@ -341,3 +345,159 @@ async def test_cleanup_nothing(client):
     assert data["status"] == "ok"
     # deleted_count should be 0 or small (only previously expired rows)
     assert isinstance(data["deleted_count"], int)
+
+
+# --- /admin/memories search and date filters ---
+
+@pytest.mark.asyncio
+async def test_list_search_text(client):
+    """Search filter matches against key and value text."""
+    keys = ["search-findme-alpha"]
+    await _seed(client, keys)
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "search": "findme",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert any("findme" in item["key"] for item in data["items"])
+    finally:
+        await _cleanup(client, keys)
+
+
+@pytest.mark.asyncio
+async def test_list_date_range(client, db_pool):
+    """Date range filters (created_after, created_before) work."""
+    # Insert a memory with old created_at
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, search_text, created_at)
+            VALUES ($1, $2, $3, $4, $5, '', '', '', '2020-01-15T00:00:00Z')
+            ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET created_at = '2020-01-15T00:00:00Z'
+            """,
+            NS, "date-range-old", "old memory", "user", "default",
+        )
+    try:
+        # Should find it with a range that includes 2020-01
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "created_after": "2020-01-01T00:00:00Z",
+            "created_before": "2020-02-01T00:00:00Z",
+        })
+        data = resp.json()
+        assert data["total"] >= 1
+        assert any(item["key"] == "date-range-old" for item in data["items"])
+
+        # Should NOT find it with a range that excludes 2020-01
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "created_after": "2021-01-01T00:00:00Z",
+        })
+        data = resp.json()
+        assert all(item["key"] != "date-range-old" for item in data["items"])
+    finally:
+        await _cleanup(client, ["date-range-old"])
+
+
+# --- PATCH /admin/memories (update) ---
+
+@pytest.mark.asyncio
+async def test_update_memory_scope(client):
+    """Update a memory's scope via PATCH."""
+    keys = ["update-scope-test"]
+    await _seed(client, keys, scope="user")
+    try:
+        resp = await client.patch("/admin/memories", json={
+            "namespace": NS,
+            "key": "update-scope-test",
+            "scope": "user",
+            "user_id": "default",
+            "new_scope": "shared",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        # Verify scope changed
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "key_prefix": "update-scope-test",
+            "scope": "shared",
+        })
+        assert resp.json()["total"] == 1
+    finally:
+        await _cleanup(client, keys, scope="shared")
+
+
+@pytest.mark.asyncio
+async def test_update_memory_namespace(client):
+    """Update a memory's namespace via PATCH."""
+    keys = ["update-ns-test"]
+    await _seed(client, keys)
+    try:
+        resp = await client.patch("/admin/memories", json={
+            "namespace": NS,
+            "key": "update-ns-test",
+            "scope": "user",
+            "user_id": "default",
+            "new_namespace": "test-admin-moved",
+        })
+        assert resp.status_code == 200
+
+        # Verify it moved
+        resp = await client.get("/admin/memories", params={
+            "namespace": "test-admin-moved",
+            "key_prefix": "update-ns-test",
+        })
+        assert resp.json()["total"] == 1
+    finally:
+        await _cleanup(client, keys, ns="test-admin-moved")
+
+
+@pytest.mark.asyncio
+async def test_update_memory_not_found(client):
+    """PATCH returns 404 for non-existent memory."""
+    resp = await client.patch("/admin/memories", json={
+        "namespace": NS,
+        "key": "does-not-exist-xyz",
+        "scope": "user",
+        "user_id": "default",
+        "new_scope": "shared",
+    })
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_memory_no_changes(client):
+    """PATCH with no new_* fields returns 404 (no changes)."""
+    keys = ["update-noop-test"]
+    await _seed(client, keys)
+    try:
+        resp = await client.patch("/admin/memories", json={
+            "namespace": NS,
+            "key": "update-noop-test",
+            "scope": "user",
+            "user_id": "default",
+        })
+        assert resp.status_code == 404
+    finally:
+        await _cleanup(client, keys)
+
+
+@pytest.mark.asyncio
+async def test_list_returns_namespace_field(client):
+    """MemoryListItem now includes namespace in response."""
+    keys = ["ns-field-test"]
+    await _seed(client, keys)
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "key_prefix": "ns-field-test",
+        })
+        data = resp.json()
+        assert data["total"] >= 1
+        assert data["items"][0]["namespace"] == NS
+    finally:
+        await _cleanup(client, keys)

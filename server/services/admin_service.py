@@ -8,10 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 async def list_memories(
-    namespaces: list[str],
+    namespaces: list[str] | None = None,
     scope: str | None = None,
     user_id: str | None = None,
     key_prefix: str | None = None,
+    search: str | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
     offset: int = 0,
     limit: int = 50,
     sort_by: str = "key",
@@ -21,10 +24,14 @@ async def list_memories(
 ) -> tuple[int, list[MemoryListItem]]:
     pool = await get_pool()
 
-    conditions = ["namespace = ANY($1::text[])"]
-    params: list = [namespaces]
-    idx = 2
+    conditions: list[str] = []
+    params: list = []
+    idx = 1
 
+    if namespaces:
+        conditions.append(f"namespace = ANY(${idx}::text[])")
+        params.append(namespaces)
+        idx += 1
     if scope is not None:
         conditions.append(f"scope = ${idx}")
         params.append(scope)
@@ -37,8 +44,20 @@ async def list_memories(
         conditions.append(f"key LIKE ${idx}")
         params.append(key_prefix + "%")
         idx += 1
+    if search is not None:
+        conditions.append(f"search_text ILIKE ${idx}")
+        params.append(f"%{search}%")
+        idx += 1
+    if created_after is not None:
+        conditions.append(f"created_at >= ${idx}")
+        params.append(created_after)
+        idx += 1
+    if created_before is not None:
+        conditions.append(f"created_at < ${idx}")
+        params.append(created_before)
+        idx += 1
 
-    where = " AND ".join(conditions)
+    where = " AND ".join(conditions) if conditions else "TRUE"
 
     allowed_sort = {"key": "key", "created_at": "created_at", "last_used_at": "last_used_at"}
     sort_col = allowed_sort.get(sort_by, "key")
@@ -79,6 +98,62 @@ async def list_memories(
         for r in rows
     ]
     return total, items
+
+
+async def update_memory(
+    namespace: str,
+    key: str,
+    scope: str,
+    user_id: str,
+    new_namespace: str | None = None,
+    new_scope: str | None = None,
+    new_user_id: str | None = None,
+    new_key: str | None = None,
+    new_tags: str | None = None,
+) -> bool:
+    pool = await get_pool()
+
+    sets: list[str] = []
+    params: list = []
+    idx = 1
+
+    if new_namespace is not None:
+        sets.append(f"namespace = ${idx}")
+        params.append(new_namespace)
+        idx += 1
+    if new_scope is not None:
+        sets.append(f"scope = ${idx}")
+        params.append(new_scope)
+        idx += 1
+    if new_user_id is not None:
+        sets.append(f"user_id = ${idx}")
+        params.append(new_user_id)
+        idx += 1
+    if new_key is not None:
+        sets.append(f"key = ${idx}")
+        params.append(new_key)
+        idx += 1
+    if new_tags is not None:
+        sets.append(f"tags = ${idx}")
+        params.append(new_tags)
+        idx += 1
+
+    if not sets:
+        return False
+
+    set_clause = ", ".join(sets)
+
+    # WHERE clause uses the original identity
+    where = f"namespace = ${idx} AND key = ${idx + 1} AND scope = ${idx + 2} AND user_id = ${idx + 3}"
+    params.extend([namespace, key, scope, user_id])
+
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            f"UPDATE memories SET {set_clause} WHERE {where}",
+            *params,
+        )
+
+    return result != "UPDATE 0"
 
 
 async def get_stats(

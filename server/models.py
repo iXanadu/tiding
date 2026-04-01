@@ -113,6 +113,22 @@ class MemoryListItem(BaseModel):
     expires_at: datetime | None = None
 
 
+class MemoryUpdateRequest(BaseModel):
+    namespace: str
+    key: str
+    scope: str
+    user_id: str
+    new_namespace: str | None = None
+    new_scope: str | None = None
+    new_user_id: str | None = None
+    new_key: str | None = None
+    new_tags: str | None = None
+
+
+class MemoryUpdateResponse(BaseModel):
+    status: str
+
+
 class MemoryListResponse(BaseModel):
     status: str
     total: int
