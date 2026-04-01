@@ -65,6 +65,8 @@ async def lifespan(app: FastAPI):
         logger.info("API token authentication ENABLED")
     else:
         logger.info("API token authentication DISABLED (set ENGRAM_API_TOKEN to enable)")
+    if settings.warn_unauthed:
+        logger.info("WARN MODE: unauthenticated requests will be logged")
     await init_pool()
     await init_client()
     logger.info("Database pool and embedding client ready")

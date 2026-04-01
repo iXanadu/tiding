@@ -65,6 +65,8 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
                     "Authentication required. Set Authorization: Bearer <token> header.",
                 )
             # No token configured, no token provided → anonymous
+            if settings.warn_unauthed:
+                self._warn_unauthed(request, "no token provided")
             request.state.principal = None
             return await call_next(request)
 
@@ -77,10 +79,22 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
 
         # Fall back to legacy ENGRAM_API_TOKEN comparison
         if settings.api_token and token == settings.api_token:
+            if settings.warn_unauthed:
+                self._warn_unauthed(request, "legacy API token (no principal)")
             request.state.principal = None
             return await call_next(request)
 
         return self._reject(request, "Invalid API token.")
+
+    def _warn_unauthed(self, request: Request, reason: str) -> None:
+        client = request.client.host if request.client else "unknown"
+        logger.warning(
+            "UNAUTHED REQUEST: %s %s from %s — %s",
+            request.method,
+            request.url.path,
+            client,
+            reason,
+        )
 
     def _reject(self, request: Request, detail: str) -> JSONResponse:
         client = request.client.host if request.client else "unknown"

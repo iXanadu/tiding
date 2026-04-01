@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Require principal-based auth (Phase 2 enforcement; reserved in Phase 1)
     require_auth: bool = False
 
+    # Log warnings for unauthenticated requests (dry-run before flipping require_auth)
+    warn_unauthed: bool = False
+
     # Expiration cleanup
     cleanup_enabled: bool = True
     cleanup_interval_hours: int = 6
