@@ -187,7 +187,19 @@
 
             <!-- Table -->
             <div class="overflow-x-auto">
-                <table class="w-full text-sm">
+                <table class="w-full text-sm table-fixed">
+                    <colgroup>
+                        <col class="w-[22%]"><!-- Key -->
+                        <col class="w-[8%]"><!-- NS -->
+                        <col class="w-[7%]"><!-- Scope -->
+                        <col class="w-[9%]"><!-- User -->
+                        <col class="w-[9%]"><!-- Tags -->
+                        <col class="w-[8%]"><!-- Source -->
+                        <col class="w-[9%]"><!-- Created -->
+                        <col class="w-[9%]"><!-- Last Used -->
+                        <col class="w-[9%]"><!-- Expires -->
+                        <col class="w-[4%]"><!-- Edit -->
+                    </colgroup>
                     <thead>
                         <tr class="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-engram-border">
                             <th class="px-4 py-2.5 cursor-pointer hover:text-slate-300 select-none" @click="toggleSort('key')">
@@ -208,55 +220,50 @@
                                 <span x-show="sortBy === 'last_used_at'" x-text="sortOrder === 'asc' ? ' &uarr;' : ' &darr;'"></span>
                             </th>
                             <th class="px-4 py-2.5">Expires</th>
-                            <th class="px-4 py-2.5 w-16"></th>
+                            <th class="px-4 py-2.5"></th>
                         </tr>
                     </thead>
                     <tbody>
                         <template x-for="(m, idx) in memories" :key="m.namespace + '|' + m.key + '|' + m.scope + '|' + m.user_id">
-                            <tr>
-                                <td colspan="10" class="p-0">
-                                    <div class="border-b border-engram-border/50">
-                                        <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto_auto] cursor-pointer hover:bg-engram-dark/40 transition"
-                                             @click="expandRow(m)">
-                                            <div class="px-4 py-2 truncate max-w-[260px]" :title="m.key">
-                                                <span class="text-engram-accent" x-text="m.key"></span>
-                                            </div>
-                                            <div class="px-4 py-2 text-slate-400 w-24 truncate" :title="m.namespace" x-text="m.namespace"></div>
-                                            <div class="px-4 py-2 text-slate-400 w-20" x-text="m.scope"></div>
-                                            <div class="px-4 py-2 text-slate-400 truncate w-28 max-w-[112px]" :title="m.user_id" x-text="m.user_id"></div>
-                                            <div class="px-4 py-2 text-slate-500 truncate w-28 max-w-[112px]" :title="m.tags" x-text="m.tags || '—'"></div>
-                                            <div class="px-4 py-2 text-slate-500 truncate w-24 max-w-[96px]"
-                                                 :title="m.metadata ? [m.metadata.principal, m.metadata.machine].filter(Boolean).join(' @ ') : ''"
-                                                 x-text="m.metadata && m.metadata.machine ? m.metadata.machine : '—'"></div>
-                                            <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.created_at)"></div>
-                                            <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.last_used_at)"></div>
-                                            <div class="px-4 py-2 w-28"
-                                                 :class="isExpired(m.expires_at) ? 'text-amber-400' : 'text-slate-500'"
-                                                 x-text="m.expires_at ? formatDate(m.expires_at) : '—'"></div>
-                                            <div class="px-4 py-2 w-16 flex justify-end">
-                                                <button @click.stop="openEdit(m)"
-                                                        class="text-slate-500 hover:text-engram-accent transition text-xs px-1.5 py-0.5 rounded border border-transparent hover:border-engram-accent/30"
-                                                        title="Edit memory">
-                                                    edit
-                                                </button>
-                                            </div>
+                            <tbody>
+                                <tr class="border-b border-engram-border/50 cursor-pointer hover:bg-engram-dark/40 transition"
+                                    @click="expandRow(m)">
+                                    <td class="px-4 py-2 truncate" :title="m.key">
+                                        <span class="text-engram-accent" x-text="m.key"></span>
+                                    </td>
+                                    <td class="px-4 py-2 text-slate-400 truncate" :title="m.namespace" x-text="m.namespace"></td>
+                                    <td class="px-4 py-2 text-slate-400" x-text="m.scope"></td>
+                                    <td class="px-4 py-2 text-slate-400 truncate" :title="m.user_id" x-text="m.user_id"></td>
+                                    <td class="px-4 py-2 text-slate-500 truncate" :title="m.tags" x-text="m.tags || '—'"></td>
+                                    <td class="px-4 py-2 text-slate-500 truncate"
+                                        :title="m.metadata ? [m.metadata.principal, m.metadata.machine].filter(Boolean).join(' @ ') : ''"
+                                        x-text="m.metadata && m.metadata.machine ? m.metadata.machine : '—'"></td>
+                                    <td class="px-4 py-2 text-slate-500" x-text="formatDate(m.created_at)"></td>
+                                    <td class="px-4 py-2 text-slate-500" x-text="formatDate(m.last_used_at)"></td>
+                                    <td class="px-4 py-2"
+                                        :class="isExpired(m.expires_at) ? 'text-amber-400' : 'text-slate-500'"
+                                        x-text="m.expires_at ? formatDate(m.expires_at) : '—'"></td>
+                                    <td class="px-4 py-2 text-right">
+                                        <button @click.stop="openEdit(m)"
+                                                class="text-slate-500 hover:text-engram-accent transition text-xs px-1.5 py-0.5 rounded border border-transparent hover:border-engram-accent/30"
+                                                title="Edit memory">
+                                            edit
+                                        </button>
+                                    </td>
+                                </tr>
+                                <tr x-show="expandedId === rowId(m)" class="bg-engram-dark/60">
+                                    <td colspan="10" class="px-4 py-3 border-b border-engram-border/50">
+                                        <div x-show="expandedLoading" class="text-slate-500 text-xs">Loading value...</div>
+                                        <pre x-show="!expandedLoading"
+                                             class="text-xs text-slate-300 whitespace-pre-wrap break-all max-h-64 overflow-y-auto"
+                                             x-text="expandedValue"></pre>
+                                        <div x-show="!expandedLoading && m.metadata" class="mt-2 pt-2 border-t border-engram-border/30 flex gap-4 text-xs text-slate-500">
+                                            <span x-show="m.metadata && m.metadata.principal">principal: <span class="text-slate-400" x-text="m.metadata?.principal"></span></span>
+                                            <span x-show="m.metadata && m.metadata.machine">machine: <span class="text-slate-400" x-text="m.metadata?.machine"></span></span>
                                         </div>
-                                        <!-- Expanded value -->
-                                        <div x-show="expandedId === rowId(m)"
-                                             x-transition
-                                             class="px-4 py-3 bg-engram-dark/60 border-t border-engram-border/30">
-                                            <div x-show="expandedLoading" class="text-slate-500 text-xs">Loading value...</div>
-                                            <pre x-show="!expandedLoading"
-                                                 class="text-xs text-slate-300 whitespace-pre-wrap break-all max-h-64 overflow-y-auto"
-                                                 x-text="expandedValue"></pre>
-                                            <div x-show="!expandedLoading && m.metadata" class="mt-2 pt-2 border-t border-engram-border/30 flex gap-4 text-xs text-slate-500">
-                                                <span x-show="m.metadata && m.metadata.principal">principal: <span class="text-slate-400" x-text="m.metadata?.principal"></span></span>
-                                                <span x-show="m.metadata && m.metadata.machine">machine: <span class="text-slate-400" x-text="m.metadata?.machine"></span></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
+                                    </td>
+                                </tr>
+                            </tbody>
                         </template>
                         <tr x-show="memories.length === 0 && !loading">
                             <td colspan="10" class="py-8 text-center text-slate-500">No memories found.</td>
