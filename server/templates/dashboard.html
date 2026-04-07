@@ -198,6 +198,7 @@
                             <th class="px-4 py-2.5">Scope</th>
                             <th class="px-4 py-2.5">User</th>
                             <th class="px-4 py-2.5">Tags</th>
+                            <th class="px-4 py-2.5">Source</th>
                             <th class="px-4 py-2.5 cursor-pointer hover:text-slate-300 select-none" @click="toggleSort('created_at')">
                                 Created
                                 <span x-show="sortBy === 'created_at'" x-text="sortOrder === 'asc' ? ' &uarr;' : ' &darr;'"></span>
@@ -213,9 +214,9 @@
                     <tbody>
                         <template x-for="(m, idx) in memories" :key="m.namespace + '|' + m.key + '|' + m.scope + '|' + m.user_id">
                             <tr>
-                                <td colspan="9" class="p-0">
+                                <td colspan="10" class="p-0">
                                     <div class="border-b border-engram-border/50">
-                                        <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] cursor-pointer hover:bg-engram-dark/40 transition"
+                                        <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto_auto] cursor-pointer hover:bg-engram-dark/40 transition"
                                              @click="expandRow(m)">
                                             <div class="px-4 py-2 truncate max-w-[260px]" :title="m.key">
                                                 <span class="text-engram-accent" x-text="m.key"></span>
@@ -224,6 +225,9 @@
                                             <div class="px-4 py-2 text-slate-400 w-20" x-text="m.scope"></div>
                                             <div class="px-4 py-2 text-slate-400 truncate w-28 max-w-[112px]" :title="m.user_id" x-text="m.user_id"></div>
                                             <div class="px-4 py-2 text-slate-500 truncate w-28 max-w-[112px]" :title="m.tags" x-text="m.tags || '—'"></div>
+                                            <div class="px-4 py-2 text-slate-500 truncate w-24 max-w-[96px]"
+                                                 :title="m.metadata ? [m.metadata.principal, m.metadata.machine].filter(Boolean).join(' @ ') : ''"
+                                                 x-text="m.metadata && m.metadata.machine ? m.metadata.machine : '—'"></div>
                                             <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.created_at)"></div>
                                             <div class="px-4 py-2 text-slate-500 w-28" x-text="formatDate(m.last_used_at)"></div>
                                             <div class="px-4 py-2 w-28"
@@ -245,13 +249,17 @@
                                             <pre x-show="!expandedLoading"
                                                  class="text-xs text-slate-300 whitespace-pre-wrap break-all max-h-64 overflow-y-auto"
                                                  x-text="expandedValue"></pre>
+                                            <div x-show="!expandedLoading && m.metadata" class="mt-2 pt-2 border-t border-engram-border/30 flex gap-4 text-xs text-slate-500">
+                                                <span x-show="m.metadata && m.metadata.principal">principal: <span class="text-slate-400" x-text="m.metadata?.principal"></span></span>
+                                                <span x-show="m.metadata && m.metadata.machine">machine: <span class="text-slate-400" x-text="m.metadata?.machine"></span></span>
+                                            </div>
                                         </div>
                                     </div>
                                 </td>
                             </tr>
                         </template>
                         <tr x-show="memories.length === 0 && !loading">
-                            <td colspan="9" class="py-8 text-center text-slate-500">No memories found.</td>
+                            <td colspan="10" class="py-8 text-center text-slate-500">No memories found.</td>
                         </tr>
                     </tbody>
                 </table>

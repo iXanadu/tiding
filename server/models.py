@@ -111,6 +111,7 @@ class MemoryListItem(BaseModel):
     created_at: datetime
     last_used_at: datetime
     expires_at: datetime | None = None
+    metadata: dict | None = None
 
 
 class MemoryUpdateRequest(BaseModel):

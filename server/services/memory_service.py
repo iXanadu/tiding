@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -39,6 +40,7 @@ async def memory_set(
     tags: str = "",
     tags_search: str = "",
     expiration_days: int = 180,
+    metadata: dict | None = None,
 ) -> str:
     """Store or update a memory with its embedding."""
     pool = await get_pool()
@@ -50,11 +52,13 @@ async def memory_set(
     if expiration_days and expiration_days > 0:
         expires_at = datetime.now(timezone.utc) + timedelta(days=expiration_days)
 
+    metadata_json = json.dumps(metadata) if metadata else None
+
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, embedding, search_text, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, embedding, search_text, expires_at, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
             ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET
                 value = EXCLUDED.value,
                 tags = EXCLUDED.tags,
@@ -62,6 +66,7 @@ async def memory_set(
                 embedding = EXCLUDED.embedding,
                 search_text = EXCLUDED.search_text,
                 expires_at = EXCLUDED.expires_at,
+                metadata = EXCLUDED.metadata,
                 last_used_at = NOW()
             """,
             namespace,
@@ -74,6 +79,7 @@ async def memory_set(
             embedding,
             search_text,
             expires_at,
+            metadata_json,
         )
     return key
 

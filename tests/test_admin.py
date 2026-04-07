@@ -501,3 +501,85 @@ async def test_list_returns_namespace_field(client):
         assert data["items"][0]["namespace"] == NS
     finally:
         await _cleanup(client, keys)
+
+
+# --- metadata ---
+
+@pytest.mark.asyncio
+async def test_metadata_from_machine_header(client):
+    """X-Engram-Machine header populates metadata.machine on stored memory."""
+    key = "meta-machine-test"
+    resp = await client.post(
+        "/memory/set",
+        json={
+            "namespace": NS,
+            "key": key,
+            "value": "testing metadata",
+            "expiration_days": 0,
+        },
+        headers={"X-Engram-Machine": "testbox"},
+    )
+    assert resp.status_code == 200
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "key_prefix": key,
+        })
+        data = resp.json()
+        assert data["total"] >= 1
+        item = data["items"][0]
+        assert item["metadata"] is not None
+        assert item["metadata"]["machine"] == "testbox"
+    finally:
+        await _cleanup(client, [key])
+
+
+@pytest.mark.asyncio
+async def test_metadata_null_when_no_header(client):
+    """Without X-Engram-Machine header or principal, metadata is null."""
+    key = "meta-null-test"
+    resp = await client.post("/memory/set", json={
+        "namespace": NS,
+        "key": key,
+        "value": "no metadata",
+        "expiration_days": 0,
+    })
+    assert resp.status_code == 200
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "key_prefix": key,
+        })
+        data = resp.json()
+        assert data["total"] >= 1
+        assert data["items"][0]["metadata"] is None
+    finally:
+        await _cleanup(client, [key])
+
+
+@pytest.mark.asyncio
+async def test_metadata_survives_upsert(client):
+    """On upsert, metadata is updated to the new value."""
+    key = "meta-upsert-test"
+    # First write with machine=box1
+    await client.post(
+        "/memory/set",
+        json={"namespace": NS, "key": key, "value": "v1", "expiration_days": 0},
+        headers={"X-Engram-Machine": "box1"},
+    )
+    # Upsert with machine=box2
+    await client.post(
+        "/memory/set",
+        json={"namespace": NS, "key": key, "value": "v2", "expiration_days": 0},
+        headers={"X-Engram-Machine": "box2"},
+    )
+    try:
+        resp = await client.get("/admin/memories", params={
+            "namespace": NS,
+            "key_prefix": key,
+        })
+        data = resp.json()
+        item = data["items"][0]
+        assert item["metadata"]["machine"] == "box2"
+    finally:
+        await _cleanup(client, [key])

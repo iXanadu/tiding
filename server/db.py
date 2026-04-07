@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_used_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at      TIMESTAMPTZ,
+    metadata        JSONB,
     UNIQUE (namespace, key, scope, user_id)
 );
 
@@ -99,6 +100,14 @@ BEGIN
     ) THEN
         ALTER TABLE memories ADD COLUMN namespace TEXT NOT NULL DEFAULT 'legacy';
         ALTER TABLE memories ALTER COLUMN namespace DROP DEFAULT;
+    END IF;
+
+    -- Add metadata column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'memories' AND column_name = 'metadata'
+    ) THEN
+        ALTER TABLE memories ADD COLUMN metadata JSONB;
     END IF;
 
     -- Replace old UNIQUE(key, user_id) with UNIQUE(namespace, key, scope, user_id)

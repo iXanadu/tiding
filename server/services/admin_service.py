@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -72,7 +73,7 @@ async def list_memories(
         rows = await conn.fetch(
             f"""
             SELECT namespace, key, {value_expr} AS value, scope, user_id, tags,
-                   created_at, last_used_at, expires_at
+                   created_at, last_used_at, expires_at, metadata
             FROM memories
             WHERE {where}
             ORDER BY {sort_col} {direction}
@@ -94,6 +95,7 @@ async def list_memories(
             created_at=r["created_at"],
             last_used_at=r["last_used_at"],
             expires_at=r["expires_at"],
+            metadata=json.loads(r["metadata"]) if r["metadata"] else None,
         )
         for r in rows
     ]

@@ -28,7 +28,14 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 @router.post("/set", response_model=MemorySetResponse)
 async def set_memory(req: MemorySetRequest, request: Request):
     logger.debug(f"SET ns={req.namespace} key={req.key} user_id={req.user_id} scope={req.scope}")
-    check_namespace_access(get_current_principal(request), req.namespace, "write")
+    principal = get_current_principal(request)
+    check_namespace_access(principal, req.namespace, "write")
+    metadata = {}
+    if principal:
+        metadata["principal"] = principal["name"]
+    machine = request.headers.get("x-engram-machine")
+    if machine:
+        metadata["machine"] = machine
     try:
         key = await memory_set(
             namespace=req.namespace,
@@ -39,6 +46,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             tags=req.tags,
             tags_search=req.tags_search,
             expiration_days=req.expiration_days,
+            metadata=metadata or None,
         )
         return MemorySetResponse(status="ok", key=key)
     except Exception as e:

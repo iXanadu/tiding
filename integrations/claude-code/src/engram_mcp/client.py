@@ -1,4 +1,5 @@
 import asyncio
+import socket
 
 import httpx
 
@@ -12,7 +13,7 @@ class MemoryClient:
 
     def __init__(self, base_url: str = "http://localhost:8920", api_token: str = ""):
         self.base_url = base_url.rstrip("/")
-        headers = {}
+        headers = {"X-Engram-Machine": socket.gethostname().split(".")[0].lower()}
         if api_token:
             headers["Authorization"] = f"Bearer {api_token}"
         self._client = httpx.AsyncClient(
