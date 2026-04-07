@@ -19,9 +19,17 @@ def test_shared_scope():
     assert resolve_scope_and_user_id("shared") == ("shared", "global")
 
 
-def test_project_scope():
-    with patch("engram_mcp.scoping.os.getcwd", return_value="/Users/test/projects/my-app"):
-        assert resolve_scope_and_user_id("project") == ("project", "my-app")
+def test_project_scope_with_project_dir():
+    assert resolve_scope_and_user_id("project", project_dir="/Users/test/projects/my-app") == ("project", "my-app")
+
+
+def test_project_scope_with_basename_only():
+    assert resolve_scope_and_user_id("project", project_dir="my-app") == ("project", "my-app")
+
+
+def test_project_scope_falls_back_to_cwd():
+    with patch("engram_mcp.scoping.os.getcwd", return_value="/Users/test/projects/fallback-app"):
+        assert resolve_scope_and_user_id("project") == ("project", "fallback-app")
 
 
 def test_custom_scope_passthrough():

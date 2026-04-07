@@ -52,6 +52,7 @@ async def memory_store(
     value: str,
     tags: str = "",
     scope: str = "",
+    project_dir: str = "",
 ) -> str:
     """Store a memory. Use for session progress, lessons learned, and important context.
 
@@ -60,9 +61,10 @@ async def memory_store(
         value: The content to remember
         tags: Comma-separated tags for categorization (e.g. "session,progress")
         scope: machine (default), shared (all machines), or project (current project)
+        project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope
+        scope or None, settings.memory_default_scope, project_dir or None
     )
     result = await _client.store(
         key=key,
@@ -80,6 +82,7 @@ async def memory_search(
     query: str,
     limit: int = 5,
     scope: str = "",
+    project_dir: str = "",
 ) -> str:
     """Search memories semantically. Returns the most relevant matches.
 
@@ -87,12 +90,13 @@ async def memory_search(
         query: Natural language search query
         limit: Max results to return (default 5)
         scope: machine (default), shared (all machines), or project (current project)
+        project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     if not query or not query.strip():
         return "No memories found."
 
     resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope
+        scope or None, settings.memory_default_scope, project_dir or None
     )
     read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
     result = await _client.search(
@@ -117,15 +121,17 @@ async def memory_search(
 async def memory_get(
     key: str,
     scope: str = "",
+    project_dir: str = "",
 ) -> str:
     """Retrieve a specific memory by its exact key.
 
     Args:
         key: The exact key of the memory to retrieve
         scope: machine (default), shared (all machines), or project (current project)
+        project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope
+        scope or None, settings.memory_default_scope, project_dir or None
     )
     result = await _client.get(
         key=key,
@@ -144,15 +150,17 @@ async def memory_get(
 async def memory_forget(
     key: str,
     scope: str = "",
+    project_dir: str = "",
 ) -> str:
     """Delete a specific memory by its exact key.
 
     Args:
         key: The exact key of the memory to delete
         scope: machine (default), shared (all machines), or project (current project)
+        project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope
+        scope or None, settings.memory_default_scope, project_dir or None
     )
     result = await _client.forget(
         key=key,
