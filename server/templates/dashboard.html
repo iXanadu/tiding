@@ -101,7 +101,8 @@
                         </div>
                     </button>
                 </template>
-                <div x-show="stats.length === 0" class="col-span-full text-slate-500 text-sm py-8 text-center">
+                <div x-show="stats.length === 0 && authError" class="col-span-full text-red-400 text-sm py-8 text-center" x-text="authError"></div>
+                <div x-show="stats.length === 0 && !authError" class="col-span-full text-slate-500 text-sm py-8 text-center">
                     No namespaces found. Store some memories first.
                 </div>
             </div>
@@ -383,6 +384,7 @@
             memories: [],
             total: 0,
             loading: false,
+            authError: '',
 
             // Filters
             namespace: '',
@@ -464,6 +466,7 @@
                     localStorage.setItem('engram_token', this.tokenInput.trim());
                     this.tokenInput = '';
                     this.tokenSaved = true;
+                    this.authError = '';
                     this.refresh();
                 }
             },
@@ -502,6 +505,13 @@
             async fetchStats() {
                 try {
                     const r = await fetch('/admin/stats', { headers: this.authHeaders() });
+                    if (r.status === 401 || r.status === 403) {
+                        const data = await r.json();
+                        this.authError = data.detail || (r.status === 401 ? 'Token required — enter an admin Bearer token above.' : 'Admin access required — this token lacks admin privileges.');
+                        this.stats = [];
+                        return;
+                    }
+                    this.authError = '';
                     const data = await r.json();
                     this.stats = data.stats || [];
                 } catch {
@@ -512,6 +522,7 @@
             async fetchMemories() {
                 this.loading = true;
                 try {
+                    if (this.authError) { this.memories = []; this.total = 0; return; }
                     const params = new URLSearchParams({
                         offset: this.offset,
                         limit: this.limit,
