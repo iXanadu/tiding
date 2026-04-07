@@ -40,6 +40,18 @@
             <span class="text-sm text-slate-500">memory dashboard</span>
         </div>
         <div class="flex items-center gap-4 text-sm">
+            <template x-if="!tokenSaved">
+                <div class="flex items-center gap-2">
+                    <input type="password" x-model="tokenInput" placeholder="Bearer token"
+                           @keydown.enter="saveToken()"
+                           class="bg-engram-dark border border-engram-border rounded px-2 py-1 text-xs text-slate-200 w-48">
+                    <button @click="saveToken()" class="text-xs text-engram-accent hover:text-engram-accent/80">Save</button>
+                </div>
+            </template>
+            <template x-if="tokenSaved">
+                <button @click="clearToken()" class="text-xs text-slate-500 hover:text-slate-300">clear token</button>
+            </template>
+            <span class="text-slate-600">|</span>
             <div class="flex items-center gap-2">
                 <span class="relative flex h-2.5 w-2.5">
                     <span class="absolute inline-flex h-full w-full rounded-full opacity-75"
@@ -361,6 +373,10 @@
     <script>
     function engramDashboard() {
         return {
+            // Auth
+            tokenInput: '',
+            tokenSaved: false,
+
             // State
             health: { status: 'loading', checks: {} },
             stats: [],
@@ -436,7 +452,29 @@
                 },
             },
 
+            authHeaders() {
+                const h = {};
+                const token = localStorage.getItem('engram_token');
+                if (token) h['Authorization'] = `Bearer ${token}`;
+                return h;
+            },
+
+            saveToken() {
+                if (this.tokenInput.trim()) {
+                    localStorage.setItem('engram_token', this.tokenInput.trim());
+                    this.tokenInput = '';
+                    this.tokenSaved = true;
+                    this.refresh();
+                }
+            },
+
+            clearToken() {
+                localStorage.removeItem('engram_token');
+                this.tokenSaved = false;
+            },
+
             async init() {
+                this.tokenSaved = !!localStorage.getItem('engram_token');
                 await Promise.all([this.fetchHealth(), this.fetchStats()]);
                 // Auto-load all memories on init (sorted by created_at desc)
                 await this.fetchMemories();
@@ -463,7 +501,7 @@
 
             async fetchStats() {
                 try {
-                    const r = await fetch('/admin/stats');
+                    const r = await fetch('/admin/stats', { headers: this.authHeaders() });
                     const data = await r.json();
                     this.stats = data.stats || [];
                 } catch {
@@ -488,7 +526,7 @@
                     if (this.createdAfter) params.set('created_after', this.createdAfter);
                     if (this.createdBefore) params.set('created_before', this.createdBefore);
 
-                    const r = await fetch('/admin/memories?' + params);
+                    const r = await fetch('/admin/memories?' + params, { headers: this.authHeaders() });
                     const data = await r.json();
                     this.memories = data.items || [];
                     this.total = data.total || 0;
@@ -579,7 +617,7 @@
                         value_max_length: '10000',
                         limit: '1',
                     });
-                    const r = await fetch('/admin/memories?' + params);
+                    const r = await fetch('/admin/memories?' + params, { headers: this.authHeaders() });
                     const data = await r.json();
                     if (data.items && data.items.length > 0) {
                         this.expandedValue = data.items[0].value || '(empty)';
@@ -621,7 +659,7 @@
                         value_max_length: '10000',
                         limit: '1',
                     });
-                    const r = await fetch('/admin/memories?' + params);
+                    const r = await fetch('/admin/memories?' + params, { headers: this.authHeaders() });
                     const data = await r.json();
                     if (data.items && data.items.length > 0) {
                         this.editModal.value = data.items[0].value || '(empty)';
@@ -649,7 +687,7 @@
 
                     const r = await fetch('/admin/memories', {
                         method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
                         body: JSON.stringify(body),
                     });
                     const data = await r.json();
