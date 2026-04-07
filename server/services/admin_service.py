@@ -14,6 +14,7 @@ async def list_memories(
     user_id: str | None = None,
     key_prefix: str | None = None,
     search: str | None = None,
+    machine: str | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     offset: int = 0,
@@ -48,6 +49,10 @@ async def list_memories(
     if search is not None:
         conditions.append(f"search_text ILIKE ${idx}")
         params.append(f"%{search}%")
+        idx += 1
+    if machine is not None:
+        conditions.append(f"metadata->>'machine' = ${idx}")
+        params.append(machine)
         idx += 1
     if created_after is not None:
         conditions.append(f"created_at >= ${idx}")
@@ -100,6 +105,16 @@ async def list_memories(
         for r in rows
     ]
     return total, items
+
+
+async def list_machines() -> list[str]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT DISTINCT metadata->>'machine' AS machine FROM memories "
+            "WHERE metadata->>'machine' IS NOT NULL ORDER BY machine"
+        )
+    return [r["machine"] for r in rows]
 
 
 async def update_memory(

@@ -141,6 +141,16 @@
                            class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-32">
                 </div>
                 <div>
+                    <label class="block text-xs text-slate-500 mb-1">Machine</label>
+                    <select x-model="machine" @change="offset = 0; fetchMemories()"
+                            class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 min-w-[120px]">
+                        <option value="">all</option>
+                        <template x-for="m in machines" :key="m">
+                            <option :value="m" x-text="m"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
                     <label class="block text-xs text-slate-500 mb-1">Key prefix</label>
                     <input type="text" x-model.debounce.400ms="keyPrefix"
                            @input="offset = 0; fetchMemories()"
@@ -381,6 +391,8 @@
             namespace: '',
             scope: '',
             userId: '',
+            machine: '',
+            machines: [],
             keyPrefix: '',
             search: '',
             createdAfter: null,
@@ -469,8 +481,7 @@
 
             async init() {
                 this.tokenSaved = !!localStorage.getItem('engram_token');
-                await Promise.all([this.fetchHealth(), this.fetchStats()]);
-                // Auto-load all memories on init (sorted by created_at desc)
+                await Promise.all([this.fetchHealth(), this.fetchStats(), this.fetchMachines()]);
                 await this.fetchMemories();
                 setInterval(() => {
                     if (this.autoRefresh) this.refresh();
@@ -491,6 +502,16 @@
                 } catch {
                     this.health = { status: 'error', checks: {} };
                 }
+            },
+
+            async fetchMachines() {
+                try {
+                    const r = await fetch('/admin/machines', { headers: this.authHeaders() });
+                    if (r.ok) {
+                        const data = await r.json();
+                        this.machines = data.machines || [];
+                    }
+                } catch {}
             },
 
             async fetchStats() {
@@ -523,6 +544,7 @@
                     if (this.namespace) params.set('namespace', this.namespace);
                     if (this.scope) params.set('scope', this.scope);
                     if (this.userId) params.set('user_id', this.userId);
+                    if (this.machine) params.set('machine', this.machine);
                     if (this.keyPrefix) params.set('key_prefix', this.keyPrefix);
                     if (this.search) params.set('search', this.search);
                     if (this.createdAfter) params.set('created_after', this.createdAfter);

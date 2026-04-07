@@ -18,6 +18,7 @@ from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
     get_stats,
+    list_machines,
     list_memories,
     update_memory,
 )
@@ -34,6 +35,7 @@ async def list_memories_endpoint(
     user_id: str | None = Query(None),
     key_prefix: str | None = Query(None),
     search: str | None = Query(None),
+    machine: str | None = Query(None, description="Filter by metadata.machine"),
     created_after: datetime | None = Query(None),
     created_before: datetime | None = Query(None),
     offset: int = Query(0, ge=0),
@@ -53,6 +55,7 @@ async def list_memories_endpoint(
             user_id=user_id,
             key_prefix=key_prefix,
             search=search,
+            machine=machine,
             created_after=created_after,
             created_before=created_before,
             offset=offset,
@@ -68,6 +71,12 @@ async def list_memories_endpoint(
     except Exception as e:
         logger.exception("list_memories failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/machines")
+async def list_machines_endpoint(_caller=Depends(admin_or_open)):
+    machines = await list_machines()
+    return {"machines": machines}
 
 
 @router.patch("/memories", response_model=MemoryUpdateResponse)
