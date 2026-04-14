@@ -15,6 +15,26 @@ INBOX_NAMESPACE = "claude-code"
 INBOX_SCOPE = "inbox"
 INBOX_EXPIRATION_DAYS = 0  # never expire; inbox is not TTL'd
 
+# Model composition leak: some Claude sessions emit memory_reply bodies ending
+# with tool-call closing tags (e.g. "</body></invoke>") when the parameter
+# value bleeds into the tool-call XML envelope. Strip any trailing combination
+# of </body>, </invoke>, </parameter> before persisting.
+_TOOLCALL_TRAILER_RE = re.compile(
+    r"\s*(?:</body>|</invoke>|</parameter>)+\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_toolcall_trailer(text: str) -> str:
+    if not text:
+        return text
+    prev = None
+    cur = text
+    while prev != cur:
+        prev = cur
+        cur = _TOOLCALL_TRAILER_RE.sub("", cur)
+    return cur
+
 
 def _expand_key(key: str) -> str:
     """Expand snake_case/camelCase key into natural words.
@@ -254,6 +274,8 @@ async def inbox_send(
     thread_id: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key)."""
+    body = _strip_toolcall_trailer(body)
+    subject = _strip_toolcall_trailer(subject)
     msg_id = f"inbox/{uuid.uuid4()}"
     metadata = {
         "kind": "inbox",

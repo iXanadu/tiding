@@ -464,6 +464,45 @@ async def test_guidance_present_on_inbox_responses(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_inbox_strips_toolcall_trailer(client, db_pool):
+    """Defensive strip for model composition leak: memory_reply bodies sometimes
+    trail </body></invoke> tag fragments when the parameter value bleeds into
+    the tool-call XML. Server must strip before persisting."""
+    await _cleanup_inbox(db_pool)
+
+    cases = [
+        ("clean body</body></invoke>", "clean body"),
+        ("trailing </invoke>\n", "trailing"),
+        ("double </body></body></invoke>  ", "double"),
+        ("with </parameter></invoke>", "with"),
+        ("mixed </body> </invoke>", "mixed"),
+        ("no bleed here", "no bleed here"),
+    ]
+    for raw_body, want in cases:
+        resp = await client.post("/memory/send", json={
+            "to": "engram",
+            "subject": f"subj </body></invoke>",
+            "body": raw_body,
+            "from_": "engram@macmini",
+        })
+        assert resp.status_code == 200, resp.text
+
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    stored_bodies = {m["body"] for m in msgs}
+    stored_subjects = {m["subject"] for m in msgs}
+    for _, want in cases:
+        assert want in stored_bodies, f"expected clean body {want!r}, got {stored_bodies}"
+    # Subject should also be stripped
+    assert stored_subjects == {"subj"}
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_banner_caps_at_preview_limit(client, db_pool):
     await _cleanup_inbox(db_pool)
     for i in range(7):
