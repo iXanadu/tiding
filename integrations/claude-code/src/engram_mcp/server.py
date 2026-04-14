@@ -7,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
-from engram_mcp.identity import compute_identity
+from engram_mcp.identity import compute_identity, reader_to_address
 from engram_mcp.scoping import resolve_scope_and_user_id
 
 
@@ -343,9 +343,13 @@ async def memory_reply(
     if parent is None:
         return f"Cannot reply: parent message {message_id} not found in this session's listen_set."
 
-    reply_to = parent.get("from_")
-    if not reply_to:
+    raw_from = parent.get("from_")
+    if not raw_from:
         return f"Cannot reply: parent message {message_id} has no 'from' address."
+    # Replies go to the sender's loose-broadcast address (project name or
+    # machine:host), NOT their fully-qualified reader_identity. A specific
+    # session is the reader, but the addressable role is the project.
+    reply_to = reader_to_address(raw_from)
     thread_id = parent.get("thread_id") or parent["id"]
 
     send_result = await _client.inbox_send(

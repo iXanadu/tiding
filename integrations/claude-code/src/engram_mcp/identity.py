@@ -43,7 +43,11 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     """Return ``(reader_identity, listen_set)`` for the current call.
 
     - reader_identity uniquely names this session: ``{project-or-machine}@{host}``
-    - listen_set contains every address this session receives mail on
+    - listen_set contains every address this session receives mail on:
+        - the project name (loose broadcast: "any Claude in that project")
+        - ``machine:{host}`` (loose broadcast: "any Claude on that machine")
+        - the fully-qualified reader_identity itself (precise targeting:
+          "the specific project@host session")
     """
     host = hostname()
     if is_admin_context(project_dir):
@@ -56,4 +60,21 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
         return (addr, [addr])
 
     reader = f"{project}@{host}"
-    return (reader, [project, f"machine:{host}"])
+    return (reader, [project, f"machine:{host}", reader])
+
+
+def reader_to_address(reader_identity: str) -> str:
+    """Convert a reader_identity back to its loose-broadcast address.
+
+    Reader identities have two shapes:
+        ``{project}@{host}`` → loose address is ``{project}``
+        ``machine:{host}``   → already a loose address, use as-is
+
+    This is how ``memory_reply`` recovers the right ``to:`` for a reply —
+    replies go to the sender's *role*, not their specific session.
+    """
+    if not reader_identity:
+        return reader_identity
+    if "@" in reader_identity and not reader_identity.startswith("machine:"):
+        return reader_identity.split("@", 1)[0]
+    return reader_identity

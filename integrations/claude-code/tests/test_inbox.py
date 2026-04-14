@@ -4,7 +4,7 @@ import httpx
 import respx
 from unittest.mock import patch
 
-from engram_mcp.identity import compute_identity, is_admin_context
+from engram_mcp.identity import compute_identity, is_admin_context, reader_to_address
 from engram_mcp.server import (
     _render_inbox_banner,
     memory_ack,
@@ -35,7 +35,9 @@ def test_compute_identity_project():
          patch("engram_mcp.identity.hostname", return_value="macmini"):
         reader, listen_set = compute_identity("/Users/ixanadu/projects/engram")
     assert reader == "engram@macmini"
-    assert listen_set == ["engram", "machine:macmini"]
+    # Project sessions listen on the project, the machine, AND the fully-qualified
+    # reader_identity — so fully-qualified replies still land.
+    assert listen_set == ["engram", "machine:macmini", "engram@macmini"]
 
 
 def test_compute_identity_admin():
@@ -44,6 +46,20 @@ def test_compute_identity_admin():
         reader, listen_set = compute_identity("/Users/ixanadu")
     assert reader == "machine:macmini"
     assert listen_set == ["machine:macmini"]
+
+
+def test_reader_to_address_project():
+    assert reader_to_address("engram@macmini") == "engram"
+    assert reader_to_address("HomeBuyersCourse@laptop") == "HomeBuyersCourse"
+
+
+def test_reader_to_address_machine():
+    assert reader_to_address("machine:macmini") == "machine:macmini"
+
+
+def test_reader_to_address_edge_cases():
+    assert reader_to_address("") == ""
+    assert reader_to_address("plain") == "plain"
 
 
 # --- banner rendering ---
@@ -157,7 +173,10 @@ async def test_memory_ack(respx_mock):
 # --- memory_reply ---
 
 @respx.mock(base_url="http://localhost:8920")
-async def test_memory_reply(respx_mock):
+async def test_memory_reply_addresses_project_not_reader_identity(respx_mock):
+    """memory_reply must use the parent sender's loose address (project name),
+    NOT their fully-qualified reader_identity. Regression: a bug sent replies
+    to 'project@host' which no listen_set contained."""
     respx_mock.post("/memory/inbox").mock(
         return_value=httpx.Response(
             200,
@@ -167,7 +186,7 @@ async def test_memory_reply(respx_mock):
                     {
                         "id": "inbox/m1",
                         "to": "engram",
-                        "from_": "projgamma@macbook",
+                        "from_": "projgamma@macbook",  # reader_identity
                         "subject": "original",
                         "body": "original body",
                         "thread_id": None,
@@ -179,7 +198,8 @@ async def test_memory_reply(respx_mock):
             },
         )
     )
-    respx_mock.post("/memory/send").mock(
+    # Capture the send payload to assert the reply's 'to' field.
+    send_route = respx_mock.post("/memory/send").mock(
         return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/reply-1"})
     )
     respx_mock.post("/memory/inbox/inbox/m1/ack").mock(
@@ -193,7 +213,58 @@ async def test_memory_reply(respx_mock):
             project_dir="/Users/ixanadu/projects/engram",
         )
     assert "Replied to inbox/m1" in result
-    assert "projgamma@macbook" in result
+    # Response message shows the resolved address, not the raw reader_identity
+    assert "projgamma" in result
+    # The critical assertion: the payload sent to /memory/send has to='projgamma'
+    import json as _json
+    sent_payload = _json.loads(send_route.calls.last.request.content)
+    assert sent_payload["to"] == "projgamma", (
+        f"Expected reply to address 'projgamma', got {sent_payload['to']!r}"
+    )
+    assert sent_payload["thread_id"] == "inbox/m1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_admin_sender_passes_through(respx_mock):
+    """When the parent was sent by an admin session (machine:host, no '@'),
+    the reply should address machine:host as-is."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "messages": [
+                    {
+                        "id": "inbox/m2",
+                        "to": "engram",
+                        "from_": "machine:macmini",
+                        "subject": "admin note",
+                        "body": "ping from admin",
+                        "thread_id": None,
+                        "read_by": [],
+                        "archived": False,
+                        "created_at": "2026-04-14T00:00:00Z",
+                    }
+                ],
+            },
+        )
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/reply-2"})
+    )
+    respx_mock.post("/memory/inbox/inbox/m2/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/m2"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_reply(
+            message_id="inbox/m2",
+            body="ack",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    import json as _json
+    sent_payload = _json.loads(send_route.calls.last.request.content)
+    assert sent_payload["to"] == "machine:macmini"
 
 
 # --- memory_search banner injection ---
