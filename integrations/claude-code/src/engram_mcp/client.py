@@ -81,6 +81,8 @@ class MemoryClient:
         limit: int = 5,
         namespace: str | None = None,
         namespaces: list[str] | None = None,
+        listen_set: list[str] | None = None,
+        reader_identity: str | None = None,
     ) -> dict:
         body: dict = {
             "query": query,
@@ -92,7 +94,58 @@ class MemoryClient:
             body["namespaces"] = namespaces
         elif namespace:
             body["namespace"] = namespace
+        if listen_set:
+            body["listen_set"] = listen_set
+        if reader_identity:
+            body["reader_identity"] = reader_identity
         return await self._request("POST", "/memory/search", json=body)
+
+    async def inbox_send(
+        self,
+        to: str,
+        body: str,
+        subject: str = "",
+        from_: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict:
+        payload: dict = {"to": to, "body": body, "subject": subject}
+        if from_:
+            payload["from_"] = from_
+        if thread_id:
+            payload["thread_id"] = thread_id
+        return await self._request("POST", "/memory/send", json=payload)
+
+    async def inbox_list(
+        self,
+        listen_set: list[str],
+        reader_identity: str | None = None,
+        unread_only: bool = True,
+        limit: int = 20,
+    ) -> dict:
+        return await self._request(
+            "POST",
+            "/memory/inbox",
+            json={
+                "listen_set": listen_set,
+                "reader_identity": reader_identity,
+                "unread_only": unread_only,
+                "limit": limit,
+            },
+        )
+
+    async def inbox_ack(self, message_id: str, reader_identity: str) -> dict:
+        return await self._request(
+            "POST",
+            f"/memory/inbox/{message_id}/ack",
+            json={"reader_identity": reader_identity},
+        )
+
+    async def inbox_archive(self, message_id: str, reader_identity: str) -> dict:
+        return await self._request(
+            "POST",
+            f"/memory/inbox/{message_id}/archive",
+            json={"reader_identity": reader_identity},
+        )
 
     async def forget(
         self,

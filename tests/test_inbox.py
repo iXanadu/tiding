@@ -1,0 +1,331 @@
+"""Integration tests for the inbox (inter-session messaging) endpoints."""
+
+import pytest
+
+
+async def _cleanup_inbox(db_pool):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE namespace='claude-code' AND scope='inbox'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_and_list_inbox(client, db_pool):
+    await _cleanup_inbox(db_pool)
+
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "subject": "check the X",
+        "body": "the foo is broken, please look",
+        "from_": "projgamma@macbook",
+    })
+    assert resp.status_code == 200, resp.text
+    msg_id = resp.json()["id"]
+    assert msg_id.startswith("inbox/")
+
+    # List — reader is a different session, should see it
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram", "machine:macmini"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    msgs = data["messages"]
+    assert len(msgs) == 1
+    m = msgs[0]
+    assert m["id"] == msg_id
+    assert m["to"] == "engram"
+    assert m["from_"] == "projgamma@macbook"
+    assert m["subject"] == "check the X"
+    assert m["body"] == "the foo is broken, please look"
+    assert m["read_by"] == []
+    assert m["archived"] is False
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_ack_marks_read_per_reader(client, db_pool):
+    await _cleanup_inbox(db_pool)
+
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "note one",
+        "from_": "projgamma@macbook",
+    })
+    msg_id = resp.json()["id"]
+
+    # Reader A acks
+    resp = await client.post(f"/memory/inbox/{msg_id}/ack", json={
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200
+
+    # Reader A no longer sees it
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    assert resp.json()["messages"] == []
+
+    # Reader B (different machine) still sees it
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macbook",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["read_by"] == ["engram@macmini"]
+
+    # unread_only=False returns the message for reader A too
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": False,
+    })
+    assert len(resp.json()["messages"]) == 1
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_ack_idempotent(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "note",
+    })
+    msg_id = resp.json()["id"]
+    for _ in range(3):
+        r = await client.post(f"/memory/inbox/{msg_id}/ack", json={
+            "reader_identity": "engram@macmini",
+        })
+        assert r.status_code == 200
+
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": False,
+    })
+    msgs = resp.json()["messages"]
+    assert msgs[0]["read_by"] == ["engram@macmini"]  # only once
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_ack_not_found(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/inbox/inbox/nonexistent/ack", json={
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_archive_hides_from_all_readers(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "note",
+    })
+    msg_id = resp.json()["id"]
+
+    resp = await client.post(f"/memory/inbox/{msg_id}/archive", json={
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200
+
+    # Neither reader sees it now
+    for reader in ("engram@macmini", "engram@macbook"):
+        r = await client.post("/memory/inbox", json={
+            "listen_set": ["engram"],
+            "reader_identity": reader,
+            "unread_only": False,
+        })
+        assert r.json()["messages"] == []
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_machine_addressing(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "machine:macmini",
+        "body": "restart ollama please",
+        "from_": "ixanadu@macbook",
+    })
+    assert resp.status_code == 200
+    msg_id = resp.json()["id"]
+
+    # Admin Claude on macmini listens only on machine:macmini
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["machine:macmini"],
+        "reader_identity": "machine:macmini",
+        "unread_only": True,
+    })
+    msgs = r.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["to"] == "machine:macmini"
+
+    # Project Claude on macbook does NOT see it (wrong machine)
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["engram", "machine:macbook"],
+        "reader_identity": "engram@macbook",
+        "unread_only": True,
+    })
+    assert r.json()["messages"] == []
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_banner_on_search(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    # Seed 2 inbox messages
+    await client.post("/memory/send", json={
+        "to": "engram",
+        "subject": "first",
+        "body": "body one",
+        "from_": "projgamma@macbook",
+    })
+    await client.post("/memory/send", json={
+        "to": "engram",
+        "subject": "second",
+        "body": "body two",
+        "from_": "projgamma@macbook",
+    })
+
+    # Regular search with listen_set should get a banner
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code",
+        "query": "anything",
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["inbox_banner"] is not None
+    assert data["inbox_banner"]["unread_count"] == 2
+    assert len(data["inbox_banner"]["preview"]) == 2
+
+    # Without listen_set, no banner
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code",
+        "query": "anything",
+    })
+    assert resp.json().get("inbox_banner") is None
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_banner_absent_when_empty(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code",
+        "query": "anything",
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200
+    assert resp.json().get("inbox_banner") is None
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_inbox_scope(client, db_pool):
+    """Inbox messages must NEVER surface in a regular vector search."""
+    await _cleanup_inbox(db_pool)
+    # Put an inbox message whose body is very searchable
+    await client.post("/memory/send", json={
+        "to": "engram",
+        "subject": "pineapple pizza",
+        "body": "the ultimate test phrase about pineapples",
+    })
+    # Seed a normal memory for the same query so we know search works
+    await client.post("/memory/set", json={
+        "namespace": "test-inbox-xclusion",
+        "key": "fruit_pref",
+        "value": "I enjoy pineapples on pizza",
+        "scope": "user",
+        "user_id": "default",
+    })
+    resp = await client.post("/memory/search", json={
+        "namespace": "test-inbox-xclusion",
+        "query": "pineapple",
+        "limit": 10,
+    })
+    assert resp.status_code == 200
+    for r in resp.json()["results"]:
+        assert not r["key"].startswith("inbox/")
+    # And searching claude-code for the same phrase must not surface inbox
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code",
+        "query": "pineapple",
+        "limit": 10,
+    })
+    for r in resp.json()["results"]:
+        assert not r["key"].startswith("inbox/")
+
+    await client.post("/memory/forget", json={
+        "namespace": "test-inbox-xclusion",
+        "key": "fruit_pref",
+        "scope": "user",
+        "user_id": "default",
+    })
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_address_validation(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    # Empty
+    resp = await client.post("/memory/send", json={"to": "", "body": "x"})
+    assert resp.status_code == 422
+    # Bad chars
+    resp = await client.post("/memory/send", json={"to": "bad address!", "body": "x"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_thread_id_preserved(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "root",
+        "thread_id": "t-123",
+    })
+    mid = resp.json()["id"]
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    assert msgs[0]["thread_id"] == "t-123"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_banner_caps_at_preview_limit(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    for i in range(7):
+        await client.post("/memory/send", json={
+            "to": "engram",
+            "subject": f"msg {i}",
+            "body": f"body {i}",
+            "from_": "projgamma@macbook",
+        })
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code",
+        "query": "anything",
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+    })
+    banner = resp.json()["inbox_banner"]
+    # Preview capped at 5; unread_count reflects the capped fetch
+    assert len(banner["preview"]) == 5
+    await _cleanup_inbox(db_pool)

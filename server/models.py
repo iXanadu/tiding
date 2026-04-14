@@ -38,6 +38,8 @@ class MemorySearchRequest(BaseModel):
     scope: str = "user"
     user_id: str = "default"
     limit: int = 5
+    listen_set: list[str] | None = None
+    reader_identity: str | None = None
 
     @model_validator(mode="after")
     def require_namespace(self):
@@ -89,9 +91,15 @@ class MemoryGetResponse(BaseModel):
     memory: MemoryItem | None = None
 
 
+class InboxBanner(BaseModel):
+    unread_count: int
+    preview: list[str]  # ≤5 one-line previews of unread messages
+
+
 class MemorySearchResponse(BaseModel):
     status: str
     results: list[MemoryItem]
+    inbox_banner: InboxBanner | None = None
 
 
 class MemoryForgetResponse(BaseModel):
@@ -266,3 +274,76 @@ class TokenResponse(BaseModel):
     status: str
     principal_name: str
     raw_token: str
+
+
+# --- Inbox models (inter-session messaging on top of the memories table) ---
+
+class InboxSendRequest(BaseModel):
+    to: str
+    body: str
+    subject: str = ""
+    from_: str | None = None  # sender identity — MCP bridge stamps this
+    thread_id: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("to", mode="before")
+    @classmethod
+    def to_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("'to' must be a non-empty string")
+        return v.strip()
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def body_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("'body' must be a non-empty string")
+        return v
+
+
+class InboxMessage(BaseModel):
+    id: str  # memory key, e.g. "inbox/<uuid>"
+    to: str
+    from_: str | None = None
+    subject: str
+    body: str
+    thread_id: str | None = None
+    read_by: list[str]
+    archived: bool
+    created_at: datetime
+
+    model_config = {"populate_by_name": True}
+
+
+class InboxSendResponse(BaseModel):
+    status: str
+    id: str
+
+
+class InboxListRequest(BaseModel):
+    listen_set: list[str]
+    reader_identity: str | None = None
+    unread_only: bool = True
+    limit: int = 20
+
+
+class InboxListResponse(BaseModel):
+    status: str
+    messages: list[InboxMessage]
+
+
+class InboxAckRequest(BaseModel):
+    reader_identity: str
+
+    @field_validator("reader_identity", mode="before")
+    @classmethod
+    def reader_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("'reader_identity' must be a non-empty string")
+        return v.strip()
+
+
+class InboxAckResponse(BaseModel):
+    status: str
+    id: str

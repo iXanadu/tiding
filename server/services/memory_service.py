@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -8,7 +9,11 @@ import numpy as np
 from server.config import settings
 from server.db import get_pool
 from server.embeddings import embed
-from server.models import MemoryItem
+from server.models import InboxMessage, MemoryItem
+
+INBOX_NAMESPACE = "claude-code"
+INBOX_SCOPE = "inbox"
+INBOX_EXPIRATION_DAYS = 0  # never expire; inbox is not TTL'd
 
 
 def _expand_key(key: str) -> str:
@@ -141,6 +146,7 @@ async def memory_search(
                 WHERE (expires_at IS NULL OR expires_at > NOW())
                   AND namespace = ANY($3::text[])
                   AND scope = $4
+                  AND scope <> 'inbox'
                   AND user_id = $5
                 ORDER BY embedding <=> $1
                 LIMIT $6 * 3
@@ -210,3 +216,209 @@ async def memory_forget(
             user_id,
         )
     return result == "DELETE 1"
+
+
+# --- Inbox operations ----------------------------------------------------
+#
+# Inbox messages are ordinary rows in the `memories` table with:
+#   namespace = 'claude-code'
+#   scope     = 'inbox'
+#   user_id   = <to address>   — e.g. 'engram', 'machine:macmini'
+#   key       = 'inbox/<uuid>' — unique per message
+#   metadata  = {kind: 'inbox', from, subject, thread_id, read_by[], archived}
+#
+# This reuses the existing table, indexes, and auth — no schema migration.
+
+def _row_to_inbox_message(row: dict) -> InboxMessage:
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        md = json.loads(md)
+    return InboxMessage(
+        id=row["key"],
+        to=row["user_id"],
+        from_=md.get("from"),
+        subject=md.get("subject", ""),
+        body=row["value"],
+        thread_id=md.get("thread_id"),
+        read_by=md.get("read_by", []) or [],
+        archived=bool(md.get("archived", False)),
+        created_at=row["created_at"],
+    )
+
+
+async def inbox_send(
+    to: str,
+    body: str,
+    subject: str = "",
+    from_: str | None = None,
+    thread_id: str | None = None,
+) -> str:
+    """Create an inbox message. Returns the generated message id (memory key)."""
+    msg_id = f"inbox/{uuid.uuid4()}"
+    metadata = {
+        "kind": "inbox",
+        "from": from_,
+        "subject": subject,
+        "thread_id": thread_id,
+        "read_by": [],
+        "archived": False,
+    }
+    # Minimal embedding — we never semantic-search inbox, but the column is NOT NULL.
+    search_text = f"{subject} {body}"
+    embedding = await embed(search_text)
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, tags, tags_search,
+                 embedding, search_text, expires_at, metadata)
+            VALUES ($1, $2, $3, $4, $5, '', '', $6, $7, NULL, $8::jsonb)
+            """,
+            INBOX_NAMESPACE,
+            msg_id,
+            body,
+            INBOX_SCOPE,
+            to,
+            embedding,
+            search_text,
+            json.dumps(metadata),
+        )
+    return msg_id
+
+
+async def inbox_list(
+    listen_set: list[str],
+    reader_identity: str | None = None,
+    unread_only: bool = True,
+    limit: int = 20,
+) -> list[InboxMessage]:
+    """List inbox messages addressed to any member of ``listen_set``.
+
+    When ``unread_only`` is True and ``reader_identity`` is given, messages
+    already read by that reader are filtered out.
+    """
+    if not listen_set:
+        return []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, value, user_id, metadata, created_at
+            FROM memories
+            WHERE namespace = $1
+              AND scope = $2
+              AND user_id = ANY($3::text[])
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND (
+                  NOT $4::bool
+                  OR $5::text IS NULL
+                  OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
+              )
+            ORDER BY created_at ASC
+            LIMIT $6
+            """,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            listen_set,
+            unread_only,
+            reader_identity,
+            limit,
+        )
+    return [_row_to_inbox_message(dict(r)) for r in rows]
+
+
+async def inbox_banner(
+    listen_set: list[str],
+    reader_identity: str | None,
+    preview_limit: int = 5,
+) -> dict | None:
+    """Return ``{unread_count, preview}`` if there are unread messages, else None."""
+    if not listen_set:
+        return None
+    msgs = await inbox_list(
+        listen_set=listen_set,
+        reader_identity=reader_identity,
+        unread_only=True,
+        limit=preview_limit + 1,
+    )
+    if not msgs:
+        return None
+    preview = []
+    for m in msgs[:preview_limit]:
+        sender = m.from_ or "unknown"
+        subject = m.subject or (m.body[:60] + ("…" if len(m.body) > 60 else ""))
+        preview.append(f"{sender} → {m.to}: {subject}")
+    return {"unread_count": len(msgs), "preview": preview}
+
+
+async def inbox_ack(message_id: str, reader_identity: str) -> bool:
+    """Append ``reader_identity`` to ``metadata.read_by`` for the given inbox message.
+
+    Idempotent — re-acking is a no-op. Returns True if the message exists.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{read_by}',
+                CASE
+                    WHEN metadata->'read_by' IS NULL THEN jsonb_build_array($1::text)
+                    WHEN metadata->'read_by' ? $1::text THEN metadata->'read_by'
+                    ELSE metadata->'read_by' || to_jsonb($1::text)
+                END
+            )
+            WHERE namespace = $2 AND scope = $3 AND key = $4
+            """,
+            reader_identity,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            message_id,
+        )
+    return result.endswith(" 1")
+
+
+async def inbox_archive(message_id: str, reader_identity: str | None = None) -> bool:
+    """Mark an inbox message archived. Also acks for the reader if given."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await conn.execute(
+                """
+                UPDATE memories
+                SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'::jsonb),
+                    '{archived}',
+                    'true'::jsonb
+                )
+                WHERE namespace = $1 AND scope = $2 AND key = $3
+                """,
+                INBOX_NAMESPACE,
+                INBOX_SCOPE,
+                message_id,
+            )
+            if reader_identity and result.endswith(" 1"):
+                await conn.execute(
+                    """
+                    UPDATE memories
+                    SET metadata = jsonb_set(
+                        COALESCE(metadata, '{}'::jsonb),
+                        '{read_by}',
+                        CASE
+                            WHEN metadata->'read_by' IS NULL THEN jsonb_build_array($1::text)
+                            WHEN metadata->'read_by' ? $1::text THEN metadata->'read_by'
+                            ELSE metadata->'read_by' || to_jsonb($1::text)
+                        END
+                    )
+                    WHERE namespace = $2 AND scope = $3 AND key = $4
+                    """,
+                    reader_identity,
+                    INBOX_NAMESPACE,
+                    INBOX_SCOPE,
+                    message_id,
+                )
+    return result.endswith(" 1")
