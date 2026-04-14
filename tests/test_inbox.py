@@ -310,6 +310,73 @@ async def test_thread_id_preserved(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_guidance_present_on_inbox_responses(client, db_pool):
+    """Each inbox endpoint must return a non-empty guidance string so the
+    MCP bridge can surface usage hints without requiring a Claude restart
+    to update docstrings."""
+    await _cleanup_inbox(db_pool)
+
+    # send
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "hello",
+        "from_": "projgamma@macbook",
+    })
+    assert resp.status_code == 200
+    send_data = resp.json()
+    assert send_data.get("guidance"), "send response must include guidance"
+    assert "addressing" in send_data["guidance"].lower()
+    msg_id = send_data["id"]
+
+    # list with messages
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    list_data = resp.json()
+    assert list_data.get("guidance"), "list (non-empty) must include guidance"
+    assert "memory_reply" in list_data["guidance"]
+
+    # ack
+    resp = await client.post(
+        f"/memory/inbox/{msg_id}/ack",
+        json={"reader_identity": "engram@macmini"},
+    )
+    ack_data = resp.json()
+    assert ack_data.get("guidance"), "ack must include guidance"
+    assert "per-reader" in ack_data["guidance"].lower()
+
+    # list empty (different guidance path)
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["nonexistent-project-xyz"],
+        "reader_identity": "nonexistent@macmini",
+        "unread_only": True,
+    })
+    empty_data = resp.json()
+    assert empty_data.get("guidance"), "empty list must include guidance"
+    assert "banner" in empty_data["guidance"].lower()
+
+    # archive
+    # send a fresh message to archive (ack'd one still exists)
+    resp = await client.post("/memory/send", json={
+        "to": "engram",
+        "body": "archive me",
+        "from_": "projgamma@macbook",
+    })
+    arch_id = resp.json()["id"]
+    resp = await client.post(
+        f"/memory/inbox/{arch_id}/archive",
+        json={"reader_identity": "engram@macmini"},
+    )
+    arch_data = resp.json()
+    assert arch_data.get("guidance"), "archive must include guidance"
+    assert "archive" in arch_data["guidance"].lower()
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_banner_caps_at_preview_limit(client, db_pool):
     await _cleanup_inbox(db_pool)
     for i in range(7):

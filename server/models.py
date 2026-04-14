@@ -319,6 +319,7 @@ class InboxMessage(BaseModel):
 class InboxSendResponse(BaseModel):
     status: str
     id: str
+    guidance: str | None = None
 
 
 class InboxListRequest(BaseModel):
@@ -331,6 +332,7 @@ class InboxListRequest(BaseModel):
 class InboxListResponse(BaseModel):
     status: str
     messages: list[InboxMessage]
+    guidance: str | None = None
 
 
 class InboxAckRequest(BaseModel):
@@ -347,3 +349,4 @@ class InboxAckRequest(BaseModel):
 class InboxAckResponse(BaseModel):
     status: str
     id: str
+    guidance: str | None = None

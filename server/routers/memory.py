@@ -21,6 +21,12 @@ from server.models import (
     MemorySetResponse,
 )
 from server.services.identity import validate_address, validate_listen_set
+from server.services.inbox_guidance import (
+    ack_guidance,
+    archive_guidance,
+    inbox_list_guidance,
+    send_guidance,
+)
 from server.services.memory_service import (
     INBOX_NAMESPACE,
     inbox_ack,
@@ -155,7 +161,11 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             from_=req.from_,
             thread_id=req.thread_id,
         )
-        return InboxSendResponse(status="ok", id=msg_id)
+        return InboxSendResponse(
+            status="ok",
+            id=msg_id,
+            guidance=send_guidance(to=to, reader_identity=req.from_),
+        )
     except Exception as e:
         logger.exception("inbox_send failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -176,7 +186,15 @@ async def list_inbox(req: InboxListRequest, request: Request):
             unread_only=req.unread_only,
             limit=req.limit,
         )
-        return InboxListResponse(status="ok", messages=messages)
+        return InboxListResponse(
+            status="ok",
+            messages=messages,
+            guidance=inbox_list_guidance(
+                reader_identity=req.reader_identity or "(unknown)",
+                listen_set=listen_set,
+                msg_count=len(messages),
+            ),
+        )
     except Exception as e:
         logger.exception("inbox_list failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -190,7 +208,7 @@ async def ack_inbox(message_id: str, req: InboxAckRequest, request: Request):
         updated = await inbox_ack(message_id=message_id, reader_identity=req.reader_identity)
         if not updated:
             raise HTTPException(status_code=404, detail=f"Inbox message {message_id!r} not found")
-        return InboxAckResponse(status="ok", id=message_id)
+        return InboxAckResponse(status="ok", id=message_id, guidance=ack_guidance())
     except HTTPException:
         raise
     except Exception as e:
@@ -209,7 +227,7 @@ async def archive_inbox(message_id: str, req: InboxAckRequest, request: Request)
         )
         if not updated:
             raise HTTPException(status_code=404, detail=f"Inbox message {message_id!r} not found")
-        return InboxAckResponse(status="ok", id=message_id)
+        return InboxAckResponse(status="ok", id=message_id, guidance=archive_guidance())
     except HTTPException:
         raise
     except Exception as e:

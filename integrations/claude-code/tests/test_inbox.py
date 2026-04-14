@@ -104,6 +104,96 @@ async def test_memory_send_empty_to():
     assert "Error" in result
 
 
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_send_forwards_guidance(respx_mock):
+    """Server-supplied 'guidance' text must be appended to the tool return
+    string. This is the whole point of the thin-wrapper architecture: the
+    wrapper never needs to know what the guidance says."""
+    respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "id": "inbox/xyz",
+                "guidance": "GUIDANCE_SENTINEL: addressing is flat",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_send(
+            to="engram",
+            body="hello",
+            project_dir="/Users/ixanadu/projects/projgamma",
+        )
+    assert "inbox/xyz" in result
+    assert "GUIDANCE_SENTINEL" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_inbox_forwards_guidance(respx_mock):
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "messages": [],
+                "guidance": "GUIDANCE_SENTINEL: call memory_inbox when banner appears",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_inbox(project_dir="/Users/ixanadu/projects/engram")
+    assert "empty" in result.lower()
+    assert "GUIDANCE_SENTINEL" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_ack_forwards_guidance(respx_mock):
+    respx_mock.post("/memory/inbox/inbox/m1/ack").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "id": "inbox/m1",
+                "guidance": "GUIDANCE_SENTINEL: acks are per-reader",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_ack(
+            message_id="inbox/m1",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    assert "Acked" in result
+    assert "GUIDANCE_SENTINEL" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_inbox_archive_forwards_guidance(respx_mock):
+    respx_mock.post("/memory/inbox/inbox/m1/archive").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "id": "inbox/m1",
+                "guidance": "GUIDANCE_SENTINEL: archive is global",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        from engram_mcp.server import memory_inbox_archive
+        result = await memory_inbox_archive(
+            message_id="inbox/m1",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    assert "Archived" in result
+    assert "GUIDANCE_SENTINEL" in result
+
+
 async def test_memory_send_empty_body():
     result = await memory_send(to="engram", body="")
     assert "Error" in result

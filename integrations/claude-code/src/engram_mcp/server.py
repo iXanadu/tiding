@@ -11,6 +11,19 @@ from engram_mcp.identity import compute_identity, reader_to_address
 from engram_mcp.scoping import resolve_scope_and_user_id
 
 
+def _append_guidance(body: str, result: dict) -> str:
+    """Append server-provided usage guidance to a tool result string.
+
+    The engram server returns a 'guidance' field on inbox responses — usage
+    hints, addressing rules, polling cadence — so we can iterate on wording
+    server-side without forcing an MCP/Claude restart.
+    """
+    guidance = result.get("guidance") if isinstance(result, dict) else None
+    if not guidance:
+        return body
+    return f"{body}\n\n---\n{guidance}"
+
+
 def _get_version() -> str:
     """Return version string with git short hash, e.g. '0.2.0 (abc1234)'.
 
@@ -227,18 +240,15 @@ async def memory_send(
     thread_id: str = "",
     project_dir: str = "",
 ) -> str:
-    """Send an inbox message to another Claude session.
-
-    Addresses are flat strings:
-      - A project name (e.g. "engram") — any Claude working in that project
-      - "machine:<hostname>" — any Claude on that machine (usually admin sessions)
+    """Send an inbox message to another Claude session. Response includes
+    current addressing guidance — read it.
 
     Args:
-        to: Recipient address (project name or "machine:hostname")
+        to: Recipient address
         body: Message body
         subject: Short subject line
         thread_id: Optional thread id to group a back-and-forth
-        project_dir: Your working directory path (used to stamp "from")
+        project_dir: Your working directory path (required for identity)
     """
     if not to or not to.strip():
         return "Error: 'to' is required."
@@ -252,7 +262,8 @@ async def memory_send(
         from_=reader_identity,
         thread_id=thread_id or None,
     )
-    return f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
+    head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
+    return _append_guidance(head, result)
 
 
 @mcp.tool()
@@ -261,15 +272,13 @@ async def memory_inbox(
     limit: int = 20,
     project_dir: str = "",
 ) -> str:
-    """Read the inbox for this Claude session.
-
-    Listens on the current project AND the current machine. Pass
-    unread_only=False to see previously-acknowledged messages too.
+    """Read this session's inbox. Response includes current usage guidance
+    for reply/ack/archive — read it.
 
     Args:
         unread_only: When True (default), only show messages this session hasn't acked
         limit: Max messages to return
-        project_dir: Your working directory path (used to compute listen_set)
+        project_dir: Your working directory path (required for identity)
     """
     reader_identity, listen_set = compute_identity(project_dir or None)
     result = await _client.inbox_list(
@@ -282,9 +291,11 @@ async def memory_inbox(
         return f"Inbox error: {result}"
     msgs = result.get("messages", [])
     if not msgs:
-        return f"Inbox empty for {reader_identity} (listen_set={listen_set})."
-    header = f"Inbox for {reader_identity} (listen_set={listen_set}) — {len(msgs)} message(s):\n"
-    return header + "\n\n---\n\n".join(_format_inbox_message(m) for m in msgs)
+        head = f"Inbox empty for {reader_identity} (listen_set={listen_set})."
+    else:
+        header = f"Inbox for {reader_identity} (listen_set={listen_set}) — {len(msgs)} message(s):\n"
+        head = header + "\n\n---\n\n".join(_format_inbox_message(m) for m in msgs)
+    return _append_guidance(head, result)
 
 
 @mcp.tool()
@@ -292,21 +303,20 @@ async def memory_ack(
     message_id: str,
     project_dir: str = "",
 ) -> str:
-    """Mark an inbox message as read by this session.
-
-    Acks are per-reader — other sessions listening on the same address can
-    still see the message until they ack it themselves.
+    """Mark an inbox message as read by this session. Response includes
+    per-reader vs archive semantics — read it.
 
     Args:
         message_id: The inbox message id (e.g. "inbox/abc-123")
-        project_dir: Your working directory path (used to compute reader identity)
+        project_dir: Your working directory path (required for identity)
     """
     reader_identity, _ = compute_identity(project_dir or None)
     try:
         result = await _client.inbox_ack(message_id=message_id, reader_identity=reader_identity)
     except Exception as e:
         return f"Ack failed: {e}"
-    return f"Acked {result['id']} as {reader_identity}"
+    head = f"Acked {result['id']} as {reader_identity}"
+    return _append_guidance(head, result)
 
 
 @mcp.tool()
@@ -316,19 +326,16 @@ async def memory_reply(
     subject: str = "",
     project_dir: str = "",
 ) -> str:
-    """Reply to an inbox message and ack it in one call.
-
-    Looks up the parent to determine the reply address and thread_id, then
-    sends a new inbox message AND marks the parent as read.
+    """Reply to an inbox message and ack it in one call. Addressing and
+    thread-linking are automatic. Response includes current guidance.
 
     Args:
         message_id: The id of the message being replied to
         body: The reply body
         subject: Optional subject for the reply
-        project_dir: Your working directory path
+        project_dir: Your working directory path (required for identity)
     """
     reader_identity, listen_set = compute_identity(project_dir or None)
-    # Fetch the parent to resolve its sender + thread_id
     parent_list = await _client.inbox_list(
         listen_set=listen_set,
         reader_identity=reader_identity,
@@ -346,9 +353,6 @@ async def memory_reply(
     raw_from = parent.get("from_")
     if not raw_from:
         return f"Cannot reply: parent message {message_id} has no 'from' address."
-    # Replies go to the sender's loose-broadcast address (project name or
-    # machine:host), NOT their fully-qualified reader_identity. A specific
-    # session is the reader, but the addressable role is the project.
     reply_to = reader_to_address(raw_from)
     thread_id = parent.get("thread_id") or parent["id"]
 
@@ -360,7 +364,8 @@ async def memory_reply(
         thread_id=thread_id,
     )
     await _client.inbox_ack(message_id=message_id, reader_identity=reader_identity)
-    return f"Replied to {message_id} → {reply_to} (thread {thread_id}); sent {send_result['id']}"
+    head = f"Replied to {message_id} → {reply_to} (thread {thread_id}); sent {send_result['id']}"
+    return _append_guidance(head, send_result)
 
 
 @mcp.tool()
@@ -368,7 +373,9 @@ async def memory_inbox_archive(
     message_id: str,
     project_dir: str = "",
 ) -> str:
-    """Archive an inbox message so it disappears from all future inbox views."""
+    """Archive an inbox message globally (hidden from all readers). Response
+    includes archive-vs-ack semantics.
+    """
     reader_identity, _ = compute_identity(project_dir or None)
     try:
         result = await _client.inbox_archive(
@@ -377,7 +384,8 @@ async def memory_inbox_archive(
         )
     except Exception as e:
         return f"Archive failed: {e}"
-    return f"Archived {result['id']}"
+    head = f"Archived {result['id']}"
+    return _append_guidance(head, result)
 
 
 def main():
