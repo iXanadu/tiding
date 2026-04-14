@@ -80,6 +80,7 @@ async def memory_store(
     resolved_scope, user_id = resolve_scope_and_user_id(
         scope or None, settings.memory_default_scope, project_dir or None
     )
+    reader_identity, listen_set = compute_identity(project_dir or None)
     result = await _client.store(
         key=key,
         value=value,
@@ -87,8 +88,13 @@ async def memory_store(
         scope=resolved_scope,
         user_id=user_id,
         tags=tags,
+        project_dir=project_dir or None,
+        listen_set=listen_set,
+        reader_identity=reader_identity,
     )
-    return f"Stored memory '{result['key']}' (namespace: {settings.memory_namespace}, scope: {resolved_scope}, user_id: {user_id})"
+    banner_text = _render_inbox_banner(result.get("inbox_banner"))
+    head = f"Stored memory '{result['key']}' (namespace: {settings.memory_namespace}, scope: {resolved_scope}, user_id: {user_id})"
+    return banner_text + head if banner_text else head
 
 
 def _render_inbox_banner(banner: dict | None) -> str:
@@ -135,6 +141,7 @@ async def memory_search(
         limit=limit,
         listen_set=listen_set,
         reader_identity=reader_identity,
+        project_dir=project_dir or None,
     )
 
     banner_text = _render_inbox_banner(result.get("inbox_banner"))
@@ -173,6 +180,7 @@ async def memory_get(
         namespace=settings.memory_namespace,
         scope=resolved_scope,
         user_id=user_id,
+        project_dir=project_dir or None,
     )
     if result["status"] == "not_found":
         return f"No memory found with key '{key}'"
@@ -202,6 +210,7 @@ async def memory_forget(
         namespace=settings.memory_namespace,
         scope=resolved_scope,
         user_id=user_id,
+        project_dir=project_dir or None,
     )
     if result["status"] == "not_found":
         return f"No memory found with key '{key}'"
@@ -261,6 +270,7 @@ async def memory_send(
         subject=subject,
         from_=reader_identity,
         thread_id=thread_id or None,
+        project_dir=project_dir or None,
     )
     head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
     return _append_guidance(head, result)
@@ -286,6 +296,7 @@ async def memory_inbox(
         reader_identity=reader_identity,
         unread_only=unread_only,
         limit=limit,
+        project_dir=project_dir or None,
     )
     if result.get("status") != "ok":
         return f"Inbox error: {result}"
@@ -312,7 +323,11 @@ async def memory_ack(
     """
     reader_identity, _ = compute_identity(project_dir or None)
     try:
-        result = await _client.inbox_ack(message_id=message_id, reader_identity=reader_identity)
+        result = await _client.inbox_ack(
+            message_id=message_id,
+            reader_identity=reader_identity,
+            project_dir=project_dir or None,
+        )
     except Exception as e:
         return f"Ack failed: {e}"
     head = f"Acked {result['id']} as {reader_identity}"
@@ -341,6 +356,7 @@ async def memory_reply(
         reader_identity=reader_identity,
         unread_only=False,
         limit=200,
+        project_dir=project_dir or None,
     )
     parent = None
     for m in parent_list.get("messages", []):
@@ -362,8 +378,13 @@ async def memory_reply(
         subject=subject or f"re: {parent.get('subject', '')}",
         from_=reader_identity,
         thread_id=thread_id,
+        project_dir=project_dir or None,
     )
-    await _client.inbox_ack(message_id=message_id, reader_identity=reader_identity)
+    await _client.inbox_ack(
+        message_id=message_id,
+        reader_identity=reader_identity,
+        project_dir=project_dir or None,
+    )
     head = f"Replied to {message_id} → {reply_to} (thread {thread_id}); sent {send_result['id']}"
     return _append_guidance(head, send_result)
 
@@ -381,6 +402,7 @@ async def memory_inbox_archive(
         result = await _client.inbox_archive(
             message_id=message_id,
             reader_identity=reader_identity,
+            project_dir=project_dir or None,
         )
     except Exception as e:
         return f"Archive failed: {e}"

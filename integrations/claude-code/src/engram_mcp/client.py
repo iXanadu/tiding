@@ -3,6 +3,8 @@ import socket
 
 import httpx
 
+from engram_mcp.identity import derive_project_name
+
 
 class MemoryClient:
     """Async HTTP client for the engram semantic memory REST API.
@@ -19,6 +21,17 @@ class MemoryClient:
         self._client = httpx.AsyncClient(
             base_url=self.base_url, headers=headers, timeout=30.0,
         )
+
+    def _provenance_headers(self, project_dir: str | None) -> dict:
+        """Per-request headers identifying which folder the caller is in.
+
+        Server stores these into ``metadata.project`` / ``metadata.cwd`` on
+        memory rows so the dashboard can filter by origin.
+        """
+        return {
+            "X-Engram-Project": derive_project_name(project_dir),
+            "X-Engram-Cwd": (project_dir or "").strip(),
+        }
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         """Send a request with one retry on transient connection/timeout errors."""
@@ -41,18 +54,27 @@ class MemoryClient:
         scope: str,
         user_id: str,
         tags: str = "",
+        project_dir: str | None = None,
+        listen_set: list[str] | None = None,
+        reader_identity: str | None = None,
     ) -> dict:
+        body: dict = {
+            "namespace": namespace,
+            "key": key,
+            "value": value,
+            "scope": scope,
+            "user_id": user_id,
+            "tags": tags,
+        }
+        if listen_set:
+            body["listen_set"] = listen_set
+        if reader_identity:
+            body["reader_identity"] = reader_identity
         return await self._request(
             "POST",
             "/memory/set",
-            json={
-                "namespace": namespace,
-                "key": key,
-                "value": value,
-                "scope": scope,
-                "user_id": user_id,
-                "tags": tags,
-            },
+            json=body,
+            headers=self._provenance_headers(project_dir),
         )
 
     async def get(
@@ -61,6 +83,7 @@ class MemoryClient:
         namespace: str,
         scope: str,
         user_id: str,
+        project_dir: str | None = None,
     ) -> dict:
         return await self._request(
             "POST",
@@ -71,6 +94,7 @@ class MemoryClient:
                 "scope": scope,
                 "user_id": user_id,
             },
+            headers=self._provenance_headers(project_dir),
         )
 
     async def search(
@@ -83,6 +107,7 @@ class MemoryClient:
         namespaces: list[str] | None = None,
         listen_set: list[str] | None = None,
         reader_identity: str | None = None,
+        project_dir: str | None = None,
     ) -> dict:
         body: dict = {
             "query": query,
@@ -98,7 +123,12 @@ class MemoryClient:
             body["listen_set"] = listen_set
         if reader_identity:
             body["reader_identity"] = reader_identity
-        return await self._request("POST", "/memory/search", json=body)
+        return await self._request(
+            "POST",
+            "/memory/search",
+            json=body,
+            headers=self._provenance_headers(project_dir),
+        )
 
     async def inbox_send(
         self,
@@ -107,13 +137,19 @@ class MemoryClient:
         subject: str = "",
         from_: str | None = None,
         thread_id: str | None = None,
+        project_dir: str | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
         if from_:
             payload["from_"] = from_
         if thread_id:
             payload["thread_id"] = thread_id
-        return await self._request("POST", "/memory/send", json=payload)
+        return await self._request(
+            "POST",
+            "/memory/send",
+            json=payload,
+            headers=self._provenance_headers(project_dir),
+        )
 
     async def inbox_list(
         self,
@@ -121,6 +157,7 @@ class MemoryClient:
         reader_identity: str | None = None,
         unread_only: bool = True,
         limit: int = 20,
+        project_dir: str | None = None,
     ) -> dict:
         return await self._request(
             "POST",
@@ -131,20 +168,33 @@ class MemoryClient:
                 "unread_only": unread_only,
                 "limit": limit,
             },
+            headers=self._provenance_headers(project_dir),
         )
 
-    async def inbox_ack(self, message_id: str, reader_identity: str) -> dict:
+    async def inbox_ack(
+        self,
+        message_id: str,
+        reader_identity: str,
+        project_dir: str | None = None,
+    ) -> dict:
         return await self._request(
             "POST",
             f"/memory/inbox/{message_id}/ack",
             json={"reader_identity": reader_identity},
+            headers=self._provenance_headers(project_dir),
         )
 
-    async def inbox_archive(self, message_id: str, reader_identity: str) -> dict:
+    async def inbox_archive(
+        self,
+        message_id: str,
+        reader_identity: str,
+        project_dir: str | None = None,
+    ) -> dict:
         return await self._request(
             "POST",
             f"/memory/inbox/{message_id}/archive",
             json={"reader_identity": reader_identity},
+            headers=self._provenance_headers(project_dir),
         )
 
     async def forget(
@@ -153,6 +203,7 @@ class MemoryClient:
         namespace: str,
         scope: str,
         user_id: str,
+        project_dir: str | None = None,
     ) -> dict:
         return await self._request(
             "POST",
@@ -163,6 +214,7 @@ class MemoryClient:
                 "scope": scope,
                 "user_id": user_id,
             },
+            headers=self._provenance_headers(project_dir),
         )
 
     async def health(self) -> dict:

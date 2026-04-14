@@ -4,7 +4,12 @@ import httpx
 import respx
 from unittest.mock import patch
 
-from engram_mcp.identity import compute_identity, is_admin_context, reader_to_address
+from engram_mcp.identity import (
+    compute_identity,
+    derive_project_name,
+    is_admin_context,
+    reader_to_address,
+)
 from engram_mcp.server import (
     _render_inbox_banner,
     memory_ack,
@@ -17,22 +22,41 @@ from engram_mcp.server import (
 
 
 # --- identity resolution ---
+# Rule: any path with a /projects/<name>/ segment gives project <name>;
+# everything else (home, /opt/srv, /tmp, bare ~/projects) is admin.
 
-def test_is_admin_when_cwd_is_home():
-    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}):
-        assert is_admin_context("/Users/ixanadu") is True
-        assert is_admin_context(None) is True
-        assert is_admin_context("") is True
+def test_derive_project_from_projects_dir():
+    assert derive_project_name("/Users/ixanadu/projects/engram") == "engram"
+    assert derive_project_name("/home/ixanadu/projects/foo") == "foo"
+    # Works for deep CWDs inside a project.
+    assert derive_project_name("/Users/ixanadu/projects/engram/server/routers") == "engram"
 
 
-def test_is_admin_false_for_project():
-    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}):
-        assert is_admin_context("/Users/ixanadu/projects/engram") is False
+def test_derive_project_admin_fallbacks():
+    # Home dir, system paths, and scratch dirs are all admin.
+    assert derive_project_name("/Users/ixanadu") == "admin"
+    assert derive_project_name("/opt/srv") == "admin"
+    assert derive_project_name("/tmp") == "admin"
+    assert derive_project_name(None) == "admin"
+    assert derive_project_name("") == "admin"
+    # Bare ~/projects with no subdir is also admin.
+    assert derive_project_name("/Users/ixanadu/projects") == "admin"
+
+
+def test_derive_project_nested_projects_takes_outer():
+    # If 'projects' appears twice, we use the first (outer) occurrence.
+    assert derive_project_name("/Users/x/projects/foo/projects/bar") == "foo"
+
+
+def test_is_admin_context_matches_derive():
+    assert is_admin_context("/Users/ixanadu") is True
+    assert is_admin_context("/opt/srv") is True
+    assert is_admin_context(None) is True
+    assert is_admin_context("/Users/ixanadu/projects/engram") is False
 
 
 def test_compute_identity_project():
-    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
-         patch("engram_mcp.identity.hostname", return_value="macmini"):
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
         reader, listen_set = compute_identity("/Users/ixanadu/projects/engram")
     assert reader == "engram@macmini"
     # Project sessions listen on the project, the machine, AND the fully-qualified
@@ -40,12 +64,20 @@ def test_compute_identity_project():
     assert listen_set == ["engram", "machine:macmini", "engram@macmini"]
 
 
-def test_compute_identity_admin():
-    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
-         patch("engram_mcp.identity.hostname", return_value="macmini"):
+def test_compute_identity_admin_symmetric():
+    # Admin sessions are symmetric with project sessions: loose role name,
+    # machine address, and fully-qualified reader_identity.
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
         reader, listen_set = compute_identity("/Users/ixanadu")
-    assert reader == "machine:macmini"
-    assert listen_set == ["machine:macmini"]
+    assert reader == "admin@macmini"
+    assert listen_set == ["admin", "machine:macmini", "admin@macmini"]
+
+
+def test_compute_identity_admin_for_system_paths():
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        reader, listen_set = compute_identity("/opt/srv")
+    assert reader == "admin@macmini"
+    assert listen_set == ["admin", "machine:macmini", "admin@macmini"]
 
 
 def test_reader_to_address_project():
@@ -53,7 +85,13 @@ def test_reader_to_address_project():
     assert reader_to_address("HomeBuyersCourse@laptop") == "HomeBuyersCourse"
 
 
-def test_reader_to_address_machine():
+def test_reader_to_address_admin():
+    assert reader_to_address("admin@macmini") == "admin"
+
+
+def test_reader_to_address_legacy_machine():
+    # Legacy pre-admin-rollout identities pass through unchanged so any
+    # already-sent mail can still be replied to.
     assert reader_to_address("machine:macmini") == "machine:macmini"
 
 

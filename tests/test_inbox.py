@@ -223,6 +223,93 @@ async def test_banner_on_search(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_banner_on_set(client, db_pool):
+    """memory_set returns an inbox banner when the writing session has unread
+    mail — lets write-heavy sessions pick up messages without polling."""
+    await _cleanup_inbox(db_pool)
+    await client.post("/memory/send", json={
+        "to": "engram",
+        "subject": "ping",
+        "body": "you have mail",
+        "from_": "admin@macmini",
+    })
+
+    resp = await client.post("/memory/set", json={
+        "namespace": "claude-code",
+        "key": "banner-on-set-probe",
+        "value": "hello",
+        "scope": "machine",
+        "user_id": "macmini",
+        "listen_set": ["engram", "machine:macmini", "engram@macmini"],
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["inbox_banner"] is not None
+    assert data["inbox_banner"]["unread_count"] == 1
+    preview = " ".join(data["inbox_banner"]["preview"])
+    assert "admin@macmini" in preview
+    assert "ping" in preview
+
+    # Without listen_set, no banner on set (matches /search behavior)
+    resp = await client.post("/memory/set", json={
+        "namespace": "claude-code",
+        "key": "banner-on-set-probe-2",
+        "value": "hello",
+        "scope": "machine",
+        "user_id": "macmini",
+    })
+    assert resp.json().get("inbox_banner") is None
+
+    # Cleanup the probe rows
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE key LIKE 'banner-on-set-probe%'"
+        )
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_memory_set_records_project_and_cwd_metadata(client, db_pool):
+    """X-Engram-Project and X-Engram-Cwd headers land in memory metadata so
+    the dashboard can filter by folder of origin."""
+    resp = await client.post(
+        "/memory/set",
+        json={
+            "namespace": "claude-code",
+            "key": "provenance-probe",
+            "value": "hello",
+            "scope": "machine",
+            "user_id": "macmini",
+        },
+        headers={
+            "X-Engram-Project": "engram",
+            "X-Engram-Cwd": "/Users/ixanadu/projects/engram",
+            "X-Engram-Machine": "macmini",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT metadata FROM memories WHERE key=$1 AND namespace='claude-code'",
+            "provenance-probe",
+        )
+    assert row is not None
+    import json as _json
+    md = row["metadata"]
+    if isinstance(md, str):
+        md = _json.loads(md)
+    assert md.get("project") == "engram"
+    assert md.get("cwd") == "/Users/ixanadu/projects/engram"
+    assert md.get("machine") == "macmini"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE key='provenance-probe'")
+
+
+@pytest.mark.asyncio
 async def test_banner_absent_when_empty(client, db_pool):
     await _cleanup_inbox(db_pool)
     resp = await client.post("/memory/search", json={

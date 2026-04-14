@@ -56,6 +56,12 @@ async def set_memory(req: MemorySetRequest, request: Request):
     machine = request.headers.get("x-engram-machine")
     if machine:
         metadata["machine"] = machine
+    project = request.headers.get("x-engram-project")
+    if project:
+        metadata["project"] = project
+    cwd = request.headers.get("x-engram-cwd")
+    if cwd:
+        metadata["cwd"] = cwd
     try:
         key = await memory_set(
             namespace=req.namespace,
@@ -68,7 +74,20 @@ async def set_memory(req: MemorySetRequest, request: Request):
             expiration_days=req.expiration_days,
             metadata=metadata or None,
         )
-        return MemorySetResponse(status="ok", key=key)
+        banner = None
+        if req.listen_set:
+            try:
+                listen_set = validate_listen_set(req.listen_set)
+            except ValueError:
+                listen_set = []
+            if listen_set:
+                banner_dict = await inbox_banner(
+                    listen_set=listen_set,
+                    reader_identity=req.reader_identity,
+                )
+                if banner_dict:
+                    banner = InboxBanner(**banner_dict)
+        return MemorySetResponse(status="ok", key=key, inbox_banner=banner)
     except Exception as e:
         logger.exception("memory_set failed")
         raise HTTPException(status_code=500, detail=str(e))

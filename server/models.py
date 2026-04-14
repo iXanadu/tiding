@@ -15,6 +15,8 @@ class MemorySetRequest(BaseModel):
     tags_search: str = ""
     expiration_days: int = 180
     force_new: bool = False
+    listen_set: list[str] | None = None
+    reader_identity: str | None = None
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -81,19 +83,20 @@ class MemoryItem(BaseModel):
     score: float | None = None
 
 
+class InboxBanner(BaseModel):
+    unread_count: int
+    preview: list[str]  # ≤5 one-line previews of unread messages
+
+
 class MemorySetResponse(BaseModel):
     status: str
     key: str
+    inbox_banner: InboxBanner | None = None
 
 
 class MemoryGetResponse(BaseModel):
     status: str
     memory: MemoryItem | None = None
-
-
-class InboxBanner(BaseModel):
-    unread_count: int
-    preview: list[str]  # ≤5 one-line previews of unread messages
 
 
 class MemorySearchResponse(BaseModel):

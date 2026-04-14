@@ -25,6 +25,87 @@ async def test_memory_store(respx_mock):
 
 
 @respx.mock(base_url="http://localhost:8920")
+async def test_memory_store_sends_provenance_and_identity(respx_mock):
+    """Writes must include X-Engram-Project / X-Engram-Cwd headers and
+    the listen_set + reader_identity on the request body so the server can
+    attach an inbox banner and record the origin folder."""
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"})
+    )
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_store(
+            key="k",
+            value="v",
+            scope="project",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    req = route.calls.last.request
+    assert req.headers["x-engram-project"] == "engram"
+    assert req.headers["x-engram-cwd"] == "/Users/ixanadu/projects/engram"
+    import json as _json
+    body = _json.loads(req.content)
+    assert body["reader_identity"] == "engram@macmini"
+    assert body["listen_set"] == ["engram", "machine:macmini", "engram@macmini"]
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_store_admin_sends_admin_provenance(respx_mock):
+    """Admin sessions (home dir, system paths) get X-Engram-Project=admin
+    and reader_identity=admin@host."""
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"})
+    )
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_store(
+            key="k",
+            value="v",
+            scope="shared",
+            project_dir="/Users/ixanadu",
+        )
+    req = route.calls.last.request
+    assert req.headers["x-engram-project"] == "admin"
+    assert req.headers["x-engram-cwd"] == "/Users/ixanadu"
+    import json as _json
+    body = _json.loads(req.content)
+    assert body["reader_identity"] == "admin@macmini"
+    assert body["listen_set"] == ["admin", "machine:macmini", "admin@macmini"]
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_store_renders_inbox_banner(respx_mock):
+    """When the server returns an inbox_banner on /memory/set, memory_store
+    must prepend it to the return value so write-heavy sessions see mail."""
+    respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "key": "test-key",
+                "inbox_banner": {
+                    "unread_count": 2,
+                    "preview": [
+                        "admin@macmini → engram: restart needed",
+                        "projgamma@macbook → engram: ping",
+                    ],
+                },
+            },
+        )
+    )
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_store(
+            key="test-key",
+            value="v",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    banner_idx = result.find("📬 INBOX")
+    head_idx = result.find("Stored memory")
+    assert banner_idx != -1
+    assert head_idx != -1
+    assert banner_idx < head_idx
+    assert "restart needed" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
 async def test_memory_search_results(respx_mock):
     respx_mock.post("/memory/search").mock(
         return_value=httpx.Response(
