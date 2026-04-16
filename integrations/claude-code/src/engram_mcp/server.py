@@ -36,20 +36,33 @@ def _resolve_project_scope_or_identity(scope: str | None, project_dir: str | Non
 
 
 def _identity_error_message(e: AmbiguousIdentity) -> str:
-    """Format a structured prompt for Claude when scope=project is ambiguous."""
+    """Format a structured prompt for Claude when scope=project is ambiguous.
+
+    Wording is deliberately imperative: past sessions have silently
+    written to file-based ``.claude/projects/.../MEMORY.md`` when this
+    error fires, hiding the prompt from the user. DO NOT do that.
+    """
     return (
-        f"IDENTITY NEEDED: scope=project at '{e.project_dir}' has no "
-        f".engram.cfg and doesn't match the auto-write rules ($HOME, or "
-        f"~/projects/<x>/ with .claude/ directory).\n\n"
-        f"Ask the user:\n"
-        f'"I\'m in {e.project_dir}. For scope=project memory, should I:\n'
-        f"  (1) Declare this as project '{e.suggested}' (basename suggestion)?\n"
-        f"  (2) Treat it as admin territory?\n"
-        f'  (3) Use a custom project name?"\n\n'
+        f"STOP. Project identity is required for scope=project at "
+        f"'{e.project_dir}'.\n\n"
+        f"DO NOT fall back to file-based memory "
+        f"(`.claude/projects/*/MEMORY.md` or `MEMORY.md` anywhere).\n"
+        f"DO NOT silently store the memory somewhere else.\n"
+        f"DO NOT bury this prompt in a footnote while doing other work.\n"
+        f"DO NOT skip the memory call and continue as if nothing happened.\n\n"
+        f"Ask the user this exact question and WAIT for their answer:\n\n"
+        f'  "I\'m in {e.project_dir}. This isn\'t a known project. For\n'
+        f"   memory storage, do you want to:\n"
+        f"     (1) Declare this folder as project '{e.suggested}' "
+        f"(basename suggestion)?\n"
+        f"     (2) Treat it as admin territory (project = admin)?\n"
+        f'     (3) Use a custom project name?"\n\n'
         f"After the user picks, call:\n"
-        f"  memory_declare_identity(project_dir='{e.project_dir}', name='<chosen>')\n"
-        f"where <chosen> is the user's project name or 'admin'. Then retry "
-        f"the original memory call."
+        f"  memory_declare_identity(project_dir='{e.project_dir}', name=<chosen>)\n"
+        f"where <chosen> is the user's project name or 'admin'. Then retry\n"
+        f"the original memory call.\n\n"
+        f"This writes .engram.cfg at {e.project_dir} so identity persists — "
+        f"you won't be asked again at this path."
     )
 
 
