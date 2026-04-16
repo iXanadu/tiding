@@ -39,16 +39,33 @@ def resolve_project_name(project_dir: str | None) -> str | None:
 
     Returns the declared name, or None if no file is found, the file is
     malformed, or ``project_dir`` is not an absolute path we can walk.
+
+    Boundary rule: when ``project_dir`` is under ``$HOME/projects/``, walk-up
+    stops at ``$HOME/projects`` and does NOT cross into ``$HOME``. This prevents
+    children without their own cfg from inheriting ``$HOME/.engram.cfg``
+    (which declares the admin-session identity, not a default for projects).
+    Paths outside ``$HOME/projects/`` (``$HOME`` itself, ``$HOME/Downloads``,
+    server paths like ``/opt/srv/engram``) walk up normally.
     """
     if not project_dir or not os.path.isabs(project_dir):
         return None
-    current = os.path.abspath(project_dir)
+    project_dir = os.path.abspath(project_dir)
+
+    home = os.path.expanduser("~")
+    projects_root = os.path.join(home, "projects")
+    under_projects = project_dir == projects_root or project_dir.startswith(
+        projects_root + os.sep
+    )
+
+    current = project_dir
     seen: set[str] = set()
     while current and current not in seen:
         seen.add(current)
         candidate = os.path.join(current, PROJECT_CFG_FILENAME)
         if os.path.isfile(candidate):
             return _parse_engram_cfg(candidate)
+        if under_projects and current == projects_root:
+            return None
         parent = os.path.dirname(current)
         if parent == current:
             break
