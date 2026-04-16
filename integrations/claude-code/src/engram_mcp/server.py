@@ -8,7 +8,49 @@ from mcp.server.fastmcp import FastMCP
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
 from engram_mcp.identity import compute_identity, reader_to_address
-from engram_mcp.scoping import resolve_scope_and_user_id
+from engram_mcp.scoping import (
+    AmbiguousIdentity,
+    ensure_project_identity,
+    resolve_scope_and_user_id,
+    write_project_cfg,
+)
+
+
+def _resolve_project_scope_or_identity(scope: str | None, project_dir: str | None):
+    """Wrap scope resolution with identity auto-write / ambiguous raise.
+
+    For scope=project, invoke ensure_project_identity first — it auto-writes
+    .engram.cfg under Rule 1 ($HOME) or Rule 2 (~/projects/<x>/.claude/),
+    or raises AmbiguousIdentity for Rule 3 (ambiguous dir). After that,
+    resolve_scope_and_user_id does the final lookup.
+    """
+    if (scope or settings.memory_default_scope) == "project":
+        effective = project_dir if project_dir and Path(project_dir).is_absolute() else None
+        # Skip ensure when project_dir isn't a usable absolute path — the
+        # tool's project_dir docstring already directs callers to pass one.
+        if effective:
+            ensure_project_identity(effective)  # side effect: writes cfg or raises
+    return resolve_scope_and_user_id(
+        scope or None, settings.memory_default_scope, project_dir or None
+    )
+
+
+def _identity_error_message(e: AmbiguousIdentity) -> str:
+    """Format a structured prompt for Claude when scope=project is ambiguous."""
+    return (
+        f"IDENTITY NEEDED: scope=project at '{e.project_dir}' has no "
+        f".engram.cfg and doesn't match the auto-write rules ($HOME, or "
+        f"~/projects/<x>/ with .claude/ directory).\n\n"
+        f"Ask the user:\n"
+        f'"I\'m in {e.project_dir}. For scope=project memory, should I:\n'
+        f"  (1) Declare this as project '{e.suggested}' (basename suggestion)?\n"
+        f"  (2) Treat it as admin territory?\n"
+        f'  (3) Use a custom project name?"\n\n'
+        f"After the user picks, call:\n"
+        f"  memory_declare_identity(project_dir='{e.project_dir}', name='<chosen>')\n"
+        f"where <chosen> is the user's project name or 'admin'. Then retry "
+        f"the original memory call."
+    )
 
 
 def _append_guidance(body: str, result: dict) -> str:
@@ -77,9 +119,10 @@ async def memory_store(
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
-    resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope, project_dir or None
-    )
+    try:
+        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
     result = await _client.store(
         key=key,
@@ -128,9 +171,10 @@ async def memory_search(
     if not query or not query.strip():
         return "No memories found."
 
-    resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope, project_dir or None
-    )
+    try:
+        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
     read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
     result = await _client.search(
@@ -172,9 +216,10 @@ async def memory_get(
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
-    resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope, project_dir or None
-    )
+    try:
+        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
     result = await _client.get(
         key=key,
         namespace=settings.memory_namespace,
@@ -202,9 +247,10 @@ async def memory_forget(
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
-    resolved_scope, user_id = resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope, project_dir or None
-    )
+    try:
+        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
     result = await _client.forget(
         key=key,
         namespace=settings.memory_namespace,
@@ -215,6 +261,42 @@ async def memory_forget(
     if result["status"] == "not_found":
         return f"No memory found with key '{key}'"
     return f"Deleted memory '{key}'"
+
+
+@mcp.tool()
+async def memory_declare_identity(
+    project_dir: str,
+    name: str,
+) -> str:
+    """Declare the canonical project identity for a directory by writing
+    .engram.cfg there.
+
+    Call this to resolve an "IDENTITY NEEDED" prompt from another memory
+    tool. After it succeeds, retry the original call — scope=project will
+    now resolve deterministically.
+
+    Args:
+        project_dir: Absolute path where to write .engram.cfg (the ambiguous
+            directory from the prompt, e.g. "/tmp/scratch" or
+            "~/Documents/HomeMaintenance").
+        name: The project name to declare. Use the user-suggested basename,
+            a custom name, or "admin" if the user chose admin territory.
+            Must match [A-Za-z0-9._-]+.
+    """
+    if not project_dir or not project_dir.strip():
+        return "Error: project_dir is required."
+    if not name or not name.strip():
+        return "Error: name is required."
+    try:
+        path = write_project_cfg(project_dir.strip(), name.strip())
+    except ValueError as e:
+        return f"Error: {e}"
+    except OSError as e:
+        return f"Error writing .engram.cfg: {e}"
+    return (
+        f"Declared project identity: {name} at {project_dir}\n"
+        f"Wrote {path}. Retry the memory call that triggered this."
+    )
 
 
 @mcp.tool()

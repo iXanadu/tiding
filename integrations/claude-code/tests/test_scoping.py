@@ -1,10 +1,15 @@
 import socket
 from unittest.mock import patch
 
+import pytest
+
 from engram_mcp.scoping import (
+    AmbiguousIdentity,
     _parse_engram_cfg,
+    ensure_project_identity,
     resolve_project_name,
     resolve_scope_and_user_id,
+    write_project_cfg,
 )
 
 
@@ -183,13 +188,147 @@ def test_home_cfg_used_when_at_home_directly(tmp_path, monkeypatch):
     assert resolve_project_name(fake_home) == "admin"
 
 
-def test_home_cfg_used_from_home_adjacent_dir(tmp_path, monkeypatch):
-    # ~/Downloads or similar (outside ~/projects) walks up and picks up ~/.engram.cfg.
+def test_home_adjacent_dir_does_NOT_inherit_home_cfg(tmp_path, monkeypatch):
+    # ~/Downloads does NOT silently inherit ~/.engram.cfg. Walk-up stops at
+    # $HOME boundary — $HOME/.engram.cfg is only read when CWD IS $HOME.
+    # Rule 3 (ambiguous) applies for home-adjacent dirs.
     _fake_home(tmp_path, monkeypatch)
     (tmp_path / ".engram.cfg").write_text("project = admin\n")
     downloads = tmp_path / "Downloads"
     downloads.mkdir()
-    assert resolve_project_name(str(downloads)) == "admin"
+    assert resolve_project_name(str(downloads)) is None
+
+
+# --- ensure_project_identity: auto-write rules + ambiguous raise ---
+
+def test_ensure_identity_rule1_at_home_autowrites_admin(tmp_path, monkeypatch):
+    # Rule 1: CWD == $HOME → auto-write $HOME/.engram.cfg with project=admin.
+    fake_home, _ = _fake_home(tmp_path, monkeypatch)
+    assert not (tmp_path / ".engram.cfg").exists()
+    name = ensure_project_identity(fake_home)
+    assert name == "admin"
+    cfg = tmp_path / ".engram.cfg"
+    assert cfg.exists()
+    assert "project = admin" in cfg.read_text()
+
+
+def test_ensure_identity_rule1_idempotent(tmp_path, monkeypatch):
+    # Rule 1 doesn't re-write if cfg already exists.
+    fake_home, _ = _fake_home(tmp_path, monkeypatch)
+    (tmp_path / ".engram.cfg").write_text("project = admin\n# manual\n")
+    name = ensure_project_identity(fake_home)
+    assert name == "admin"
+    # Marker preserved — we didn't overwrite.
+    assert "# manual" in (tmp_path / ".engram.cfg").read_text()
+
+
+def test_ensure_identity_rule2_autowrites_project_cfg(tmp_path, monkeypatch):
+    # Rule 2: CWD under ~/projects/<x>/ with .claude/ → auto-write cfg with
+    # project=<x>.
+    _fake_home(tmp_path, monkeypatch)
+    project = tmp_path / "projects" / "foo"
+    project.mkdir(parents=True)
+    (project / ".claude").mkdir()
+    assert not (project / ".engram.cfg").exists()
+    name = ensure_project_identity(str(project))
+    assert name == "foo"
+    assert (project / ".engram.cfg").exists()
+    assert "project = foo" in (project / ".engram.cfg").read_text()
+
+
+def test_ensure_identity_rule2_autowrites_from_subdir(tmp_path, monkeypatch):
+    # Rule 2 walks up from subdir to find .claude/ at the project root.
+    _fake_home(tmp_path, monkeypatch)
+    project = tmp_path / "projects" / "foo"
+    project.mkdir(parents=True)
+    (project / ".claude").mkdir()
+    subdir = project / "server" / "routers"
+    subdir.mkdir(parents=True)
+    name = ensure_project_identity(str(subdir))
+    assert name == "foo"
+    # Cfg written at the project root, not in the subdir
+    assert (project / ".engram.cfg").exists()
+    assert not (subdir / ".engram.cfg").exists()
+
+
+def test_ensure_identity_rule2_nested_inner_wins(tmp_path, monkeypatch):
+    # Nested: ~/projects/evh/ (no .claude/) wraps ~/projects/evh/evh/ (has
+    # .claude/). Running from the inner, rule 2 writes cfg at inner with
+    # project="evh".
+    _fake_home(tmp_path, monkeypatch)
+    outer = tmp_path / "projects" / "evh"
+    inner = outer / "evh"
+    inner.mkdir(parents=True)
+    (inner / ".claude").mkdir()
+    name = ensure_project_identity(str(inner))
+    assert name == "evh"
+    assert (inner / ".engram.cfg").exists()
+    assert not (outer / ".engram.cfg").exists()
+
+
+def test_ensure_identity_existing_cfg_beats_rule2(tmp_path, monkeypatch):
+    # If a .engram.cfg already exists, it wins over rule 2 auto-write.
+    _fake_home(tmp_path, monkeypatch)
+    project = tmp_path / "projects" / "foo"
+    project.mkdir(parents=True)
+    (project / ".claude").mkdir()
+    (project / ".engram.cfg").write_text("project = custom-name\n")
+    name = ensure_project_identity(str(project))
+    assert name == "custom-name"
+
+
+def test_ensure_identity_rule3_raises_for_home_adjacent(tmp_path, monkeypatch):
+    # Rule 3: ~/Documents/HomeMaintenance/ has no cfg, no ~/projects path,
+    # no .claude/. Must raise AmbiguousIdentity with suggested basename.
+    fake_home, _ = _fake_home(tmp_path, monkeypatch)
+    target = tmp_path / "Documents" / "HomeMaintenance"
+    target.mkdir(parents=True)
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(target))
+    assert exc_info.value.suggested == "HomeMaintenance"
+    assert exc_info.value.project_dir == str(target)
+
+
+def test_ensure_identity_rule3_raises_for_projects_without_claude(tmp_path, monkeypatch):
+    # ~/projects/foo/ WITHOUT .claude/ is not a project by our signal.
+    # Rule 3 fires — ask the user.
+    _fake_home(tmp_path, monkeypatch)
+    project = tmp_path / "projects" / "foo"
+    project.mkdir(parents=True)
+    # no .claude/ directory
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(project))
+    assert exc_info.value.suggested == "foo"
+
+
+def test_ensure_identity_rule3_raises_for_tmp(tmp_path, monkeypatch):
+    # /tmp/scratch (outside $HOME entirely) with nothing → Rule 3.
+    _fake_home(tmp_path, monkeypatch)
+    target = tmp_path.parent / "scratch-ambiguous-test"
+    target.mkdir(exist_ok=True)
+    try:
+        with pytest.raises(AmbiguousIdentity) as exc_info:
+            ensure_project_identity(str(target))
+        assert exc_info.value.suggested == "scratch-ambiguous-test"
+    finally:
+        target.rmdir()
+
+
+def test_write_project_cfg_validates_name(tmp_path):
+    with pytest.raises(ValueError):
+        write_project_cfg(str(tmp_path), "../evil")
+    with pytest.raises(ValueError):
+        write_project_cfg(str(tmp_path), "has spaces")
+
+
+def test_resolve_scope_keeps_basename_fallback_for_library_callers(tmp_path, monkeypatch):
+    # resolve_scope_and_user_id (library function) keeps backward-compatible
+    # basename fallback — doesn't raise. Only ensure_project_identity raises.
+    # MCP tool layer wraps both to auto-write + prompt.
+    _fake_home(tmp_path, monkeypatch)
+    target = tmp_path / "Documents" / "X"
+    target.mkdir(parents=True)
+    assert resolve_scope_and_user_id("project", project_dir=str(target)) == ("project", "X")
 
 
 def test_server_path_unaffected_by_home_boundary(tmp_path, monkeypatch):
