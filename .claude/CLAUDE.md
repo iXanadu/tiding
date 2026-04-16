@@ -65,7 +65,7 @@ Auth modes:
 - `namespace` is **required** on all API calls — no default. Omitting it returns 422.
 - Pyscript `@service` decorators MUST use `supports_response="optional"` for HA 2024.10+.
 - Dev (`~/projects/engram`) and prod (`/opt/srv/engram`) can both be `pip install -e` in the same pyenv virtualenv — last install wins for import resolution. After editing locally, run `pip install -e .` from dev dir.
-- Project `user_id` for `scope=project` is resolved via `.engram.cfg` walk-up (see `integrations/claude-code/src/engram_mcp/scoping.py`). Basename is only a fallback — required because server layouts like `/var/www/site/prod` would otherwise collide. Every project must commit a `.engram.cfg` at the repo root.
+- Project `user_id` for `scope=project` is resolved via `.engram.cfg` walk-up (see `integrations/claude-code/src/engram_mcp/scoping.py`). Basename is only a fallback — required because server layouts like `/var/www/site/prod` would otherwise collide. Projects with a clean `~/projects/<name>/` layout commit `.engram.cfg` at the repo root; ambiguous layouts (nested, domain-style, separate prod/dev clones) leave it absent and let the `/startup` flow ask the user on first use. Templates never ship a `.engram.cfg`.
 
 ## Related Projects
 
