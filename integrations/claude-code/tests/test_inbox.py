@@ -48,6 +48,36 @@ def test_derive_project_nested_projects_takes_outer():
     assert derive_project_name("/Users/x/projects/foo/projects/bar") == "foo"
 
 
+def test_derive_project_name_engram_cfg_overrides_basename(tmp_path):
+    # Server layout /var/www/site/prod — the .engram.cfg declares the real
+    # project name, overriding the /projects/<name>/ path-segment rule and
+    # the basename (which would otherwise give 'prod').
+    site = tmp_path / "trustworthyagents.com"
+    prod = site / "prod"
+    prod.mkdir(parents=True)
+    (site / ".engram.cfg").write_text("project = newTag\n")
+    assert derive_project_name(str(prod)) == "newTag"
+
+
+def test_derive_project_name_engram_cfg_wins_over_projects_segment(tmp_path):
+    # Even when /projects/<name>/ matches, .engram.cfg is authoritative.
+    proj = tmp_path / "projects" / "raw-dir-name"
+    proj.mkdir(parents=True)
+    (proj / ".engram.cfg").write_text("project = canonical\n")
+    assert derive_project_name(str(proj)) == "canonical"
+
+
+def test_compute_identity_uses_engram_cfg(tmp_path):
+    site = tmp_path / "trustworthyagents.com"
+    prod = site / "prod"
+    prod.mkdir(parents=True)
+    (site / ".engram.cfg").write_text("project = newTag\n")
+    with patch("engram_mcp.identity.hostname", return_value="hosta"):
+        reader, listen_set = compute_identity(str(prod))
+    assert reader == "newTag@hosta"
+    assert listen_set == ["newTag", "machine:hosta", "newTag@hosta"]
+
+
 def test_is_admin_context_matches_derive():
     assert is_admin_context("/Users/ixanadu") is True
     assert is_admin_context("/opt/srv") is True

@@ -5,8 +5,9 @@ addresses — typically its project and its machine — and is addressed by the
 same tuple when ack'ing read receipts.
 
 The rule:
-    CWD has a ``/projects/<name>/`` segment → project session, name = <name>
-    anything else (``~``, ``/opt/srv``, ``/tmp``, bare ``~/projects``) → admin
+    1. Walk up from CWD looking for ``.engram.cfg`` — if found, use declared name
+    2. Else CWD has a ``/projects/<name>/`` segment → project session, name = <name>
+    3. Else (``~``, ``/opt/srv``, ``/tmp``, bare ``~/projects``) → admin
 
 Project session:
     reader_identity = "<name>@<host>"
@@ -23,6 +24,8 @@ inside this subprocess, which is unreliable (see commit 223b17b).
 
 import socket
 
+from engram_mcp.scoping import resolve_project_name
+
 ADMIN_NAME = "admin"
 
 
@@ -33,10 +36,14 @@ def hostname() -> str:
 def derive_project_name(project_dir: str | None) -> str:
     """Return the project name for this session.
 
-    Rule: if any path segment is ``projects`` and a non-empty segment follows
-    it, that next segment is the project name. Otherwise the session is
-    ``admin`` (machine-level work, scratch dirs, system paths, home).
+    Resolution order:
+        1. ``.engram.cfg`` walk-up (authoritative — survives prod/dev layouts)
+        2. ``/projects/<name>/`` path segment (legacy convention)
+        3. ``admin`` (machine-level work, scratch dirs, system paths, home)
     """
+    declared = resolve_project_name(project_dir)
+    if declared:
+        return declared
     if not project_dir:
         return ADMIN_NAME
     parts = [p for p in project_dir.strip().split("/") if p]
