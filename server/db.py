@@ -130,6 +130,9 @@ BEGIN
         ALTER TABLE memories ADD CONSTRAINT memories_namespace_key_scope_user_id_key
             UNIQUE (namespace, key, scope, user_id);
     END IF;
+    -- Normalize inbox addresses to lowercase (case-insensitive addressing)
+    UPDATE memories SET user_id = LOWER(user_id)
+    WHERE scope = 'inbox' AND user_id != LOWER(user_id);
 END $$;
 """
 

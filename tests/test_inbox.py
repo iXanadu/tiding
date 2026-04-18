@@ -367,6 +367,32 @@ async def test_search_excludes_inbox_scope(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_case_insensitive_addressing(client, db_pool):
+    """Sending to 'ProjGamma' must deliver to a listener on 'projgamma'."""
+    await _cleanup_inbox(db_pool)
+
+    resp = await client.post("/memory/send", json={
+        "to": "ProjGamma",
+        "body": "case test",
+        "from_": "admin@macmini",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["id"].startswith("inbox/")
+
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["projgamma", "machine:macmini"],
+        "reader_identity": "projgamma@macmini",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["to"] == "projgamma"
+    assert msgs[0]["body"] == "case test"
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_address_validation(client, db_pool):
     await _cleanup_inbox(db_pool)
     # Empty

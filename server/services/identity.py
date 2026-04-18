@@ -28,7 +28,7 @@ def validate_address(address: str) -> str:
     """
     if not isinstance(address, str) or not address.strip():
         raise ValueError("address must be a non-empty string")
-    address = address.strip()
+    address = address.strip().lower()
     if not ADDRESS_RE.match(address):
         raise ValueError(f"invalid address: {address!r}")
     return address

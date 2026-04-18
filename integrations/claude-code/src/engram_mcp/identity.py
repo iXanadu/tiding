@@ -43,14 +43,14 @@ def derive_project_name(project_dir: str | None) -> str:
     """
     declared = resolve_project_name(project_dir)
     if declared:
-        return declared
+        return declared.lower()
     if not project_dir:
         return ADMIN_NAME
     parts = [p for p in project_dir.strip().split("/") if p]
     if "projects" in parts:
         idx = parts.index("projects")
         if idx + 1 < len(parts) and parts[idx + 1]:
-            return parts[idx + 1]
+            return parts[idx + 1].lower()
     return ADMIN_NAME
 
 
