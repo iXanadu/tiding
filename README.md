@@ -1,6 +1,6 @@
 # Engram
 
-Semantic memory service for AI agents. Store, search, and recall memories using hybrid vector + trigram search powered by PostgreSQL (pgvector) and Ollama embeddings.
+Semantic memory service for AI agents. Store, search, and recall memories using hybrid vector + trigram search powered by PostgreSQL (pgvector) and in-process sentence-transformers embeddings.
 
 Engram gives any AI agent persistent memory via a simple HTTP API. Originally built for Home Assistant voice assistants, it now serves Claude Code, custom agents, and any system that can make HTTP requests.
 
@@ -8,9 +8,57 @@ Engram gives any AI agent persistent memory via a simple HTTP API. Originally bu
 
 1. **Store** a memory with a key, value, and optional tags
 2. Engram builds a search document from the key (expanded from snake_case), value, and tags
-3. The document is embedded via Ollama (nomic-embed-text, 768 dimensions) and stored in PostgreSQL with pgvector
+3. The document is embedded via sentence-transformers (nomic-embed-text-v1.5, 768 dimensions) and stored in PostgreSQL with pgvector
 4. **Search** uses hybrid scoring: cosine similarity on the vector + pg_trgm trigram matching on the text, combined with configurable weights
 5. Results are ranked by combined score, with configurable thresholds for both vector and trigram components
+
+## Data Model
+
+Three independent dimensions scope every memory:
+
+| Dimension | Purpose | Examples |
+|-----------|---------|----------|
+| **namespace** | Which system is writing | `claude-code`, `ha`, `beast`, `projbeta` |
+| **scope** | Visibility level | `shared`, `machine`, `project`, `user` |
+| **user_id** | Identity within namespace | `global`, hostname, project name, HA UUID |
+
+UNIQUE constraint: `(namespace, key, scope, user_id)`. The same key can exist independently in different namespaces.
+
+`namespace` is **required** on all API calls — there is no default. This forces every client to be explicit about which system it is.
+
+### Trust Model
+
+**Namespace is the read boundary.** A principal with read access to a namespace can see every memory in it — all scopes, all user_ids. There is no project-level or scope-level read restriction within a namespace.
+
+**The wrapper enforces write targeting.** Each integration (MCP bridge, web app, pyscript) acts as a harness that resolves the correct scope and user_id for the current context. For example, the Claude Code MCP bridge resolves project identity from `.engram.cfg` in the repo root and injects `scope=project, user_id={project_name}` on every call. The wrapper prevents accidents; the server prevents unauthorized access.
+
+**Multi-namespace search** enables cross-system collaboration. The search endpoint accepts a `namespaces` array, so one AI can read memories written by another AI system while preserving provenance (the `namespace` field on each result shows who wrote it).
+
+## Access Control
+
+### Without Auth (default)
+
+Set `ENGRAM_API_TOKEN` to a Bearer token. All requests must include it. Leave empty for no auth.
+
+### With Principals (recommended for multi-client)
+
+Enable `ENGRAM_REQUIRE_AUTH=true` for principal-based authentication. Each client gets its own identity with explicit namespace permissions:
+
+```
+claude-code:    read: [claude-code, claude-web]    write: [claude-code]
+projbeta:   read: [projbeta]                write: [projbeta]
+ha-system:      read: [ha]                          write: [ha]
+```
+
+Principal types:
+- **agent** — AI systems, services. Authenticates via Bearer token (`engram_<random>`, bcrypt-hashed in DB).
+- **human** — People. Can have a token and/or password. Admin flag grants access to `/admin/*` endpoints.
+
+A bootstrap admin is auto-created from `ENGRAM_API_TOKEN` when `require_auth=true` and no admins exist.
+
+### Dry-Run Mode
+
+Set `ENGRAM_WARN_UNAUTHED=true` to log warnings for unauthenticated requests without blocking them. Useful for auditing before flipping enforcement on.
 
 ## Quick Start
 
@@ -18,7 +66,6 @@ Engram gives any AI agent persistent memory via a simple HTTP API. Originally bu
 
 - Python 3.12+ (via pyenv)
 - PostgreSQL 17+ with [pgvector](https://github.com/pgvector/pgvector) and pg_trgm extensions
-- [Ollama](https://ollama.ai) with `nomic-embed-text` model
 
 ### Setup
 
@@ -36,9 +83,6 @@ pip install -e ".[dev]"
 createdb engram
 # (Tables and indexes are created automatically on first run)
 
-# Ollama embedding model
-ollama pull nomic-embed-text
-
 # Configuration
 cp .env.example .env
 # Edit .env — for local PostgreSQL with peer auth, set:
@@ -49,35 +93,39 @@ cp .env.example .env
 uvicorn server.main:app --host 0.0.0.0 --port 8920
 ```
 
+The embedding model (nomic-ai/nomic-embed-text-v1.5, ~270MB) is downloaded automatically on first start and cached in `~/.cache/huggingface/`. No external services required — embeddings run in-process using MPS (Apple Silicon GPU) or CPU.
+
 ### Docker (PostgreSQL only)
 
 If you prefer Docker for PostgreSQL:
 
 ```bash
 docker compose up -d
-# Then run the server natively (Ollama needs GPU access)
+# Then run the server natively
 uvicorn server.main:app --host 0.0.0.0 --port 8920
 ```
 
 ## API Reference
 
-All endpoints accept JSON POST (except health).
+All memory endpoints accept JSON POST. Admin and principal endpoints use standard REST verbs.
 
-### `GET /health`
+### Health
 
-Returns service status and dependency checks.
+`GET /health` — Service status and dependency checks.
 
 ```json
-{"status": "ok", "checks": {"postgres": true, "ollama": true}}
+{"status": "ok", "checks": {"postgres": true, "embeddings": true}}
 ```
 
-### `POST /memory/set`
+### Memory CRUD
+
+#### `POST /memory/set`
 
 Store or update a memory.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `namespace` | string | required | System identifier (`claude-code`, `ha`, etc.) |
+| `namespace` | string | required | System identifier |
 | `key` | string | required | Unique identifier (snake_case recommended) |
 | `value` | string | required | The memory content |
 | `scope` | string | `"user"` | Visibility level (`shared`, `machine`, `project`, `user`) |
@@ -92,7 +140,7 @@ curl -X POST http://localhost:8920/memory/set \
   -d '{"namespace": "my-agent", "key": "user_location", "value": "Portland, OR", "tags": "home, address"}'
 ```
 
-### `POST /memory/get`
+#### `POST /memory/get`
 
 Retrieve a memory by exact key.
 
@@ -103,17 +151,20 @@ Retrieve a memory by exact key.
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
 
-### `POST /memory/search`
+#### `POST /memory/search`
 
-Semantic search across memories.
+Semantic search across memories. Supports single or multi-namespace queries.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `namespace` | string | required | System identifier |
+| `namespace` | string | one required | Single namespace to search |
+| `namespaces` | string[] | one required | Multiple namespaces to search |
 | `query` | string | required | Natural language search query |
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
 | `limit` | int | `5` | Max results |
+
+Either `namespace` or `namespaces` must be provided (not both).
 
 ```bash
 curl -X POST http://localhost:8920/memory/search \
@@ -121,7 +172,7 @@ curl -X POST http://localhost:8920/memory/search \
   -d '{"namespace": "my-agent", "query": "where do I live", "limit": 3}'
 ```
 
-### `POST /memory/forget`
+#### `POST /memory/forget`
 
 Delete a memory by key.
 
@@ -131,6 +182,47 @@ Delete a memory by key.
 | `key` | string | required | Key to delete |
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
+
+### Inbox (Inter-Agent Messaging)
+
+Built on top of the memory table. Enables Claude Code sessions (or any agent) to leave messages for each other.
+
+- `POST /memory/send` — Send a message to a project or machine address
+- `POST /memory/inbox` — List inbox messages for a set of listen addresses
+- `POST /memory/inbox/{id}/ack` — Mark a message as read
+- `POST /memory/inbox/{id}/archive` — Archive a message
+
+### Admin Endpoints
+
+Require admin principal when `require_auth=true`. Open otherwise.
+
+- `GET /admin/memories` — List/browse memories with filtering, pagination, sorting. Supports comma-separated namespaces.
+- `GET /admin/machines` — List unique machine identifiers from metadata.
+- `GET /admin/stats` — Namespace counts with optional scope breakdown.
+- `PATCH /admin/memories` — Update a memory's namespace, scope, user_id, key, or tags.
+- `POST /admin/bulk-delete` — Delete memories by key prefix with safety guard.
+- `POST /admin/cleanup` — Manually trigger expiration cleanup.
+
+### Principal Management
+
+All under `/admin/principals`. Require admin when `require_auth=true`.
+
+- `POST /admin/principals` — Create a principal (returns raw token once).
+- `GET /admin/principals` — List principals (filterable by type, active status).
+- `GET /admin/principals/{name}` — Get a specific principal.
+- `PATCH /admin/principals/{name}` — Update permissions, status, token/password.
+- `DELETE /admin/principals/{name}` — Deactivate a principal.
+- `POST /admin/principals/{name}/token` — Regenerate token.
+- `POST /admin/principals/{name}/aliases` — Add an alias (e.g., HA UUID → principal name).
+- `GET /admin/principals/{name}/aliases` — List aliases.
+- `DELETE /admin/principals/{name}/aliases` — Remove an alias.
+
+### Web UIs
+
+- `GET /dashboard` — Memory browser with search, filtering, stats, and edit modal.
+- `GET /bridge` — Standalone memory search UI with cross-namespace provenance badges.
+
+Both pages are auth-exempt at the middleware level, but API calls from them require tokens when `require_auth=true` (the bridge UI stores the token in localStorage).
 
 ## Configuration
 
@@ -143,12 +235,16 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_DB_NAME` | `engram` | Database name |
 | `ENGRAM_DB_USER` | `engram` | Database user |
 | `ENGRAM_DB_PASSWORD` | `engram` | Database password |
-| `ENGRAM_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
-| `ENGRAM_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
+| `ENGRAM_EMBED_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace embedding model |
 | `ENGRAM_HOST` | `0.0.0.0` | Server bind address |
 | `ENGRAM_PORT` | `8920` | Server port |
 | `ENGRAM_LOG_LEVEL` | `info` | Log level |
-| `ENGRAM_API_TOKEN` | _(empty)_ | Bearer token (empty = no auth) |
+| `ENGRAM_API_TOKEN` | _(empty)_ | Legacy Bearer token (empty = no auth) |
+| `ENGRAM_REQUIRE_AUTH` | `false` | Enable principal-based authentication |
+| `ENGRAM_WARN_UNAUTHED` | `false` | Log warnings for unauthenticated requests |
+| `ENGRAM_CLEANUP_ENABLED` | `true` | Run background expiration cleanup |
+| `ENGRAM_CLEANUP_INTERVAL_HOURS` | `6` | Hours between cleanup runs |
+| `ENGRAM_CLEANUP_BATCH_SIZE` | `500` | Max expired records per cleanup run |
 | `ENGRAM_VECTOR_THRESHOLD` | `0.35` | Minimum cosine similarity |
 | `ENGRAM_TRIGRAM_WEIGHT` | `0.15` | Weight for trigram score in combined ranking |
 | `ENGRAM_TRIGRAM_THRESHOLD` | `0.1` | Minimum trigram similarity |
@@ -196,11 +292,18 @@ Then register in `~/.claude.json`:
       "args": ["-m", "engram_mcp.server"],
       "env": {
         "memory_api_url": "http://localhost:8920",
-        "memory_api_token": ""
+        "memory_api_token": "engram_<your-token>"
       }
     }
   }
 }
+```
+
+The MCP bridge resolves project identity from `.engram.cfg` in the repo root (walk-up search). Create one in each project:
+
+```
+# .engram.cfg
+project = my-project-name
 ```
 
 ### Custom
@@ -214,6 +317,7 @@ Scripts for running engram as a system service:
 ```bash
 ./scripts/install.sh    # Set up pyenv, deps, and launchd/systemd service
 ./scripts/start.sh      # Start the service
+./scripts/stop.sh       # Stop the service
 ./scripts/restart.sh    # Restart the service
 ./scripts/uninstall.sh  # Stop and remove the service definition
 ```
@@ -222,7 +326,7 @@ The install script auto-detects macOS (LaunchDaemon) vs Linux (systemd).
 
 ## Testing
 
-Requires a running PostgreSQL database (`engram`) and Ollama with `nomic-embed-text`:
+Requires a running PostgreSQL database (`engram`):
 
 ```bash
 pytest tests/ -v
@@ -231,39 +335,50 @@ pytest tests/ -v
 The test suite includes:
 - Unit tests for search text building and key expansion
 - API integration tests (CRUD operations)
-- Authentication middleware tests
+- Authentication and principal middleware tests
+- Namespace permission enforcement tests
 - Embedding quality tests (cosine similarity thresholds)
 - End-to-end semantic recall tests ("where do I live" -> `my_location`)
+- Admin endpoint and bulk operation tests
+- Principal CRUD and alias tests
 
 ## Project Structure
 
 ```
 engram/
 ├── server/                          # FastAPI application
-│   ├── main.py                      # App setup, lifespan, middleware
+│   ├── main.py                      # App setup, lifespan, CORS, middleware
 │   ├── config.py                    # ENGRAM_ env var settings
 │   ├── db.py                        # asyncpg pool, schema creation
 │   ├── models.py                    # Pydantic request/response models
-│   ├── embeddings.py                # Ollama embedding client
+│   ├── embeddings.py                # sentence-transformers embedding client
 │   ├── auth.py                      # Principal auth middleware (two-mode)
-│   ├── dependencies.py              # Auth helpers (require_admin, etc.)
+│   ├── dependencies.py              # Auth helpers (require_admin, namespace checks)
 │   ├── routers/
-│   │   ├── memory.py                # /memory/* CRUD endpoints
-│   │   ├── admin.py                 # /admin/memories management
+│   │   ├── memory.py                # /memory/* CRUD + inbox endpoints
+│   │   ├── admin.py                 # /admin/* memory management
 │   │   ├── principals.py            # /admin/principals CRUD
+│   │   ├── dashboard.py             # /dashboard and /bridge web UIs
 │   │   └── health.py                # /health endpoint
-│   └── services/
-│       ├── memory_service.py        # Core CRUD + hybrid search logic
-│       └── principal_service.py     # Identity + access control
+│   ├── services/
+│   │   ├── memory_service.py        # Core CRUD + hybrid search + inbox logic
+│   │   ├── principal_service.py     # Identity + access control
+│   │   ├── admin_service.py         # List, stats, bulk delete, cleanup
+│   │   ├── cleanup_task.py          # Background expiration loop
+│   │   ├── identity.py              # Address resolution and validation
+│   │   └── inbox_guidance.py        # Usage hints for inbox operations
+│   └── templates/
+│       ├── dashboard.html           # Memory browser UI
+│       └── bridge.html              # Cross-namespace search UI
 ├── integrations/
 │   ├── homeassistant/               # HA Pyscript client + Blueprint
 │   ├── claude-code/                 # MCP server for Claude Code (engram-mcp)
 │   └── README.md                    # How to build a custom wrapper
-├── scripts/                         # Service management (install/start/restart/uninstall)
+├── scripts/                         # Service management (install/start/stop/restart/uninstall)
 ├── launchd/com.engram.plist         # macOS LaunchDaemon template
 ├── systemd/engram.service           # Linux systemd unit template
 ├── tests/                           # pytest suite
-├── docs/                            # System prompts, model selection guide
+├── docs/                            # System prompts, guides
 ├── docker-compose.yml               # PostgreSQL + pgvector
 ├── pyproject.toml                   # Package definition
 └── .env.example                     # Configuration template
