@@ -20,7 +20,7 @@ from server.models import (
     MemorySetRequest,
     MemorySetResponse,
 )
-from server.services.identity import validate_address, validate_listen_set
+from server.services.identity import autocorrect_address, validate_listen_set
 from server.services.inbox_guidance import (
     ack_guidance,
     archive_guidance,
@@ -169,7 +169,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     """Send an inbox message addressed to a project or machine."""
     check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
     try:
-        to = validate_address(req.to)
+        to, corrected_from = autocorrect_address(req.to)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     try:
@@ -180,10 +180,19 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             from_=req.from_,
             thread_id=req.thread_id,
         )
+        guidance = send_guidance(to=to, reader_identity=req.from_)
+        if corrected_from:
+            guidance = (
+                f"⚠️  ADDRESS AUTO-CORRECTED: '{corrected_from}' → '{to}'\n"
+                f"    The ':' delimiter is reserved for 'machine:' and 'topic:' prefixes.\n"
+                f"    Use '{to}' (any machine) or 'name@host' (specific machine).\n"
+                f"    Your message was delivered to '{to}'.\n\n"
+            ) + guidance
         return InboxSendResponse(
             status="ok",
             id=msg_id,
-            guidance=send_guidance(to=to, reader_identity=req.from_),
+            corrected_from=corrected_from,
+            guidance=guidance,
         )
     except Exception as e:
         logger.exception("inbox_send failed")

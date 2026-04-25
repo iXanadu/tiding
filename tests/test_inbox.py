@@ -548,3 +548,70 @@ async def test_banner_caps_at_preview_limit(client, db_pool):
     # Preview capped at 5; unread_count reflects the capped fetch
     assert len(banner["preview"]) == 5
     await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_autocorrect_admin_colon_host(client, db_pool):
+    """admin:host → machine:host — delivered and flagged."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "admin:hostb",
+        "body": "please install pgvector",
+        "from_": "projbeta@laptop",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["corrected_from"] == "admin:hostb"
+    assert "AUTO-CORRECTED" in data["guidance"]
+
+    # Message should land for machine:hostb listener
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["admin", "machine:hostb", "admin@hostb"],
+        "reader_identity": "admin@hostb",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["body"] == "please install pgvector"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_autocorrect_host_colon_project(client, db_pool):
+    """host:project → project — delivered as broadcast."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "laptop:projbeta",
+        "body": "schema conflicts need resolution",
+        "from_": "projalpha@laptop",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["corrected_from"] == "laptop:projbeta"
+    assert "AUTO-CORRECTED" in data["guidance"]
+
+    # Message should land for projbeta listener
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["projbeta", "machine:laptop", "projbeta@laptop"],
+        "reader_identity": "projbeta@laptop",
+        "unread_only": True,
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["body"] == "schema conflicts need resolution"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_no_autocorrect_for_valid_addresses(client, db_pool):
+    """Reserved prefixes and bare names pass through without correction."""
+    await _cleanup_inbox(db_pool)
+    for addr in ["projbeta", "machine:hostb", "admin@hostb"]:
+        resp = await client.post("/memory/send", json={
+            "to": addr,
+            "body": "test",
+            "from_": "test@test",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["corrected_from"] is None
+    await _cleanup_inbox(db_pool)

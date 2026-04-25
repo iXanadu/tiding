@@ -367,7 +367,11 @@ async def memory_send(
         thread_id=thread_id or None,
         project_dir=project_dir or None,
     )
-    head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
+    corrected_from = result.get("corrected_from")
+    if corrected_from:
+        head = f"Sent inbox message {result['id']} → (from {reader_identity})\n⚠️  Address auto-corrected: '{corrected_from}' was rewritten. See guidance below."
+    else:
+        head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
     return _append_guidance(head, result)
 
 

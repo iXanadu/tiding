@@ -322,6 +322,7 @@ class InboxMessage(BaseModel):
 class InboxSendResponse(BaseModel):
     status: str
     id: str
+    corrected_from: str | None = None
     guidance: str | None = None
 
 

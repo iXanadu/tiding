@@ -34,6 +34,32 @@ def validate_address(address: str) -> str:
     return address
 
 
+def autocorrect_address(address: str) -> tuple[str, str | None]:
+    """Validate and auto-correct common addressing mistakes.
+
+    Returns ``(corrected_address, original_or_none)``.  When no correction
+    is needed, ``original_or_none`` is ``None``.
+
+    Corrections:
+    - ``admin:host`` → ``machine:host`` (admin targeting a host)
+    - ``host:project`` → ``project`` (strip host qualifier, broadcast)
+    """
+    clean = validate_address(address)
+    if ":" not in clean:
+        return clean, None
+    if any(clean.startswith(p) for p in RESERVED_PREFIXES):
+        return clean, None
+    # Non-reserved colon — likely a mis-formatted address
+    original = clean
+    left, right = clean.split(":", 1)
+    if left == "admin":
+        return f"machine:{right}", original
+    if right == "admin":
+        return f"machine:{left}", original
+    # Assume left is a host qualifier, right is the project name
+    return right, original
+
+
 def validate_listen_set(addresses: list[str]) -> list[str]:
     """Validate and normalize a list of addresses. Empty list is allowed."""
     if addresses is None:
