@@ -35,9 +35,20 @@
 
     <!-- Header -->
     <header class="bg-engram-dark border-b border-engram-border px-6 py-4 flex items-center justify-between">
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-4">
             <h1 class="text-xl font-bold text-engram-accent">engram</h1>
-            <span class="text-sm text-slate-500">memory dashboard</span>
+            <nav class="flex gap-1 text-sm">
+                <button @click="activeTab = 'memories'"
+                        class="px-3 py-1 rounded transition"
+                        :class="activeTab === 'memories' ? 'bg-engram-accent/20 text-engram-accent' : 'text-slate-500 hover:text-slate-300'">
+                    Memories
+                </button>
+                <button @click="activeTab = 'principals'; fetchPrincipals()"
+                        class="px-3 py-1 rounded transition"
+                        :class="activeTab === 'principals' ? 'bg-engram-accent/20 text-engram-accent' : 'text-slate-500 hover:text-slate-300'">
+                    Principals
+                </button>
+            </nav>
         </div>
         <div class="flex items-center gap-4 text-sm">
             <template x-if="!tokenSaved">
@@ -72,6 +83,10 @@
     </header>
 
     <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+      <!-- ==================== MEMORIES TAB ==================== -->
+      <template x-if="activeTab === 'memories'">
+      <div class="space-y-6">
 
         <!-- Stats Cards -->
         <section>
@@ -283,7 +298,279 @@
         <div x-show="loading" class="fixed bottom-4 right-4 bg-engram-surface border border-engram-border rounded-lg px-4 py-2 text-sm text-slate-400 shadow-lg">
             Loading...
         </div>
+
+      </div>
+      </template>
+
+      <!-- ==================== PRINCIPALS TAB ==================== -->
+      <template x-if="activeTab === 'principals'">
+      <div class="space-y-6">
+
+        <!-- Principal List Header -->
+        <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Principals</h2>
+            <button @click="openCreatePrincipal()"
+                    class="px-3 py-1.5 rounded bg-engram-accent text-engram-darker font-semibold text-xs hover:bg-engram-accent/90 transition">
+                + New Principal
+            </button>
+        </div>
+
+        <!-- Auth error -->
+        <div x-show="principalsError" class="text-red-400 text-sm py-4 text-center" x-text="principalsError"></div>
+
+        <!-- Principal Cards -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <template x-for="p in principals" :key="p.id">
+                <div class="bg-engram-surface border rounded-lg p-5 transition hover:border-engram-accent/50"
+                     :class="p.active ? 'border-engram-border' : 'border-red-900/50 opacity-60'">
+                    <!-- Top row: name + badges -->
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-lg" :class="p.type === 'human' ? 'text-engram-accent' : 'text-sky-400'" x-text="p.name"></span>
+                            <span class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold"
+                                  :class="p.type === 'human' ? 'bg-engram-accent/20 text-engram-accent' : 'bg-sky-400/20 text-sky-400'"
+                                  x-text="p.type"></span>
+                            <span x-show="p.is_admin" class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold bg-amber-400/20 text-amber-400">admin</span>
+                            <span x-show="!p.active" class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold bg-red-400/20 text-red-400">inactive</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button @click="openEditPrincipal(p)"
+                                    class="text-xs text-slate-500 hover:text-engram-accent transition px-2 py-1 rounded border border-transparent hover:border-engram-accent/30">
+                                edit
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Permissions -->
+                    <div class="space-y-2 text-xs">
+                        <div class="flex gap-4">
+                            <div>
+                                <span class="text-slate-500">read:</span>
+                                <span class="text-engram-accent2 ml-1" x-text="p.read_namespaces.length ? p.read_namespaces.join(', ') : 'none'"></span>
+                            </div>
+                            <div>
+                                <span class="text-slate-500">write:</span>
+                                <span class="text-amber-300 ml-1" x-text="p.write_namespaces.length ? p.write_namespaces.join(', ') : 'none'"></span>
+                            </div>
+                        </div>
+
+                        <!-- Token + auth -->
+                        <div class="flex gap-4 text-slate-500">
+                            <span>token: <span :class="p.has_token ? 'text-engram-accent2' : 'text-red-400'" x-text="p.has_token ? 'yes' : 'no'"></span></span>
+                            <span>password: <span :class="p.has_password ? 'text-engram-accent2' : 'text-slate-600'" x-text="p.has_password ? 'yes' : 'no'"></span></span>
+                            <span>created: <span class="text-slate-400" x-text="formatDate(p.created_at)"></span></span>
+                        </div>
+
+                        <!-- Aliases -->
+                        <div x-show="p._aliases && p._aliases.length > 0" class="pt-1 border-t border-engram-border/30">
+                            <span class="text-slate-500">aliases:</span>
+                            <template x-for="a in (p._aliases || [])" :key="a.id">
+                                <span class="ml-1.5 inline-flex items-center gap-1 bg-engram-dark/60 rounded px-1.5 py-0.5 text-slate-300">
+                                    <span x-text="a.alias"></span>
+                                    <span class="text-slate-600" x-text="'(' + a.source + ')'"></span>
+                                </span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <div x-show="principals.length === 0 && !principalsError" class="text-slate-500 text-sm py-8 text-center">
+            No principals found. Create one to get started.
+        </div>
+
+      </div>
+      </template>
+
     </main>
+
+    <!-- ==================== CREATE PRINCIPAL MODAL ==================== -->
+    <div x-show="createModal.open" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
+         x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+         @keydown.escape.window="createModal.open = false">
+        <div class="bg-engram-surface border border-engram-border rounded-xl shadow-2xl w-full max-w-lg mx-4"
+             @click.outside="createModal.open = false">
+            <div class="px-6 py-4 border-b border-engram-border flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-engram-accent uppercase tracking-wider">New Principal</h3>
+                <button @click="createModal.open = false" class="text-slate-500 hover:text-slate-300 text-lg">&times;</button>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Name</label>
+                        <input type="text" x-model="createModal.name" placeholder="e.g. ixanadu"
+                               class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Type</label>
+                        <select x-model="createModal.type"
+                                class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                            <option value="human">human</option>
+                            <option value="agent">agent</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-sm">
+                        <input type="checkbox" x-model="createModal.is_admin" class="accent-engram-accent h-3.5 w-3.5">
+                        <span class="text-slate-300">Admin</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Read namespaces <span class="text-slate-600">(comma-separated)</span></label>
+                    <input type="text" x-model="createModal.read_ns" placeholder="claude-code, ha"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Write namespaces <span class="text-slate-600">(comma-separated)</span></label>
+                    <input type="text" x-model="createModal.write_ns" placeholder="claude-code"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Password <span class="text-slate-600">(optional, for dashboard login later)</span></label>
+                    <input type="password" x-model="createModal.password" placeholder="leave blank to skip"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div x-show="createModal.error" class="text-red-400 text-xs" x-text="createModal.error"></div>
+            </div>
+            <div class="px-6 py-4 border-t border-engram-border flex justify-end gap-2">
+                <button @click="createModal.open = false"
+                        class="px-4 py-1.5 rounded border border-engram-border text-slate-400 hover:text-slate-200 text-sm transition">Cancel</button>
+                <button @click="saveCreatePrincipal()"
+                        :disabled="!createModal.name.trim() || createModal.saving"
+                        class="px-4 py-1.5 rounded bg-engram-accent text-engram-darker font-semibold text-sm hover:bg-engram-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                    <span x-text="createModal.saving ? 'Creating...' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== TOKEN REVEAL MODAL ==================== -->
+    <div x-show="tokenReveal.open" class="fixed inset-0 z-[60] flex items-center justify-center modal-backdrop"
+         @keydown.escape.window="tokenReveal.open = false">
+        <div class="bg-engram-surface border border-amber-500/50 rounded-xl shadow-2xl w-full max-w-lg mx-4"
+             @click.outside="tokenReveal.open = false">
+            <div class="px-6 py-4 border-b border-engram-border">
+                <h3 class="text-sm font-semibold text-amber-400 uppercase tracking-wider">Token Created</h3>
+            </div>
+            <div class="px-6 py-4 space-y-3">
+                <p class="text-sm text-slate-300">This token is shown <strong class="text-amber-400">once</strong>. Copy it now.</p>
+                <div class="bg-engram-dark border border-engram-border rounded p-3 font-mono text-sm text-engram-accent2 break-all select-all cursor-text"
+                     x-text="tokenReveal.token"></div>
+                <p class="text-xs text-slate-500">Principal: <span class="text-slate-300" x-text="tokenReveal.name"></span></p>
+            </div>
+            <div class="px-6 py-4 border-t border-engram-border flex justify-end gap-2">
+                <button @click="navigator.clipboard.writeText(tokenReveal.token).then(() => tokenReveal.copied = true)"
+                        class="px-4 py-1.5 rounded border border-engram-border text-slate-300 hover:text-engram-accent2 text-sm transition">
+                    <span x-text="tokenReveal.copied ? 'Copied!' : 'Copy'"></span>
+                </button>
+                <button @click="tokenReveal.open = false"
+                        class="px-4 py-1.5 rounded bg-engram-accent text-engram-darker font-semibold text-sm hover:bg-engram-accent/90 transition">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== EDIT PRINCIPAL MODAL ==================== -->
+    <div x-show="principalEdit.open" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
+         x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+         @keydown.escape.window="principalEdit.open = false">
+        <div class="bg-engram-surface border border-engram-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+             @click.outside="principalEdit.open = false">
+            <div class="px-6 py-4 border-b border-engram-border flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-engram-accent uppercase tracking-wider">Edit Principal</h3>
+                <button @click="principalEdit.open = false" class="text-slate-500 hover:text-slate-300 text-lg">&times;</button>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <!-- Identity (read-only) -->
+                <div class="bg-engram-dark/60 rounded-lg p-3 text-xs text-slate-500 flex gap-4">
+                    <span>Name: <span class="text-slate-300 font-semibold" x-text="principalEdit.name"></span></span>
+                    <span>Type: <span class="text-slate-300" x-text="principalEdit.type"></span></span>
+                    <span>ID: <span class="text-slate-400" x-text="principalEdit.id?.slice(0, 8) + '...'"></span></span>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-sm">
+                        <input type="checkbox" x-model="principalEdit.is_admin" class="accent-engram-accent h-3.5 w-3.5">
+                        <span class="text-slate-300">Admin</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-sm">
+                        <input type="checkbox" x-model="principalEdit.active" class="accent-engram-accent2 h-3.5 w-3.5">
+                        <span class="text-slate-300">Active</span>
+                    </label>
+                </div>
+
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Read namespaces</label>
+                    <input type="text" x-model="principalEdit.read_ns"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Write namespaces</label>
+                    <input type="text" x-model="principalEdit.write_ns"
+                           class="bg-engram-dark border border-engram-border rounded px-2.5 py-1.5 text-sm text-slate-200 w-full">
+                </div>
+
+                <!-- Token management -->
+                <div class="border-t border-engram-border/30 pt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-slate-500">Token</span>
+                        <span class="text-xs" :class="principalEdit.has_token ? 'text-engram-accent2' : 'text-red-400'"
+                              x-text="principalEdit.has_token ? 'active' : 'none'"></span>
+                    </div>
+                    <button @click="regenerateToken(principalEdit.name)"
+                            class="px-3 py-1.5 rounded border border-amber-500/50 text-amber-400 text-xs hover:bg-amber-500/10 transition">
+                        Regenerate Token
+                    </button>
+                    <p class="text-[10px] text-slate-600 mt-1">Invalidates the current token immediately.</p>
+                </div>
+
+                <!-- Aliases -->
+                <div class="border-t border-engram-border/30 pt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-slate-500 uppercase tracking-wider">Aliases</span>
+                    </div>
+                    <div class="space-y-1.5 mb-3">
+                        <template x-for="a in principalEdit.aliases" :key="a.id">
+                            <div class="flex items-center justify-between bg-engram-dark/60 rounded px-3 py-1.5 text-xs">
+                                <span>
+                                    <span class="text-slate-200" x-text="a.alias"></span>
+                                    <span class="text-slate-500 ml-1" x-text="'(' + a.source + ')'"></span>
+                                </span>
+                                <button @click="removeAlias(principalEdit.name, a.alias, a.source)"
+                                        class="text-red-400/60 hover:text-red-400 transition text-[10px]">remove</button>
+                            </div>
+                        </template>
+                        <div x-show="!principalEdit.aliases.length" class="text-xs text-slate-600">No aliases</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <input type="text" x-model="principalEdit.newAlias" placeholder="alias"
+                               class="bg-engram-dark border border-engram-border rounded px-2 py-1 text-xs text-slate-200 flex-1">
+                        <input type="text" x-model="principalEdit.newAliasSource" placeholder="source (e.g. os, ssh)"
+                               class="bg-engram-dark border border-engram-border rounded px-2 py-1 text-xs text-slate-200 flex-1">
+                        <button @click="addAlias(principalEdit.name)"
+                                :disabled="!principalEdit.newAlias.trim() || !principalEdit.newAliasSource.trim()"
+                                class="px-2.5 py-1 rounded bg-engram-accent/20 text-engram-accent text-xs hover:bg-engram-accent/30 disabled:opacity-30 transition">
+                            add
+                        </button>
+                    </div>
+                </div>
+
+                <div x-show="principalEdit.error" class="text-red-400 text-xs" x-text="principalEdit.error"></div>
+            </div>
+            <div class="px-6 py-4 border-t border-engram-border flex justify-end gap-2">
+                <button @click="principalEdit.open = false"
+                        class="px-4 py-1.5 rounded border border-engram-border text-slate-400 hover:text-slate-200 text-sm transition">Cancel</button>
+                <button @click="saveEditPrincipal()"
+                        :disabled="principalEdit.saving"
+                        class="px-4 py-1.5 rounded bg-engram-accent text-engram-darker font-semibold text-sm hover:bg-engram-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                    <span x-text="principalEdit.saving ? 'Saving...' : 'Save'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Edit Modal -->
     <div x-show="editModal.open" class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
@@ -381,6 +668,9 @@
             tokenInput: '',
             tokenSaved: false,
 
+            // Navigation
+            activeTab: 'memories',
+
             // State
             health: { status: 'loading', checks: {} },
             stats: [],
@@ -388,6 +678,19 @@
             total: 0,
             loading: false,
             authError: '',
+
+            // Principals state
+            principals: [],
+            principalsError: '',
+            createModal: { open: false, saving: false, error: '', name: '', type: 'human', is_admin: false, read_ns: '', write_ns: '', password: '' },
+            tokenReveal: { open: false, token: '', name: '', copied: false },
+            principalEdit: {
+                open: false, saving: false, error: '',
+                id: '', name: '', type: '', is_admin: false, active: true,
+                read_ns: '', write_ns: '', has_token: false, has_password: false,
+                aliases: [], newAlias: '', newAliasSource: '',
+                _orig: {},
+            },
 
             // Filters
             namespace: '',
@@ -780,6 +1083,166 @@
             isExpired(d) {
                 if (!d) return false;
                 return new Date(d) <= new Date();
+            },
+
+            // ==================== PRINCIPALS ====================
+
+            _parseNs(str) {
+                return str.split(',').map(s => s.trim()).filter(Boolean);
+            },
+
+            async fetchPrincipals() {
+                try {
+                    const r = await fetch('/admin/principals?active_only=false', { headers: this.authHeaders() });
+                    if (r.status === 401 || r.status === 403) {
+                        const data = await r.json();
+                        this.principalsError = data.detail || 'Admin access required.';
+                        this.principals = [];
+                        return;
+                    }
+                    this.principalsError = '';
+                    const data = await r.json();
+                    const list = data.principals || [];
+                    for (const p of list) {
+                        try {
+                            const ar = await fetch(`/admin/principals/${encodeURIComponent(p.name)}/aliases`, { headers: this.authHeaders() });
+                            const ad = await ar.json();
+                            p._aliases = ad.aliases || [];
+                        } catch { p._aliases = []; }
+                    }
+                    this.principals = list;
+                } catch {
+                    this.principals = [];
+                }
+            },
+
+            openCreatePrincipal() {
+                this.createModal = { open: true, saving: false, error: '', name: '', type: 'human', is_admin: false, read_ns: '', write_ns: '', password: '' };
+            },
+
+            async saveCreatePrincipal() {
+                this.createModal.saving = true;
+                this.createModal.error = '';
+                try {
+                    const body = {
+                        name: this.createModal.name.trim(),
+                        type: this.createModal.type,
+                        is_admin: this.createModal.is_admin,
+                        read_namespaces: this._parseNs(this.createModal.read_ns),
+                        write_namespaces: this._parseNs(this.createModal.write_ns),
+                    };
+                    if (this.createModal.password.trim()) body.password = this.createModal.password;
+                    const r = await fetch('/admin/principals', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
+                        body: JSON.stringify(body),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { this.createModal.error = data.detail || 'Create failed'; return; }
+                    this.createModal.open = false;
+                    if (data.raw_token) {
+                        this.tokenReveal = { open: true, token: data.raw_token, name: body.name, copied: false };
+                    }
+                    await this.fetchPrincipals();
+                } catch (e) {
+                    this.createModal.error = 'Network error: ' + e.message;
+                } finally {
+                    this.createModal.saving = false;
+                }
+            },
+
+            async openEditPrincipal(p) {
+                this.principalEdit = {
+                    open: true, saving: false, error: '',
+                    id: p.id, name: p.name, type: p.type,
+                    is_admin: p.is_admin, active: p.active,
+                    read_ns: p.read_namespaces.join(', '),
+                    write_ns: p.write_namespaces.join(', '),
+                    has_token: p.has_token, has_password: p.has_password,
+                    aliases: p._aliases || [],
+                    newAlias: '', newAliasSource: '',
+                    _orig: {
+                        is_admin: p.is_admin, active: p.active,
+                        read_ns: p.read_namespaces.join(', '),
+                        write_ns: p.write_namespaces.join(', '),
+                    },
+                };
+            },
+
+            async saveEditPrincipal() {
+                this.principalEdit.saving = true;
+                this.principalEdit.error = '';
+                try {
+                    const body = {};
+                    const o = this.principalEdit._orig;
+                    if (this.principalEdit.is_admin !== o.is_admin) body.is_admin = this.principalEdit.is_admin;
+                    if (this.principalEdit.active !== o.active) body.active = this.principalEdit.active;
+                    if (this.principalEdit.read_ns !== o.read_ns) body.read_namespaces = this._parseNs(this.principalEdit.read_ns);
+                    if (this.principalEdit.write_ns !== o.write_ns) body.write_namespaces = this._parseNs(this.principalEdit.write_ns);
+                    if (Object.keys(body).length === 0) { this.principalEdit.open = false; return; }
+                    const r = await fetch(`/admin/principals/${encodeURIComponent(this.principalEdit.name)}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
+                        body: JSON.stringify(body),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { this.principalEdit.error = data.detail || 'Update failed'; return; }
+                    this.principalEdit.open = false;
+                    await this.fetchPrincipals();
+                } catch (e) {
+                    this.principalEdit.error = 'Network error: ' + e.message;
+                } finally {
+                    this.principalEdit.saving = false;
+                }
+            },
+
+            async regenerateToken(name) {
+                if (!confirm(`Regenerate token for "${name}"? The current token will stop working immediately.`)) return;
+                try {
+                    const r = await fetch(`/admin/principals/${encodeURIComponent(name)}/token`, {
+                        method: 'POST',
+                        headers: this.authHeaders(),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { this.principalEdit.error = data.detail || 'Token regeneration failed'; return; }
+                    this.principalEdit.has_token = true;
+                    this.tokenReveal = { open: true, token: data.raw_token, name: name, copied: false };
+                } catch (e) {
+                    this.principalEdit.error = 'Network error: ' + e.message;
+                }
+            },
+
+            async addAlias(principalName) {
+                const alias = this.principalEdit.newAlias.trim();
+                const source = this.principalEdit.newAliasSource.trim();
+                if (!alias || !source) return;
+                try {
+                    const r = await fetch(`/admin/principals/${encodeURIComponent(principalName)}/aliases`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
+                        body: JSON.stringify({ alias, source }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { this.principalEdit.error = data.detail || 'Add alias failed'; return; }
+                    this.principalEdit.aliases.push(data);
+                    this.principalEdit.newAlias = '';
+                    this.principalEdit.newAliasSource = '';
+                } catch (e) {
+                    this.principalEdit.error = 'Network error: ' + e.message;
+                }
+            },
+
+            async removeAlias(principalName, alias, source) {
+                try {
+                    const r = await fetch(`/admin/principals/${encodeURIComponent(principalName)}/aliases`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
+                        body: JSON.stringify({ alias, source }),
+                    });
+                    if (r.ok) {
+                        this.principalEdit.aliases = this.principalEdit.aliases.filter(a => !(a.alias === alias && a.source === source));
+                    }
+                } catch {}
             },
         };
     }
