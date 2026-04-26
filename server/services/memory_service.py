@@ -66,6 +66,7 @@ async def memory_set(
     tags_search: str = "",
     expiration_days: int = 180,
     metadata: dict | None = None,
+    owner: str | None = None,
 ) -> str:
     """Store or update a memory with its embedding."""
     pool = await get_pool()
@@ -82,8 +83,8 @@ async def memory_set(
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, embedding, search_text, expires_at, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
             ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET
                 value = EXCLUDED.value,
                 tags = EXCLUDED.tags,
@@ -92,6 +93,7 @@ async def memory_set(
                 search_text = EXCLUDED.search_text,
                 expires_at = EXCLUDED.expires_at,
                 metadata = EXCLUDED.metadata,
+                owner = EXCLUDED.owner,
                 last_used_at = NOW()
             """,
             namespace,
@@ -105,6 +107,7 @@ async def memory_set(
             search_text,
             expires_at,
             metadata_json,
+            owner,
         )
     return key
 

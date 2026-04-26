@@ -123,6 +123,7 @@ class MemoryListItem(BaseModel):
     last_used_at: datetime
     expires_at: datetime | None = None
     metadata: dict | None = None
+    owner: str | None = None
 
 
 class MemoryUpdateRequest(BaseModel):

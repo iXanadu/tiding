@@ -78,7 +78,7 @@ async def list_memories(
         rows = await conn.fetch(
             f"""
             SELECT namespace, key, {value_expr} AS value, scope, user_id, tags,
-                   created_at, last_used_at, expires_at, metadata
+                   created_at, last_used_at, expires_at, metadata, owner
             FROM memories
             WHERE {where}
             ORDER BY {sort_col} {direction}
@@ -101,6 +101,7 @@ async def list_memories(
             last_used_at=r["last_used_at"],
             expires_at=r["expires_at"],
             metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+            owner=r["owner"],
         )
         for r in rows
     ]

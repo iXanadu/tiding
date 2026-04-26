@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS memories (
     last_used_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at      TIMESTAMPTZ,
     metadata        JSONB,
+    owner           TEXT,
     UNIQUE (namespace, key, scope, user_id)
 );
 
@@ -130,6 +131,18 @@ BEGIN
         ALTER TABLE memories ADD CONSTRAINT memories_namespace_key_scope_user_id_key
             UNIQUE (namespace, key, scope, user_id);
     END IF;
+    -- Add owner column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'memories' AND column_name = 'owner'
+    ) THEN
+        ALTER TABLE memories ADD COLUMN owner TEXT;
+    END IF;
+
+    -- Backfill owner from metadata.principal where available
+    UPDATE memories SET owner = metadata->>'principal'
+    WHERE owner IS NULL AND metadata->>'principal' IS NOT NULL;
+
     -- Normalize inbox addresses to lowercase (case-insensitive addressing)
     UPDATE memories SET user_id = LOWER(user_id)
     WHERE scope = 'inbox' AND user_id != LOWER(user_id);

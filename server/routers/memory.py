@@ -62,6 +62,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
     cwd = request.headers.get("x-engram-cwd")
     if cwd:
         metadata["cwd"] = cwd
+    owner = principal["name"] if principal else None
     try:
         key = await memory_set(
             namespace=req.namespace,
@@ -73,6 +74,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             tags_search=req.tags_search,
             expiration_days=req.expiration_days,
             metadata=metadata or None,
+            owner=owner,
         )
         banner = None
         if req.listen_set:

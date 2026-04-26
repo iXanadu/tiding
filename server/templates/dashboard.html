@@ -199,12 +199,13 @@
             <div class="overflow-x-auto text-sm">
                 <!-- Header -->
                 <div class="grid text-left text-xs text-slate-500 uppercase tracking-wider border-b border-engram-border"
-                     style="grid-template-columns: minmax(0,3fr) 80px minmax(0,1fr) minmax(0,1.5fr) 80px 90px 90px 80px 50px">
+                     style="grid-template-columns: minmax(0,3fr) 80px minmax(0,1fr) minmax(0,1fr) minmax(0,1.5fr) 80px 90px 90px 80px 50px">
                     <div class="px-4 py-2.5 cursor-pointer hover:text-slate-300 select-none" @click="toggleSort('key')">
                         Key <span x-show="sortBy === 'key'" x-text="sortOrder === 'asc' ? ' \u2191' : ' \u2193'"></span>
                     </div>
                     <div class="px-4 py-2.5">Scope</div>
-                    <div class="px-4 py-2.5">User</div>
+                    <div class="px-4 py-2.5">User ID</div>
+                    <div class="px-4 py-2.5">Owner</div>
                     <div class="px-4 py-2.5">Tags</div>
                     <div class="px-4 py-2.5">Source</div>
                     <div class="px-4 py-2.5 cursor-pointer hover:text-slate-300 select-none" @click="toggleSort('created_at')">
@@ -220,11 +221,12 @@
                 <template x-for="(m, idx) in memories" :key="m.namespace + '|' + m.key + '|' + m.scope + '|' + m.user_id">
                     <div>
                         <div class="grid border-b border-engram-border/50 cursor-pointer hover:bg-engram-dark/40 transition"
-                             style="grid-template-columns: minmax(0,3fr) 80px minmax(0,1fr) minmax(0,1.5fr) 80px 90px 90px 80px 50px"
+                             style="grid-template-columns: minmax(0,3fr) 80px minmax(0,1fr) minmax(0,1fr) minmax(0,1.5fr) 80px 90px 90px 80px 50px"
                              @click="expandRow(m)">
                             <div class="px-4 py-2 truncate text-engram-accent" :title="m.key" x-text="m.key"></div>
                             <div class="px-4 py-2 text-slate-400" x-text="m.scope"></div>
                             <div class="px-4 py-2 truncate text-slate-400" :title="m.user_id" x-text="m.user_id"></div>
+                            <div class="px-4 py-2 truncate text-engram-accent2" :title="m.owner" x-text="m.owner || '—'"></div>
                             <div class="px-4 py-2 truncate text-slate-500" :title="m.tags" x-text="m.tags || '—'"></div>
                             <div class="px-4 py-2 truncate text-slate-500"
                                  :title="m.metadata ? [m.metadata.principal, m.metadata.machine].filter(Boolean).join(' @ ') : ''"
