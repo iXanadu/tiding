@@ -4,6 +4,7 @@ Engram is a standalone HTTP API. Any system that can make HTTP POST requests can
 
 ## Available Integrations
 
+- **[Python Client](python-client/)** — Async SDK for Django/FastAPI web apps (pip-installable, httpx-based)
 - **[Claude Code](claude-code/)** — MCP server (engram-mcp) for Claude Code persistent memory
 - **[Home Assistant](homeassistant/)** — Pyscript client + Blueprint for HA voice assistants
 
