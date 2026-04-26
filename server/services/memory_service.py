@@ -25,6 +25,21 @@ _TOOLCALL_TRAILER_RE = re.compile(
 )
 
 
+def _normalize_key_fields(
+    namespace: str | None = None,
+    key: str | None = None,
+    scope: str | None = None,
+    user_id: str | None = None,
+) -> tuple:
+    """Lowercase partition key fields for case-insensitive matching."""
+    return (
+        namespace.lower() if namespace else namespace,
+        key.lower() if key else key,
+        scope.lower() if scope else scope,
+        user_id.lower() if user_id else user_id,
+    )
+
+
 def _strip_toolcall_trailer(text: str) -> str:
     if not text:
         return text
@@ -69,6 +84,7 @@ async def memory_set(
     owner: str | None = None,
 ) -> str:
     """Store or update a memory with its embedding."""
+    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
     pool = await get_pool()
     search_text = _build_search_text(key, value, tags)
     embedding = await embed(search_text)
@@ -119,6 +135,7 @@ async def memory_get(
     user_id: str = "default",
 ) -> MemoryItem | None:
     """Retrieve a memory by exact key within a namespace."""
+    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -154,6 +171,8 @@ async def memory_search(
     limit: int = 5,
 ) -> list[MemoryItem]:
     """Hybrid vector + trigram search, scoped to namespace(s) and user."""
+    _, _, scope, user_id = _normalize_key_fields(scope=scope, user_id=user_id)
+    namespaces = [ns.lower() for ns in namespaces]
     pool = await get_pool()
     query_embedding = await embed(query)
 
@@ -229,6 +248,7 @@ async def memory_forget(
     user_id: str = "default",
 ) -> bool:
     """Delete a memory by key within a namespace. Returns True if found and deleted."""
+    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
     pool = await get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -277,6 +297,7 @@ async def inbox_send(
     thread_id: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key)."""
+    to = to.lower()
     body = _strip_toolcall_trailer(body)
     subject = _strip_toolcall_trailer(subject)
     msg_id = f"inbox/{uuid.uuid4()}"
@@ -324,6 +345,7 @@ async def inbox_list(
     When ``unread_only`` is True and ``reader_identity`` is given, messages
     already read by that reader are filtered out.
     """
+    listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
         return []
     pool = await get_pool()
@@ -360,6 +382,7 @@ async def inbox_banner(
     preview_limit: int = 5,
 ) -> dict | None:
     """Return ``{unread_count, preview}`` if there are unread messages, else None."""
+    listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
         return None
     msgs = await inbox_list(
