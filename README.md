@@ -14,17 +14,28 @@ Engram gives any AI agent persistent memory via a simple HTTP API. Originally bu
 
 ## Data Model
 
-Three independent dimensions scope every memory:
+Four independent dimensions partition every memory:
 
 | Dimension | Purpose | Examples |
 |-----------|---------|----------|
 | **namespace** | Which system is writing | `claude-code`, `ha`, `beast`, `projbeta` |
-| **scope** | Visibility level | `shared`, `machine`, `project`, `user` |
-| **user_id** | Identity within namespace | `global`, hostname, project name, HA UUID |
+| **scope** | Visibility level | `shared`, `machine`, `project`, `user`, `inbox` |
+| **user_id** | Identity (the person, or machine for scope=machine) | `ixanadu`, hostname, `global`, HA UUID |
+| **project** | Project name (only for `scope=project`) | `engram`, `projalpha`, `admin` |
 
-UNIQUE constraint: `(namespace, key, scope, user_id)`. The same key can exist independently in different namespaces.
+UNIQUE constraint: `(namespace, key, scope, user_id, project)` with `NULLS NOT DISTINCT` — so two rows with the same key in the same namespace/scope/user_id but different projects coexist, while `project IS NULL` rows (scope=machine/shared/user/inbox) still enforce uniqueness on the four-tuple.
+
+Each row also carries an `owner` column populated server-side from the authenticated principal on write — separate from `user_id` so an admin can read who-wrote-what without scanning metadata.
 
 `namespace` is **required** on all API calls — there is no default. This forces every client to be explicit about which system it is.
+
+### scope=project conventions
+
+For `scope=project` writes, the canonical shape is:
+- `user_id` = the **person** (principal name, e.g. `ixanadu`)
+- `project` = the **project name** (e.g. `engram`, declared in `.engram.cfg`)
+
+Pre-Phase-4 clients sometimes sent the project name in `user_id` with no `project` field. Those rows were backfilled in the 2026-05-12 migration (project ← old user_id, user_id ← owner). The MCP bridge sends the new shape after upgrade.
 
 ### Trust Model
 
@@ -129,7 +140,8 @@ Store or update a memory.
 | `key` | string | required | Unique identifier (snake_case recommended) |
 | `value` | string | required | The memory content |
 | `scope` | string | `"user"` | Visibility level (`shared`, `machine`, `project`, `user`) |
-| `user_id` | string | `"default"` | Identity within namespace |
+| `user_id` | string | `"default"` | Identity (the person — required when scope=project) |
+| `project` | string | `null` | Project name (required when scope=project, null for other scopes) |
 | `tags` | string | `""` | Comma-separated keywords for search boosting |
 | `tags_search` | string | `""` | Additional search-optimized tags |
 | `expiration_days` | int | `180` | Auto-expire after N days (0 = never) |
@@ -150,21 +162,23 @@ Retrieve a memory by exact key.
 | `key` | string | required | Exact key to look up |
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
+| `project` | string | `null` | Project name (for scope=project lookups) |
 
 #### `POST /memory/search`
 
-Semantic search across memories. Supports single or multi-namespace queries.
+Semantic search across memories. Supports single, multi-, or implicit-namespace queries.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `namespace` | string | one required | Single namespace to search |
-| `namespaces` | string[] | one required | Multiple namespaces to search |
+| `namespace` | string | optional | Single namespace to search |
+| `namespaces` | string[] | optional | Multiple namespaces to search |
 | `query` | string | required | Natural language search query |
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
+| `project` | string | `null` | Project filter (for scope=project queries) |
 | `limit` | int | `5` | Max results |
 
-Either `namespace` or `namespaces` must be provided (not both).
+When **neither** `namespace` nor `namespaces` is provided, the server resolves the search to the authenticated principal's `read_namespaces` (expanding `*` to all concrete namespaces). Anonymous callers without a principal get 401 in that case. Explicit namespace/namespaces still works for back-compat.
 
 ```bash
 curl -X POST http://localhost:8920/memory/search \
@@ -182,6 +196,40 @@ Delete a memory by key.
 | `key` | string | required | Key to delete |
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
+| `project` | string | `null` | Project name (for scope=project deletes) |
+
+### Caller-Scoped Identity Endpoints
+
+These let any authenticated client discover its own principal and capabilities without an admin token.
+
+#### `GET /whoami`
+
+Returns the principal record for the bearer token attached to the request.
+
+```json
+{
+  "id": "...", "name": "ixanadu", "type": "human", "is_admin": true,
+  "has_token": true, "has_password": false,
+  "read_namespaces": ["*"], "write_namespaces": ["*"],
+  "active": true, "created_at": "..."
+}
+```
+
+Returns 401 for anonymous callers / invalid tokens.
+
+#### `GET /namespaces`
+
+Returns the namespaces the caller can read and write. Wildcards in the principal's permissions are expanded server-side to concrete namespaces present in the DB.
+
+```json
+{
+  "status": "ok",
+  "read":  ["claude-code", "beastchat", "ha", ...],
+  "write": ["claude-code", "beastchat", "ha", ...]
+}
+```
+
+Closes the wildcard-expansion gap consumer apps used to hit by calling `/admin/stats` (which required an admin token).
 
 ### Inbox (Inter-Agent Messaging)
 
@@ -326,7 +374,7 @@ The install script auto-detects macOS (LaunchDaemon) vs Linux (systemd).
 
 ## Testing
 
-Requires a running PostgreSQL database (`engram`):
+Tests run against an **isolated** `engram_test` database — never the production `engram` DB. The conftest creates `engram_test` on first run (installs pgvector + pg_trgm) and hard-asserts the test session is targeting it. This is enforced because some test fixtures (e.g. `_cleanup_inbox`) issue `DELETE FROM memories` and would obliterate real data on a shared host.
 
 ```bash
 pytest tests/ -v
