@@ -41,7 +41,12 @@ async def _get_principal_name() -> str | None:
     return _PRINCIPAL_CACHE.get("name") if _PRINCIPAL_CACHE else None
 
 
-async def _resolve_partition_with_identity(scope: str | None, project_dir: str | None):
+async def _resolve_partition_with_identity(
+    scope: str | None,
+    project_dir: str | None,
+    user_id_override: str | None = None,
+    project_override: str | None = None,
+):
     """Wrap partition resolution with identity auto-write / ambiguous raise.
 
     For scope=project, invoke ensure_project_identity first — it auto-writes
@@ -49,21 +54,31 @@ async def _resolve_partition_with_identity(scope: str | None, project_dir: str |
     or raises AmbiguousIdentity for Rule 3 (ambiguous dir). After that,
     resolve_partition returns the (scope, user_id, project) triple, with
     user_id resolved to the authenticated principal name (Phase 3).
+
+    When ``user_id_override`` or ``project_override`` are provided, they
+    replace the auto-resolved values. If both are given for scope=project,
+    skip ensure_project_identity entirely — caller has stated intent.
     """
     effective_scope = scope or settings.memory_default_scope
-    if effective_scope == "project":
+    both_overridden = bool(user_id_override) and bool(project_override)
+    if effective_scope == "project" and not both_overridden:
         effective = project_dir if project_dir and Path(project_dir).is_absolute() else None
         # Skip ensure when project_dir isn't a usable absolute path — the
         # tool's project_dir docstring already directs callers to pass one.
         if effective:
             ensure_project_identity(effective)  # side effect: writes cfg or raises
     principal_name = await _get_principal_name() if effective_scope == "project" else None
-    return resolve_partition(
+    resolved_scope, resolved_user_id, resolved_project = resolve_partition(
         scope or None,
         settings.memory_default_scope,
         project_dir or None,
         principal_name=principal_name,
     )
+    if user_id_override:
+        resolved_user_id = user_id_override
+    if project_override:
+        resolved_project = project_override
+    return resolved_scope, resolved_user_id, resolved_project
 
 
 def _identity_error_message(e: AmbiguousIdentity) -> str:
@@ -153,6 +168,8 @@ async def memory_store(
     tags: str = "",
     scope: str = "",
     project_dir: str = "",
+    project: str = "",
+    user_id: str = "",
 ) -> str:
     """Store a memory. Use for session progress, lessons learned, and important context.
 
@@ -162,10 +179,15 @@ async def memory_store(
         tags: Comma-separated tags for categorization (e.g. "session,progress")
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
+        project: Admin override — write to this project name instead of the auto-resolved one. Only valid with scope=project.
+        user_id: Admin override — write under this user_id instead of the auto-resolved principal name. Mainly for cross-identity admin work.
     """
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
-            scope or None, project_dir or None
+            scope or None,
+            project_dir or None,
+            user_id_override=user_id or None,
+            project_override=project or None,
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
@@ -207,6 +229,8 @@ async def memory_search(
     limit: int = 5,
     scope: str = "",
     project_dir: str = "",
+    project: str = "",
+    user_id: str = "",
 ) -> str:
     """Search memories semantically. Returns the most relevant matches.
 
@@ -215,13 +239,18 @@ async def memory_search(
         limit: Max results to return (default 5)
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
+        project: Admin override — search inside this project instead of the auto-resolved one. Only valid with scope=project.
+        user_id: Admin override — search under this user_id instead of the auto-resolved principal name. Mainly for cross-identity admin queries.
     """
     if not query or not query.strip():
         return "No memories found."
 
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
-            scope or None, project_dir or None
+            scope or None,
+            project_dir or None,
+            user_id_override=user_id or None,
+            project_override=project or None,
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
@@ -259,6 +288,8 @@ async def memory_get(
     key: str,
     scope: str = "",
     project_dir: str = "",
+    project: str = "",
+    user_id: str = "",
 ) -> str:
     """Retrieve a specific memory by its exact key.
 
@@ -266,10 +297,15 @@ async def memory_get(
         key: The exact key of the memory to retrieve
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
+        project: Admin override — read from this project instead of the auto-resolved one. Only valid with scope=project.
+        user_id: Admin override — read under this user_id instead of the auto-resolved principal name.
     """
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
-            scope or None, project_dir or None
+            scope or None,
+            project_dir or None,
+            user_id_override=user_id or None,
+            project_override=project or None,
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
@@ -293,6 +329,8 @@ async def memory_forget(
     key: str,
     scope: str = "",
     project_dir: str = "",
+    project: str = "",
+    user_id: str = "",
 ) -> str:
     """Delete a specific memory by its exact key.
 
@@ -300,10 +338,15 @@ async def memory_forget(
         key: The exact key of the memory to delete
         scope: machine (default), shared (all machines), or project (current project)
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
+        project: Admin override — delete from this project instead of the auto-resolved one. Only valid with scope=project.
+        user_id: Admin override — delete under this user_id instead of the auto-resolved principal name.
     """
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
-            scope or None, project_dir or None
+            scope or None,
+            project_dir or None,
+            user_id_override=user_id or None,
+            project_override=project or None,
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)

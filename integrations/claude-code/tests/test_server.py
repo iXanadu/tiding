@@ -259,3 +259,38 @@ async def test_memory_store_project_scope(respx_mock):
         assert "scope: project" in result
         assert "user_id: unknown" in result
         assert "project: my-app" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_store_admin_override_project_and_user_id(respx_mock):
+    """Passing project= and user_id= overrides resolution — lets an admin
+    write into another project's partition without curl. Skips
+    ensure_project_identity entirely when both are given."""
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "x"})
+    )
+    result = await memory_store(
+        key="x",
+        value="cross-project admin write",
+        scope="project",
+        project="other-app",
+        user_id="ixanadu",
+    )
+    assert "user_id: ixanadu" in result
+    assert "project: other-app" in result
+    body = route.calls.last.request.read()
+    assert b'"user_id":"ixanadu"' in body
+    assert b'"project":"other-app"' in body
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_search_admin_override(respx_mock):
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    await memory_search(
+        query="anything", scope="project", project="other-app", user_id="ixanadu"
+    )
+    body = route.calls.last.request.read()
+    assert b'"user_id":"ixanadu"' in body
+    assert b'"project":"other-app"' in body
