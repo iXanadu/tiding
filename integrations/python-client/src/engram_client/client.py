@@ -35,7 +35,11 @@ class EngramClient:
         url: Engram server URL.
         token: Bearer token for authentication (tied to a principal).
         namespace: Default namespace for writes. This is the read/write boundary.
-        project: Default project name (stored as user_id with scope=project).
+        project: Default project name (sent in the ``project`` column, separate
+            from ``user_id`` after Phase 4 of the identity model).
+        user_id: Explicit user_id (the person who owns writes). When omitted,
+            the SDK calls ``/whoami`` on first use and caches the principal
+            name from the token. Pass this only if you need to override.
         read_namespaces: Additional namespaces to search. Useful during dev when
             terminal (claude-code) and web app (coursebuilder) share memories.
             The primary namespace is always included automatically.
@@ -47,10 +51,12 @@ class EngramClient:
     token: str
     namespace: str
     project: str
+    user_id: str | None = None
     read_namespaces: list[str] = field(default_factory=list)
     scope: str = "project"
     timeout: float = 30.0
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
+    _resolved_user_id: str | None = field(default=None, repr=False)
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -84,6 +90,25 @@ class EngramClient:
                     continue
                 raise
 
+    async def _resolve_user_id(self) -> str:
+        """Return the user_id to send on writes. Order: explicit > /whoami > 'unknown'.
+
+        After Phase 4, ``user_id`` is the person and ``project`` is separate.
+        Web apps authenticate with a token but don't usually know the principal
+        name behind it, so we ask the server once and cache.
+        """
+        if self.user_id:
+            return self.user_id
+        if self._resolved_user_id:
+            return self._resolved_user_id
+        try:
+            data = await self._request("GET", "/whoami")
+            name = data.get("name") if isinstance(data, dict) else None
+            self._resolved_user_id = name or "unknown"
+        except Exception:
+            self._resolved_user_id = "unknown"
+        return self._resolved_user_id
+
     async def search(
         self,
         query: str,
@@ -105,7 +130,8 @@ class EngramClient:
                 "namespaces": namespaces or self._search_namespaces(),
                 "query": query,
                 "scope": scope or self.scope,
-                "user_id": project or self.project,
+                "user_id": await self._resolve_user_id(),
+                "project": project or self.project,
                 "limit": limit,
             },
         )
@@ -131,7 +157,8 @@ class EngramClient:
                 "key": key,
                 "value": value,
                 "scope": scope or self.scope,
-                "user_id": project or self.project,
+                "user_id": await self._resolve_user_id(),
+                "project": project or self.project,
                 "tags": tags,
                 "expiration_days": expiration_days,
             },
@@ -154,7 +181,8 @@ class EngramClient:
                 "namespace": namespace or self.namespace,
                 "key": key,
                 "scope": scope or self.scope,
-                "user_id": project or self.project,
+                "user_id": await self._resolve_user_id(),
+                "project": project or self.project,
             },
         )
         return data.get("memory")
@@ -175,10 +203,15 @@ class EngramClient:
                 "namespace": namespace or self.namespace,
                 "key": key,
                 "scope": scope or self.scope,
-                "user_id": project or self.project,
+                "user_id": await self._resolve_user_id(),
+                "project": project or self.project,
             },
         )
         return data.get("status") == "ok"
+
+    async def whoami(self) -> dict:
+        """Return the authenticated principal record. Triggers user_id cache."""
+        return await self._request("GET", "/whoami")
 
     async def health(self) -> dict:
         """Check engram server health."""

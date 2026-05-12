@@ -53,7 +53,8 @@ await engram.close()
 | `url` | Yes | Engram server URL (e.g. `http://localhost:8920`) |
 | `token` | Yes | Bearer token tied to a principal (person or service) |
 | `namespace` | Yes | Default namespace for writes. This is the access boundary — anyone with read access to a namespace can see all memories in it. |
-| `project` | Yes | Default project name. Scopes memories within the namespace. |
+| `project` | Yes | Default project name. Sent in the dedicated `project` column (Phase 4+). |
+| `user_id` | No | Explicit principal name for the owner. When omitted, the SDK calls `/whoami` once and caches the principal name from the token. |
 | `read_namespaces` | No | Additional namespaces to include in searches. Useful when terminal (claude-code) and web app share memories during development. |
 | `scope` | No | Default scope, almost always `"project"` (the default). |
 | `timeout` | No | Request timeout in seconds (default: 30). |
