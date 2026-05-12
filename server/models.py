@@ -11,6 +11,7 @@ class MemorySetRequest(BaseModel):
     value: str
     scope: str = "user"
     user_id: str = "default"
+    project: str | None = None
     tags: str = ""
     tags_search: str = ""
     expiration_days: int = 180
@@ -31,6 +32,7 @@ class MemoryGetRequest(BaseModel):
     key: str
     scope: str = "user"
     user_id: str = "default"
+    project: str | None = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -39,6 +41,7 @@ class MemorySearchRequest(BaseModel):
     query: str
     scope: str = "user"
     user_id: str = "default"
+    project: str | None = None
     limit: int = 5
     listen_set: list[str] | None = None
     reader_identity: str | None = None
@@ -65,6 +68,7 @@ class MemoryForgetRequest(BaseModel):
     key: str
     scope: str = "user"
     user_id: str = "default"
+    project: str | None = None
 
 
 # --- Response models ---
@@ -75,6 +79,7 @@ class MemoryItem(BaseModel):
     value: str
     scope: str
     user_id: str = "default"
+    project: str | None = None
     tags: str
     tags_search: str
     score: float | None = None
@@ -115,6 +120,7 @@ class MemoryListItem(BaseModel):
     value: str | None = None
     scope: str
     user_id: str
+    project: str | None = None
     tags: str
     created_at: datetime
     last_used_at: datetime

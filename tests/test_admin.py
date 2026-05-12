@@ -269,7 +269,7 @@ async def test_bulk_delete_older_than(client, db_pool):
             """
             INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, search_text, created_at)
             VALUES ($1, $2, $3, $4, $5, '', '', '', NOW() - INTERVAL '60 days')
-            ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET created_at = NOW() - INTERVAL '60 days'
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE SET created_at = NOW() - INTERVAL '60 days'
             """,
             NS, "bd-old-row", "old value", "user", "default",
         )
@@ -317,7 +317,7 @@ async def test_cleanup_manual(client, db_pool):
             """
             INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, search_text, expires_at)
             VALUES ($1, $2, $3, $4, $5, '', '', '', NOW() - INTERVAL '1 day')
-            ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET expires_at = NOW() - INTERVAL '1 day'
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE SET expires_at = NOW() - INTERVAL '1 day'
             """,
             NS, "cleanup-expired", "should be removed", "user", "default",
         )
@@ -376,7 +376,7 @@ async def test_list_date_range(client, db_pool):
             """
             INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, search_text, created_at)
             VALUES ($1, $2, $3, $4, $5, '', '', '', '2020-01-15T00:00:00Z')
-            ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET created_at = '2020-01-15T00:00:00Z'
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE SET created_at = '2020-01-15T00:00:00Z'
             """,
             NS, "date-range-old", "old memory", "user", "default",
         )

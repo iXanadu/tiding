@@ -75,6 +75,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             value=req.value,
             scope=req.scope,
             user_id=req.user_id,
+            project=req.project,
             tags=req.tags,
             tags_search=req.tags_search,
             expiration_days=req.expiration_days,
@@ -110,6 +111,7 @@ async def get_memory(req: MemoryGetRequest, request: Request):
             key=req.key,
             scope=req.scope,
             user_id=req.user_id,
+            project=req.project,
         )
         if item:
             return MemoryGetResponse(status="ok", memory=item)
@@ -136,6 +138,7 @@ async def search_memory(req: MemorySearchRequest, request: Request):
             query=req.query,
             scope=req.scope,
             user_id=req.user_id,
+            project=req.project,
             limit=req.limit,
         )
         banner = None
@@ -167,6 +170,7 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
             key=req.key,
             scope=req.scope,
             user_id=req.user_id,
+            project=req.project,
         )
         status = "ok" if deleted else "not_found"
         return MemoryForgetResponse(status=status, key=req.key)

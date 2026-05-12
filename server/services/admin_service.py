@@ -77,7 +77,7 @@ async def list_memories(
         value_expr = f"LEFT(value, {int(value_max_length)})" if include_value else "NULL"
         rows = await conn.fetch(
             f"""
-            SELECT namespace, key, {value_expr} AS value, scope, user_id, tags,
+            SELECT namespace, key, {value_expr} AS value, scope, user_id, project, tags,
                    created_at, last_used_at, expires_at, metadata, owner
             FROM memories
             WHERE {where}
@@ -96,6 +96,7 @@ async def list_memories(
             value=r["value"],
             scope=r["scope"],
             user_id=r["user_id"],
+            project=r["project"],
             tags=r["tags"],
             created_at=r["created_at"],
             last_used_at=r["last_used_at"],

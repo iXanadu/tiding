@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS memories (
     value           TEXT NOT NULL,
     scope           TEXT NOT NULL DEFAULT 'user',
     user_id         TEXT NOT NULL DEFAULT 'default',
+    project         TEXT,
     tags            TEXT NOT NULL DEFAULT '',
     tags_search     TEXT NOT NULL DEFAULT '',
     embedding       vector(768),
@@ -25,7 +26,7 @@ CREATE TABLE IF NOT EXISTS memories (
     expires_at      TIMESTAMPTZ,
     metadata        JSONB,
     owner           TEXT,
-    UNIQUE (namespace, key, scope, user_id)
+    UNIQUE NULLS NOT DISTINCT (namespace, key, scope, user_id, project)
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON memories
@@ -121,12 +122,14 @@ BEGIN
         ALTER TABLE memories DROP CONSTRAINT memories_key_user_id_key;
     END IF;
 
-    -- Create new unique constraint if not exists
+    -- Create the 4-tuple unique constraint only if NO unique constraint
+    -- exists yet on memories. Phase 4 (below) supersedes this with a
+    -- 5-tuple constraint including project — never re-add the 4-tuple
+    -- once Phase 4 has run.
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'memories'::regclass
           AND contype = 'u'
-          AND conname = 'memories_namespace_key_scope_user_id_key'
     ) THEN
         ALTER TABLE memories ADD CONSTRAINT memories_namespace_key_scope_user_id_key
             UNIQUE (namespace, key, scope, user_id);
@@ -146,6 +149,58 @@ BEGIN
     -- Normalize inbox addresses to lowercase (case-insensitive addressing)
     UPDATE memories SET user_id = LOWER(user_id)
     WHERE scope = 'inbox' AND user_id != LOWER(user_id);
+
+    -- ---- Phase 4: project as first-class column -----------------------------
+    -- Add project column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'memories' AND column_name = 'project'
+    ) THEN
+        ALTER TABLE memories ADD COLUMN project TEXT;
+    END IF;
+
+    -- DROP the old 4-tuple constraint BEFORE running backfill — the backfill
+    -- can collapse multiple rows onto the same (ns, key, scope, user_id)
+    -- because user_id is being moved into the new project column.
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'memories'::regclass
+          AND contype = 'u'
+          AND conname = 'memories_namespace_key_scope_user_id_key'
+    ) THEN
+        ALTER TABLE memories DROP CONSTRAINT memories_namespace_key_scope_user_id_key;
+    END IF;
+
+    -- Owner backfill: rows from claude-code MCP traffic were previously owned
+    -- by the 'claude-code' agent principal; the MCP bridge now authenticates
+    -- as 'ixanadu'. Backfill old + NULL owners to ixanadu (claude-code
+    -- namespace, non-inbox/user scopes only — don't touch ha or inbox).
+    UPDATE memories SET owner = 'ixanadu'
+    WHERE namespace = 'claude-code'
+      AND scope IN ('shared', 'machine', 'project')
+      AND (owner IS NULL OR owner = 'claude-code');
+
+    -- Phase 4 backfill: for scope=project rows, move user_id (the project
+    -- name) into the new project column, and set user_id to the owner
+    -- (the person who wrote it). Only runs on rows that haven't been
+    -- migrated yet (project IS NULL).
+    UPDATE memories
+    SET project = user_id,
+        user_id = COALESCE(owner, 'unknown')
+    WHERE scope = 'project' AND project IS NULL;
+
+    -- Add the new 5-tuple unique constraint (NULLS NOT DISTINCT so NULL
+    -- projects collide with each other — required for back-compat with
+    -- scope=machine/shared/user/inbox rows where project IS NULL).
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'memories'::regclass
+          AND contype = 'u'
+          AND conname = 'memories_namespace_key_scope_user_id_project_key'
+    ) THEN
+        ALTER TABLE memories ADD CONSTRAINT memories_namespace_key_scope_user_id_project_key
+            UNIQUE NULLS NOT DISTINCT (namespace, key, scope, user_id, project);
+    END IF;
 END $$;
 """
 

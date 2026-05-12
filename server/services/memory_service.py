@@ -30,6 +30,7 @@ def _normalize_key_fields(
     key: str | None = None,
     scope: str | None = None,
     user_id: str | None = None,
+    project: str | None = None,
 ) -> tuple:
     """Lowercase partition key fields for case-insensitive matching."""
     return (
@@ -37,6 +38,7 @@ def _normalize_key_fields(
         key.lower() if key else key,
         scope.lower() if scope else scope,
         user_id.lower() if user_id else user_id,
+        project.lower() if project else project,
     )
 
 
@@ -77,6 +79,7 @@ async def memory_set(
     value: str,
     scope: str = "user",
     user_id: str = "default",
+    project: str | None = None,
     tags: str = "",
     tags_search: str = "",
     expiration_days: int = 180,
@@ -84,7 +87,9 @@ async def memory_set(
     owner: str | None = None,
 ) -> str:
     """Store or update a memory with its embedding."""
-    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
+    namespace, key, scope, user_id, project = _normalize_key_fields(
+        namespace, key, scope, user_id, project
+    )
     pool = await get_pool()
     search_text = _build_search_text(key, value, tags)
     embedding = await embed(search_text)
@@ -99,9 +104,9 @@ async def memory_set(
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO memories (namespace, key, value, scope, user_id, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
-            ON CONFLICT (namespace, key, scope, user_id) DO UPDATE SET
+            INSERT INTO memories (namespace, key, value, scope, user_id, project, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE SET
                 value = EXCLUDED.value,
                 tags = EXCLUDED.tags,
                 tags_search = EXCLUDED.tags_search,
@@ -117,6 +122,7 @@ async def memory_set(
             value,
             scope,
             user_id,
+            project,
             tags,
             tags_search,
             embedding,
@@ -133,31 +139,40 @@ async def memory_get(
     key: str,
     scope: str = "user",
     user_id: str = "default",
+    project: str | None = None,
 ) -> MemoryItem | None:
     """Retrieve a memory by exact key within a namespace."""
-    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
+    namespace, key, scope, user_id, project = _normalize_key_fields(
+        namespace, key, scope, user_id, project
+    )
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT namespace, key, value, scope, user_id, tags, tags_search
+            SELECT namespace, key, value, scope, user_id, project, tags, tags_search
             FROM memories
-            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+            WHERE namespace = $1 AND key = $2 AND scope = $3
+              AND user_id IS NOT DISTINCT FROM $4
+              AND project IS NOT DISTINCT FROM $5
               AND (expires_at IS NULL OR expires_at > NOW())
             """,
             namespace,
             key,
             scope,
             user_id,
+            project,
         )
         if row:
             await conn.execute(
                 """UPDATE memories SET last_used_at = NOW()
-                   WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4""",
+                   WHERE namespace = $1 AND key = $2 AND scope = $3
+                     AND user_id IS NOT DISTINCT FROM $4
+                     AND project IS NOT DISTINCT FROM $5""",
                 namespace,
                 key,
                 scope,
                 user_id,
+                project,
             )
             return MemoryItem(**dict(row))
     return None
@@ -168,10 +183,13 @@ async def memory_search(
     query: str,
     scope: str = "user",
     user_id: str = "default",
+    project: str | None = None,
     limit: int = 5,
 ) -> list[MemoryItem]:
     """Hybrid vector + trigram search, scoped to namespace(s) and user."""
-    _, _, scope, user_id = _normalize_key_fields(scope=scope, user_id=user_id)
+    _, _, scope, user_id, project = _normalize_key_fields(
+        scope=scope, user_id=user_id, project=project
+    )
     namespaces = [ns.lower() for ns in namespaces]
     pool = await get_pool()
     query_embedding = await embed(query)
@@ -181,7 +199,7 @@ async def memory_search(
             """
             WITH vector_results AS (
                 SELECT
-                    namespace, key, value, scope, user_id, tags, tags_search,
+                    namespace, key, value, scope, user_id, project, tags, tags_search,
                     1 - (embedding <=> $1) AS vec_score,
                     similarity(search_text, $2) AS trgm_score
                 FROM memories
@@ -189,22 +207,24 @@ async def memory_search(
                   AND namespace = ANY($3::text[])
                   AND scope = $4
                   AND scope <> 'inbox'
-                  AND user_id = $5
+                  AND user_id IS NOT DISTINCT FROM $5
+                  AND project IS NOT DISTINCT FROM $6
                 ORDER BY embedding <=> $1
-                LIMIT $6 * 3
+                LIMIT $7 * 3
             )
             SELECT *,
-                   vec_score + ($7 * trgm_score) AS combined_score
+                   vec_score + ($8 * trgm_score) AS combined_score
             FROM vector_results
-            WHERE vec_score >= $8 OR trgm_score >= $9
+            WHERE vec_score >= $9 OR trgm_score >= $10
             ORDER BY combined_score DESC
-            LIMIT $6
+            LIMIT $7
             """,
             query_embedding,
             query,
             namespaces,
             scope,
             user_id,
+            project,
             limit,
             settings.trigram_weight,
             settings.vector_threshold,
@@ -221,6 +241,7 @@ async def memory_search(
                     value=row["value"],
                     scope=row["scope"],
                     user_id=row["user_id"],
+                    project=row["project"],
                     tags=row["tags"],
                     tags_search=row["tags_search"],
                     score=round(float(row["combined_score"]), 4),
@@ -231,11 +252,14 @@ async def memory_search(
         for ns, keys in keys_to_update.items():
             await conn.execute(
                 """UPDATE memories SET last_used_at = NOW()
-                   WHERE namespace = $1 AND key = ANY($2) AND scope = $3 AND user_id = $4""",
+                   WHERE namespace = $1 AND key = ANY($2) AND scope = $3
+                     AND user_id IS NOT DISTINCT FROM $4
+                     AND project IS NOT DISTINCT FROM $5""",
                 ns,
                 keys,
                 scope,
                 user_id,
+                project,
             )
 
     return results
@@ -246,17 +270,24 @@ async def memory_forget(
     key: str,
     scope: str = "user",
     user_id: str = "default",
+    project: str | None = None,
 ) -> bool:
     """Delete a memory by key within a namespace. Returns True if found and deleted."""
-    namespace, key, scope, user_id = _normalize_key_fields(namespace, key, scope, user_id)
+    namespace, key, scope, user_id, project = _normalize_key_fields(
+        namespace, key, scope, user_id, project
+    )
     pool = await get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM memories WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4",
+            """DELETE FROM memories
+               WHERE namespace = $1 AND key = $2 AND scope = $3
+                 AND user_id IS NOT DISTINCT FROM $4
+                 AND project IS NOT DISTINCT FROM $5""",
             namespace,
             key,
             scope,
             user_id,
+            project,
         )
     return result == "DELETE 1"
 
