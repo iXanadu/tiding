@@ -254,5 +254,8 @@ async def test_memory_store_project_scope(respx_mock):
         result = await memory_store(
             key="proj-note", value="project context", scope="project"
         )
+        # Phase 4: project name moves to the project column; user_id is the
+        # principal (or 'unknown' when the bridge is anonymous in tests).
         assert "scope: project" in result
-        assert "user_id: my-app" in result
+        assert "user_id: unknown" in result
+        assert "project: my-app" in result

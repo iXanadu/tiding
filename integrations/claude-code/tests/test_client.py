@@ -111,3 +111,47 @@ async def test_health(mock_api, client):
     result = await client.health()
     assert result["status"] == "ok"
     assert result["checks"]["postgres"] is True
+
+
+async def test_whoami(mock_api, client):
+    mock_api.get("/whoami").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "00000000-0000-0000-0000-000000000000",
+                "name": "ixanadu",
+                "type": "human",
+                "is_admin": True,
+                "has_token": True,
+                "has_password": False,
+                "read_namespaces": ["*"],
+                "write_namespaces": ["*"],
+                "active": True,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+    )
+    result = await client.whoami()
+    assert result["name"] == "ixanadu"
+    assert result["is_admin"] is True
+
+
+async def test_store_with_project(mock_api, client):
+    captured: dict = {}
+
+    def _capture(request):
+        import json as _json
+        captured.update(_json.loads(request.content))
+        return httpx.Response(200, json={"status": "ok", "key": "k"})
+
+    mock_api.post("/memory/set").mock(side_effect=_capture)
+    await client.store(
+        key="k",
+        value="v",
+        namespace="claude-code",
+        scope="project",
+        user_id="ixanadu",
+        project="engram",
+    )
+    assert captured["project"] == "engram"
+    assert captured["user_id"] == "ixanadu"

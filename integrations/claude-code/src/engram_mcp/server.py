@@ -11,27 +11,58 @@ from engram_mcp.identity import compute_identity, reader_to_address
 from engram_mcp.scoping import (
     AmbiguousIdentity,
     ensure_project_identity,
-    resolve_scope_and_user_id,
+    resolve_partition,
     write_project_cfg,
 )
 
 
-def _resolve_project_scope_or_identity(scope: str | None, project_dir: str | None):
-    """Wrap scope resolution with identity auto-write / ambiguous raise.
+_PRINCIPAL_CACHE: dict | None = None
+_PRINCIPAL_FETCHED = False
+
+
+async def _get_principal_name() -> str | None:
+    """Fetch the authenticated principal's name via /whoami, cached.
+
+    Returns the principal name on success, or None when the bridge is
+    running anonymously / token invalid. Logs nothing — we don't want to
+    fail memory ops just because /whoami isn't reachable; downstream
+    falls back to ``user_id='unknown'`` in that case.
+    """
+    global _PRINCIPAL_CACHE, _PRINCIPAL_FETCHED
+    if _PRINCIPAL_FETCHED:
+        return _PRINCIPAL_CACHE.get("name") if _PRINCIPAL_CACHE else None
+    _PRINCIPAL_FETCHED = True
+    if not settings.memory_api_token:
+        return None
+    try:
+        _PRINCIPAL_CACHE = await _client.whoami()
+    except Exception:
+        _PRINCIPAL_CACHE = None
+    return _PRINCIPAL_CACHE.get("name") if _PRINCIPAL_CACHE else None
+
+
+async def _resolve_partition_with_identity(scope: str | None, project_dir: str | None):
+    """Wrap partition resolution with identity auto-write / ambiguous raise.
 
     For scope=project, invoke ensure_project_identity first — it auto-writes
     .engram.cfg under Rule 1 ($HOME) or Rule 2 (~/projects/<x>/.claude/),
     or raises AmbiguousIdentity for Rule 3 (ambiguous dir). After that,
-    resolve_scope_and_user_id does the final lookup.
+    resolve_partition returns the (scope, user_id, project) triple, with
+    user_id resolved to the authenticated principal name (Phase 3).
     """
-    if (scope or settings.memory_default_scope) == "project":
+    effective_scope = scope or settings.memory_default_scope
+    if effective_scope == "project":
         effective = project_dir if project_dir and Path(project_dir).is_absolute() else None
         # Skip ensure when project_dir isn't a usable absolute path — the
         # tool's project_dir docstring already directs callers to pass one.
         if effective:
             ensure_project_identity(effective)  # side effect: writes cfg or raises
-    return resolve_scope_and_user_id(
-        scope or None, settings.memory_default_scope, project_dir or None
+    principal_name = await _get_principal_name() if effective_scope == "project" else None
+    return resolve_partition(
+        scope or None,
+        settings.memory_default_scope,
+        project_dir or None,
+        principal_name=principal_name,
     )
 
 
@@ -133,7 +164,9 @@ async def memory_store(
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     try:
-        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+        resolved_scope, user_id, project = await _resolve_partition_with_identity(
+            scope or None, project_dir or None
+        )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
@@ -143,13 +176,15 @@ async def memory_store(
         namespace=settings.memory_namespace,
         scope=resolved_scope,
         user_id=user_id,
+        project=project,
         tags=tags,
         project_dir=project_dir or None,
         listen_set=listen_set,
         reader_identity=reader_identity,
     )
     banner_text = _render_inbox_banner(result.get("inbox_banner"))
-    head = f"Stored memory '{result['key']}' (namespace: {settings.memory_namespace}, scope: {resolved_scope}, user_id: {user_id})"
+    proj_suffix = f", project: {project}" if project else ""
+    head = f"Stored memory '{result['key']}' (namespace: {settings.memory_namespace}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
     return banner_text + head if banner_text else head
 
 
@@ -185,7 +220,9 @@ async def memory_search(
         return "No memories found."
 
     try:
-        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+        resolved_scope, user_id, project = await _resolve_partition_with_identity(
+            scope or None, project_dir or None
+        )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
@@ -195,6 +232,7 @@ async def memory_search(
         namespaces=read_ns,
         scope=resolved_scope,
         user_id=user_id,
+        project=project,
         limit=limit,
         listen_set=listen_set,
         reader_identity=reader_identity,
@@ -230,7 +268,9 @@ async def memory_get(
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     try:
-        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+        resolved_scope, user_id, project = await _resolve_partition_with_identity(
+            scope or None, project_dir or None
+        )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     result = await _client.get(
@@ -238,6 +278,7 @@ async def memory_get(
         namespace=settings.memory_namespace,
         scope=resolved_scope,
         user_id=user_id,
+        project=project,
         project_dir=project_dir or None,
     )
     if result["status"] == "not_found":
@@ -261,7 +302,9 @@ async def memory_forget(
         project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
     """
     try:
-        resolved_scope, user_id = _resolve_project_scope_or_identity(scope or None, project_dir or None)
+        resolved_scope, user_id, project = await _resolve_partition_with_identity(
+            scope or None, project_dir or None
+        )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     result = await _client.forget(
@@ -269,6 +312,7 @@ async def memory_forget(
         namespace=settings.memory_namespace,
         scope=resolved_scope,
         user_id=user_id,
+        project=project,
         project_dir=project_dir or None,
     )
     if result["status"] == "not_found":

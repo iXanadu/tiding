@@ -53,6 +53,7 @@ class MemoryClient:
         namespace: str,
         scope: str,
         user_id: str,
+        project: str | None = None,
         tags: str = "",
         project_dir: str | None = None,
         listen_set: list[str] | None = None,
@@ -66,6 +67,8 @@ class MemoryClient:
             "user_id": user_id,
             "tags": tags,
         }
+        if project is not None:
+            body["project"] = project
         if listen_set:
             body["listen_set"] = listen_set
         if reader_identity:
@@ -83,17 +86,21 @@ class MemoryClient:
         namespace: str,
         scope: str,
         user_id: str,
+        project: str | None = None,
         project_dir: str | None = None,
     ) -> dict:
+        body: dict = {
+            "namespace": namespace,
+            "key": key,
+            "scope": scope,
+            "user_id": user_id,
+        }
+        if project is not None:
+            body["project"] = project
         return await self._request(
             "POST",
             "/memory/get",
-            json={
-                "namespace": namespace,
-                "key": key,
-                "scope": scope,
-                "user_id": user_id,
-            },
+            json=body,
             headers=self._provenance_headers(project_dir),
         )
 
@@ -102,6 +109,7 @@ class MemoryClient:
         query: str,
         scope: str,
         user_id: str,
+        project: str | None = None,
         limit: int = 5,
         namespace: str | None = None,
         namespaces: list[str] | None = None,
@@ -115,6 +123,8 @@ class MemoryClient:
             "user_id": user_id,
             "limit": limit,
         }
+        if project is not None:
+            body["project"] = project
         if namespaces:
             body["namespaces"] = namespaces
         elif namespace:
@@ -129,6 +139,11 @@ class MemoryClient:
             json=body,
             headers=self._provenance_headers(project_dir),
         )
+
+    async def whoami(self) -> dict:
+        """Return the authenticated principal record. Requires a valid
+        bearer token; returns 401 if anonymous."""
+        return await self._request("GET", "/whoami")
 
     async def inbox_send(
         self,
@@ -203,17 +218,21 @@ class MemoryClient:
         namespace: str,
         scope: str,
         user_id: str,
+        project: str | None = None,
         project_dir: str | None = None,
     ) -> dict:
+        body: dict = {
+            "namespace": namespace,
+            "key": key,
+            "scope": scope,
+            "user_id": user_id,
+        }
+        if project is not None:
+            body["project"] = project
         return await self._request(
             "POST",
             "/memory/forget",
-            json={
-                "namespace": namespace,
-                "key": key,
-                "scope": scope,
-                "user_id": user_id,
-            },
+            json=body,
             headers=self._provenance_headers(project_dir),
         )
 

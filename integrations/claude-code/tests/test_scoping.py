@@ -7,6 +7,7 @@ from engram_mcp.scoping import (
     AmbiguousIdentity,
     _parse_engram_cfg,
     ensure_project_identity,
+    resolve_partition,
     resolve_project_name,
     resolve_scope_and_user_id,
     write_project_cfg,
@@ -329,6 +330,47 @@ def test_resolve_scope_keeps_basename_fallback_for_library_callers(tmp_path, mon
     target = tmp_path / "Documents" / "X"
     target.mkdir(parents=True)
     assert resolve_scope_and_user_id("project", project_dir=str(target)) == ("project", "X")
+
+
+# --- resolve_partition (Phase 4: project as first-class field) ---
+
+def test_partition_machine():
+    scope, user_id, project = resolve_partition("machine")
+    assert scope == "machine"
+    assert user_id == socket.gethostname().split(".")[0].lower()
+    assert project is None
+
+
+def test_partition_shared():
+    assert resolve_partition("shared") == ("shared", "global", None)
+
+
+def test_partition_project_with_principal(tmp_path):
+    (tmp_path / ".engram.cfg").write_text("project = engram\n")
+    scope, user_id, project = resolve_partition(
+        "project", project_dir=str(tmp_path), principal_name="ixanadu"
+    )
+    assert scope == "project"
+    assert user_id == "ixanadu"
+    assert project == "engram"
+
+
+def test_partition_project_without_principal_uses_unknown(tmp_path):
+    (tmp_path / ".engram.cfg").write_text("project = engram\n")
+    scope, user_id, project = resolve_partition("project", project_dir=str(tmp_path))
+    assert (scope, user_id, project) == ("project", "unknown", "engram")
+
+
+def test_partition_project_falls_back_to_basename(tmp_path):
+    # No .engram.cfg → basename of project_dir
+    scope, user_id, project = resolve_partition(
+        "project", project_dir=str(tmp_path), principal_name="ixanadu"
+    )
+    assert project == tmp_path.name
+
+
+def test_partition_custom_scope_passthrough():
+    assert resolve_partition("user") == ("user", "user", None)
 
 
 def test_server_path_unaffected_by_home_boundary(tmp_path, monkeypatch):

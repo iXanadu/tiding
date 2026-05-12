@@ -212,6 +212,11 @@ def resolve_scope_and_user_id(
             shared   -> ("shared", "global")
             project  -> ("project", declared-name or dirname)
             custom   -> (custom, custom)   passthrough
+
+    Note:
+        Library function kept for back-compat. New code (Phase 4) should
+        use ``resolve_partition`` which returns the (scope, user_id,
+        project) triple matching the server schema.
     """
     scope = scope or default_scope
 
@@ -231,3 +236,45 @@ def resolve_scope_and_user_id(
         return ("project", dirname)
     else:
         return (scope, scope)
+
+
+def resolve_partition(
+    scope: str | None = None,
+    default_scope: str = "machine",
+    project_dir: str | None = None,
+    principal_name: str | None = None,
+) -> tuple[str, str, str | None]:
+    """Resolve scope to the engram (scope, user_id, project) triple.
+
+    Phase 4 of the identity model splits the partition into three columns:
+    ``user_id`` always identifies the person (or the machine for
+    scope=machine), and ``project`` holds the project name as a separate
+    column when scope=project.
+
+    For ``scope=project``:
+        - ``user_id`` = ``principal_name`` if provided, else ``"unknown"``
+        - ``project`` = name declared in ``.engram.cfg`` (walk-up), or
+          the basename of ``project_dir`` as a fallback.
+
+    For other scopes, project is None:
+        - ``machine``  → (``"machine"``, hostname, None)
+        - ``shared``   → (``"shared"``, ``"global"``, None)
+        - other        → (scope, scope, None) — passthrough
+    """
+    scope = scope or default_scope
+
+    if scope == "machine":
+        hostname = socket.gethostname().split(".")[0].lower()
+        return ("machine", hostname, None)
+    if scope == "shared":
+        return ("shared", "global", None)
+    if scope == "project":
+        declared = resolve_project_name(project_dir)
+        if not declared:
+            declared = (
+                os.path.basename(project_dir)
+                if project_dir
+                else os.path.basename(os.getcwd())
+            )
+        return ("project", principal_name or "unknown", declared)
+    return (scope, scope, None)
