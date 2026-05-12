@@ -19,7 +19,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + Ollama embed
 ## Commands
 
 - Run server: `uvicorn server.main:app --host 0.0.0.0 --port 8920`
-- Run server tests: `pytest tests/ -v`
+- Run server tests: `pytest tests/ -v` (auto-isolates to `engram_test` DB; conftest creates it on first run with pgvector + pg_trgm)
 - Run MCP tests: `cd integrations/claude-code && PYENV_VERSION=cc-memory-3.12 pytest tests/ -v`
 - Health check: `curl http://localhost:8920/health`
 

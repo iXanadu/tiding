@@ -214,10 +214,11 @@ async def init_pool() -> asyncpg.Pool:
         init=_init_connection,
     )
     async with pool.acquire() as conn:
-        # Run migration first to add namespace column to existing tables,
-        # then SCHEMA_SQL handles fresh installs (CREATE TABLE IF NOT EXISTS).
-        await conn.execute(MIGRATE_SQL)
+        # SCHEMA_SQL first (CREATE TABLE IF NOT EXISTS — no-op on existing
+        # DBs, creates current shape on fresh ones). MIGRATE_SQL then alters
+        # in place to handle upgrades from older schemas.
         await conn.execute(SCHEMA_SQL)
+        await conn.execute(MIGRATE_SQL)
     return pool
 
 
