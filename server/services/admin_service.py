@@ -118,6 +118,15 @@ async def list_machines() -> list[str]:
     return [r["machine"] for r in rows]
 
 
+async def list_namespaces() -> list[str]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT DISTINCT namespace FROM memories ORDER BY namespace"
+        )
+    return [r["namespace"] for r in rows]
+
+
 async def update_memory(
     namespace: str,
     key: str,

@@ -2,7 +2,12 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.dependencies import check_namespace_access, check_namespaces_access, get_current_principal
+from server.dependencies import (
+    check_namespace_access,
+    check_namespaces_access,
+    get_current_principal,
+    resolve_read_namespaces,
+)
 from server.models import (
     InboxAckRequest,
     InboxAckResponse,
@@ -116,9 +121,15 @@ async def get_memory(req: MemoryGetRequest, request: Request):
 
 @router.post("/search", response_model=MemorySearchResponse)
 async def search_memory(req: MemorySearchRequest, request: Request):
-    ns_list = req.resolved_namespaces()
+    principal = get_current_principal(request)
+    explicit = req.explicit_namespaces()
+    if explicit is None:
+        ns_list = await resolve_read_namespaces(principal)
+        logger.debug(f"SEARCH ns=<resolved from principal:{principal.get('name') if principal else None}> count={len(ns_list)}")
+    else:
+        ns_list = explicit
+        check_namespaces_access(principal, ns_list, "read")
     logger.debug(f"SEARCH ns={ns_list} query={req.query!r} user_id={req.user_id} scope={req.scope}")
-    check_namespaces_access(get_current_principal(request), ns_list, "read")
     try:
         results = await memory_search(
             namespaces=ns_list,

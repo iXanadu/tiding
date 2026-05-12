@@ -9,6 +9,32 @@ from server.config import settings
 logger = logging.getLogger(__name__)
 
 
+async def resolve_read_namespaces(principal: dict | None) -> list[str]:
+    """Expand a principal's read_namespaces to a concrete list.
+
+    Used when a search request omits namespace/namespaces — the server
+    falls back to "everything the caller can read." Raises 401 if there
+    is no principal (we can't resolve permissions without identity).
+    Raises 403 if the principal has no read access anywhere.
+    """
+    if principal is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Search without explicit namespace requires an authenticated principal.",
+        )
+    read_perms = principal.get("read_namespaces") or []
+    if "*" in read_perms or principal.get("is_admin"):
+        from server.services.admin_service import list_namespaces
+        all_ns = await list_namespaces()
+        return all_ns
+    if not read_perms:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Principal '{principal.get('name')}' has no read namespace permissions.",
+        )
+    return list(read_perms)
+
+
 def get_current_principal(request: Request) -> dict | None:
     """Extract principal from request.state (set by middleware). Returns None if anonymous."""
     return getattr(request.state, "principal", None)

@@ -154,7 +154,11 @@ async def test_namespace_isolation(client):
 
 @pytest.mark.asyncio
 async def test_namespace_required(client):
-    """Omitting namespace should return 422."""
+    """Omitting namespace returns 422 for set/get/forget (schema-required).
+
+    Search is special: omitting namespace is allowed when the caller has
+    a principal — the server resolves to read_namespaces. Without a
+    principal, search returns 401 (auth required to resolve)."""
     resp = await client.post("/memory/set", json={
         "key": "no_ns",
         "value": "should fail",
@@ -164,8 +168,9 @@ async def test_namespace_required(client):
     resp = await client.post("/memory/get", json={"key": "no_ns"})
     assert resp.status_code == 422
 
+    # Anonymous caller with no namespace → 401 (server can't resolve without identity)
     resp = await client.post("/memory/search", json={"query": "anything"})
-    assert resp.status_code == 422
+    assert resp.status_code == 401
 
     resp = await client.post("/memory/forget", json={"key": "no_ns"})
     assert resp.status_code == 422
@@ -221,9 +226,54 @@ async def test_cross_namespace_search(client):
 
 
 @pytest.mark.asyncio
-async def test_search_namespace_or_namespaces_required(client):
-    """Must provide either namespace or namespaces, not neither."""
-    resp = await client.post("/memory/search", json={
-        "query": "anything",
+async def test_search_without_namespace_requires_principal(client):
+    """Omitting namespace is OK when a principal is attached — server resolves
+    via read_namespaces. Without a principal we 401 because we can't resolve."""
+    resp = await client.post("/memory/search", json={"query": "anything"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_search_resolves_namespaces_from_principal(client):
+    """When the caller omits namespace and presents a principal, the server
+    expands the search to the principal's read_namespaces."""
+    # Set up a principal with explicit read list and seed memories in both.
+    create = await client.post("/admin/principals", json={
+        "name": "ns-resolve-agent",
+        "type": "agent",
+        "read_namespaces": ["ns-r-alpha", "ns-r-beta"],
+        "write_namespaces": ["ns-r-alpha", "ns-r-beta"],
     })
-    assert resp.status_code == 422
+    token = create.json()["raw_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    await client.post("/memory/set", headers=headers, json={
+        "namespace": "ns-r-alpha",
+        "key": "resolve-color",
+        "value": "the sky is blue",
+        "tags": "color preference",
+    })
+    await client.post("/memory/set", headers=headers, json={
+        "namespace": "ns-r-beta",
+        "key": "resolve-food",
+        "value": "pizza is the best food",
+        "tags": "food preference",
+    })
+
+    try:
+        # No namespace in the request — server resolves both from the principal.
+        resp = await client.post(
+            "/memory/search",
+            headers=headers,
+            json={"query": "what are the preferences", "limit": 10},
+        )
+        assert resp.status_code == 200
+        result_ns = {r["namespace"] for r in resp.json()["results"]}
+        assert "ns-r-alpha" in result_ns
+        assert "ns-r-beta" in result_ns
+    finally:
+        await client.post("/memory/forget", json={"namespace": "ns-r-alpha", "key": "resolve-color"})
+        await client.post("/memory/forget", json={"namespace": "ns-r-beta", "key": "resolve-food"})
+        pool = await __import__("server.services.principal_service", fromlist=["get_pool"]).get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM principals WHERE name = $1", "ns-resolve-agent")

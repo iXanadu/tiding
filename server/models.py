@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 
 # --- Request models (match original Pyscript tool interface) ---
@@ -43,12 +43,6 @@ class MemorySearchRequest(BaseModel):
     listen_set: list[str] | None = None
     reader_identity: str | None = None
 
-    @model_validator(mode="after")
-    def require_namespace(self):
-        if not self.namespace and not self.namespaces:
-            raise ValueError("Either 'namespace' or 'namespaces' is required")
-        return self
-
     @field_validator("query", mode="before")
     @classmethod
     def query_not_empty(cls, v):
@@ -56,11 +50,14 @@ class MemorySearchRequest(BaseModel):
             raise ValueError("query must not be empty")
         return v
 
-    def resolved_namespaces(self) -> list[str]:
-        """Return the list of namespaces to search (normalizes both fields)."""
+    def explicit_namespaces(self) -> list[str] | None:
+        """Return the namespaces the client explicitly asked for, or None
+        if both fields were omitted (server should resolve from the principal)."""
         if self.namespaces:
             return self.namespaces
-        return [self.namespace]
+        if self.namespace:
+            return [self.namespace]
+        return None
 
 
 class MemoryForgetRequest(BaseModel):
@@ -278,6 +275,14 @@ class TokenResponse(BaseModel):
     status: str
     principal_name: str
     raw_token: str
+
+
+class NamespacesResponse(BaseModel):
+    """Caller-scoped namespace list. Wildcards in the principal's permissions
+    are expanded server-side to concrete namespaces present in the DB."""
+    status: str
+    read: list[str]
+    write: list[str]
 
 
 # --- Inbox models (inter-session messaging on top of the memories table) ---
