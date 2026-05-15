@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import socket
 from dataclasses import dataclass, field
 
 import httpx
@@ -34,16 +35,25 @@ class EngramClient:
     Args:
         url: Engram server URL.
         token: Bearer token for authentication (tied to a principal).
-        namespace: Default namespace for writes. This is the read/write boundary.
+        namespace: Default namespace for writes. This is the write boundary.
         project: Default project name (sent in the ``project`` column, separate
             from ``user_id`` after Phase 4 of the identity model).
         user_id: Explicit user_id (the person who owns writes). When omitted,
             the SDK calls ``/whoami`` on first use and caches the principal
             name from the token. Pass this only if you need to override.
-        read_namespaces: Additional namespaces to search. Useful during dev when
-            terminal (claude-code) and web app (coursebuilder) share memories.
-            The primary namespace is always included automatically.
-        scope: Default scope. Almost always "project" for web apps.
+        read_namespaces: Search scope override. ``None`` (default) means the
+            server resolves from the principal's ``read_namespaces`` — for an
+            admin/wildcard token this spans everything. Pass a list to narrow:
+            ``["claude-code"]`` searches only that namespace; the primary
+            ``namespace`` is auto-included.
+        reader_identity: Default inbox identity for this client. When set
+            explicitly (e.g. ``"projalpha@laptop"`` for a CC project
+            session), it's used as-is. When ``None`` (default), the SDK
+            resolves it from ``/whoami`` and uses the principal name — the
+            right default for apps that speak as their token's owner (a
+            chat client authenticating with the human's token gets the
+            human's name as its inbox address).
+        scope: Default scope. ``"project"`` or ``"user"`` for web apps.
         timeout: Request timeout in seconds.
     """
 
@@ -52,7 +62,8 @@ class EngramClient:
     namespace: str
     project: str
     user_id: str | None = None
-    read_namespaces: list[str] = field(default_factory=list)
+    read_namespaces: list[str] | None = None
+    reader_identity: str | None = None
     scope: str = "project"
     timeout: float = 30.0
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
@@ -70,7 +81,11 @@ class EngramClient:
             )
         return self._client
 
-    def _search_namespaces(self) -> list[str]:
+    def _search_namespaces(self) -> list[str] | None:
+        """Namespaces to send on search, or ``None`` to let the server resolve
+        from the principal's read permissions."""
+        if self.read_namespaces is None:
+            return None
         ns = [self.namespace]
         for extra in self.read_namespaces:
             if extra not in ns:
@@ -90,13 +105,20 @@ class EngramClient:
                     continue
                 raise
 
-    async def _resolve_user_id(self) -> str:
-        """Return the user_id to send on writes. Order: explicit > /whoami > 'unknown'.
+    async def _resolve_user_id(self, scope: str | None = None) -> str:
+        """Return the partition ``user_id`` for the given scope.
 
-        After Phase 4, ``user_id`` is the person and ``project`` is separate.
-        Web apps authenticate with a token but don't usually know the principal
-        name behind it, so we ask the server once and cache.
+        Conventions match the MCP bridge's ``resolve_partition``:
+
+        - ``shared`` → ``"global"`` (one cross-fleet partition)
+        - ``machine`` → local short hostname (host-local partition)
+        - ``user`` / ``project`` / ``inbox`` (default) → principal name from
+          ``/whoami``, cached. Override via the constructor's ``user_id``.
         """
+        if scope == "shared":
+            return "global"
+        if scope == "machine":
+            return socket.gethostname().split(".")[0].lower()
         if self.user_id:
             return self.user_id
         if self._resolved_user_id:
@@ -120,21 +142,29 @@ class EngramClient:
     ) -> list[dict]:
         """Search memories semantically. Returns matching items.
 
-        Searches across the primary namespace plus any configured
-        read_namespaces by default. Override with ``namespaces`` param.
+        When ``namespaces`` (call-level) and ``read_namespaces`` (constructor)
+        are both unset, the server resolves namespaces from the principal's
+        read permissions — for an admin/wildcard token this spans every
+        namespace. Pass ``namespaces=[...]`` to narrow per call.
+
+        Project filter: pass ``project=""`` to search rows where
+        ``project IS NULL`` (i.e. ``scope=shared``/``machine``/``user`` rows
+        that don't carry a project). Pass ``project="<name>"`` to filter on
+        that project. Omit to use the constructor default.
         """
-        data = await self._request(
-            "POST",
-            "/memory/search",
-            json={
-                "namespaces": namespaces or self._search_namespaces(),
-                "query": query,
-                "scope": scope or self.scope,
-                "user_id": await self._resolve_user_id(),
-                "project": project or self.project,
-                "limit": limit,
-            },
-        )
+        final_project = project if project is not None else self.project
+        body: dict = {
+            "query": query,
+            "scope": scope or self.scope,
+            "user_id": await self._resolve_user_id(scope or self.scope),
+            "limit": limit,
+        }
+        if final_project:
+            body["project"] = final_project
+        ns = namespaces if namespaces is not None else self._search_namespaces()
+        if ns is not None:
+            body["namespaces"] = ns
+        data = await self._request("POST", "/memory/search", json=body)
         return data.get("results", [])
 
     async def store(
@@ -157,7 +187,7 @@ class EngramClient:
                 "key": key,
                 "value": value,
                 "scope": scope or self.scope,
-                "user_id": await self._resolve_user_id(),
+                "user_id": await self._resolve_user_id(scope or self.scope),
                 "project": project or self.project,
                 "tags": tags,
                 "expiration_days": expiration_days,
@@ -181,7 +211,7 @@ class EngramClient:
                 "namespace": namespace or self.namespace,
                 "key": key,
                 "scope": scope or self.scope,
-                "user_id": await self._resolve_user_id(),
+                "user_id": await self._resolve_user_id(scope or self.scope),
                 "project": project or self.project,
             },
         )
@@ -203,7 +233,7 @@ class EngramClient:
                 "namespace": namespace or self.namespace,
                 "key": key,
                 "scope": scope or self.scope,
-                "user_id": await self._resolve_user_id(),
+                "user_id": await self._resolve_user_id(scope or self.scope),
                 "project": project or self.project,
             },
         )
@@ -212,6 +242,145 @@ class EngramClient:
     async def whoami(self) -> dict:
         """Return the authenticated principal record. Triggers user_id cache."""
         return await self._request("GET", "/whoami")
+
+    async def _resolve_reader_identity(self) -> str | None:
+        """Return the inbox identity for this client. Order: explicit
+        constructor arg > principal name from ``/whoami`` (cached) > None.
+
+        An app authenticating with a human's token gets the human's name
+        as its address (e.g. ``ixanadu``) — anyone in the fleet can reach
+        the human there. A CC session that wants a per-project identity
+        (``engram@macmini``) sets ``reader_identity=`` explicitly at
+        construction time.
+        """
+        if self.reader_identity:
+            return self.reader_identity
+        name = await self._resolve_user_id(scope=None)
+        return name if name and name != "unknown" else None
+
+    # --- Inbox: inter-session messaging ----------------------------------
+
+    async def inbox_send(
+        self,
+        to: str,
+        body: str,
+        *,
+        subject: str = "",
+        from_: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict:
+        """Send an inbox message addressed to a project or machine.
+
+        ``from_`` defaults to ``self.reader_identity``. Returns the full
+        server response (``status``, ``id``, ``guidance``, ...).
+        """
+        payload: dict = {"to": to, "body": body, "subject": subject}
+        sender = from_ if from_ is not None else await self._resolve_reader_identity()
+        if sender:
+            payload["from_"] = sender
+        if thread_id:
+            payload["thread_id"] = thread_id
+        return await self._request("POST", "/memory/send", json=payload)
+
+    async def inbox_list(
+        self,
+        *,
+        listen_set: list[str] | None = None,
+        reader_identity: str | None = None,
+        unread_only: bool = True,
+        limit: int = 20,
+    ) -> dict:
+        """List inbox messages for ``listen_set``. Defaults to listening on
+        ``[self.reader_identity]`` when both args are omitted.
+        """
+        reader = reader_identity if reader_identity is not None else await self._resolve_reader_identity()
+        if listen_set is None:
+            if not reader:
+                raise ValueError(
+                    "inbox_list needs listen_set or reader_identity (or a "
+                    "reader_identity configured on the client)"
+                )
+            listen_set = [reader]
+        return await self._request(
+            "POST",
+            "/memory/inbox",
+            json={
+                "listen_set": listen_set,
+                "reader_identity": reader,
+                "unread_only": unread_only,
+                "limit": limit,
+            },
+        )
+
+    async def inbox_ack(
+        self,
+        message_id: str,
+        *,
+        reader_identity: str | None = None,
+    ) -> dict:
+        """Mark an inbox message as read by ``reader_identity``."""
+        reader = reader_identity if reader_identity is not None else await self._resolve_reader_identity()
+        if not reader:
+            raise ValueError("inbox_ack needs reader_identity")
+        return await self._request(
+            "POST",
+            f"/memory/inbox/{message_id}/ack",
+            json={"reader_identity": reader},
+        )
+
+    async def inbox_archive(
+        self,
+        message_id: str,
+        *,
+        reader_identity: str | None = None,
+    ) -> dict:
+        """Archive an inbox message (hide from all future inbox queries)."""
+        reader = reader_identity if reader_identity is not None else await self._resolve_reader_identity()
+        if not reader:
+            raise ValueError("inbox_archive needs reader_identity")
+        return await self._request(
+            "POST",
+            f"/memory/inbox/{message_id}/archive",
+            json={"reader_identity": reader},
+        )
+
+    async def inbox_reply(
+        self,
+        parent: dict,
+        body: str,
+        *,
+        subject: str = "",
+        reader_identity: str | None = None,
+    ) -> dict:
+        """Reply to an inbox message: sends to the parent's sender, thread-
+        links automatically, and acks the parent. ``parent`` is a message
+        dict from ``inbox_list``. Returns the send response.
+        """
+        reader = (
+            reader_identity
+            if reader_identity is not None
+            else await self._resolve_reader_identity()
+        )
+        parent_from = parent.get("from_") or parent.get("from")
+        if not parent_from:
+            raise ValueError("parent message has no 'from_' to reply to")
+        # Strip @host so the reply lands on the sender's project address,
+        # matching MCP memory_reply behavior.
+        to = parent_from.split("@", 1)[0] if "@" in parent_from else parent_from
+        thread_id = parent.get("thread_id") or parent.get("id")
+        send = await self.inbox_send(
+            to=to,
+            body=body,
+            subject=subject,
+            from_=reader,
+            thread_id=thread_id,
+        )
+        if reader:
+            try:
+                await self.inbox_ack(parent["id"], reader_identity=reader)
+            except Exception:
+                pass
+        return send
 
     async def health(self) -> dict:
         """Check engram server health."""
