@@ -54,6 +54,9 @@ class EngramClient:
             chat client authenticating with the human's token gets the
             human's name as its inbox address).
         scope: Default scope. ``"project"`` or ``"user"`` for web apps.
+        enabled: Kill switch. When ``False``, :meth:`is_available` short-circuits
+            to ``False`` so an app can run with memory turned off without
+            changing call sites.
         timeout: Request timeout in seconds.
     """
 
@@ -65,9 +68,56 @@ class EngramClient:
     read_namespaces: list[str] | None = None
     reader_identity: str | None = None
     scope: str = "project"
+    enabled: bool = True
     timeout: float = 30.0
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
     _resolved_user_id: str | None = field(default=None, repr=False)
+
+    @classmethod
+    def from_env(cls, prefix: str, **overrides) -> "EngramClient":
+        """Build a client from app-prefixed environment variables.
+
+        Reads ``<PREFIX>_ENGRAM_{URL,TOKEN,NAMESPACE,PROJECT,SCOPE,ENABLED}``.
+        Defaults: URL ``http://localhost:8920``, SCOPE ``user`` (web-app
+        default), ENABLED ``true``. ``prefix`` is case-insensitive; a trailing
+        underscore is ignored. Keyword ``overrides`` win over the environment.
+
+        Example::
+
+            engram = EngramClient.from_env("BEASTCHAT")  # BEASTCHAT_ENGRAM_*
+        """
+        import os
+
+        p = prefix.rstrip("_").upper()
+
+        def g(suffix: str, default: str = "") -> str:
+            return os.environ.get(f"{p}_ENGRAM_{suffix}", default)
+
+        enabled = g("ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+        kwargs: dict = dict(
+            url=g("URL", "http://localhost:8920"),
+            token=g("TOKEN"),
+            namespace=g("NAMESPACE"),
+            project=g("PROJECT"),
+            scope=g("SCOPE", "user"),
+            enabled=enabled,
+        )
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
+    async def is_available(self) -> bool:
+        """Return whether engram is usable right now.
+
+        ``False`` when disabled (``enabled=False``) or unreachable. Never
+        raises — call it to gate memory-dependent paths and degrade gracefully.
+        """
+        if not self.enabled:
+            return False
+        try:
+            data = await self.health()
+            return isinstance(data, dict) and data.get("status") == "ok"
+        except Exception:
+            return False
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
