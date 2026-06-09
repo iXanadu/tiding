@@ -14,7 +14,7 @@ class MemorySetRequest(BaseModel):
     project: str | None = None
     tags: str = ""
     tags_search: str = ""
-    expiration_days: int = 180
+    expiration_days: int = 0  # 0 = never expires (permanent default); set a positive TTL for ephemeral memories
     force_new: bool = False
     listen_set: list[str] | None = None
     reader_identity: str | None = None

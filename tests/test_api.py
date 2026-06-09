@@ -277,3 +277,39 @@ async def test_search_resolves_namespaces_from_principal(client):
         pool = await __import__("server.services.principal_service", fromlist=["get_pool"]).get_pool()
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM principals WHERE name = $1", "ns-resolve-agent")
+
+
+@pytest.mark.asyncio
+async def test_default_store_is_permanent(client, db_pool):
+    """Memories never expire by default. expires_at is only set when a
+    positive expiration_days is passed explicitly (engram is a durable store)."""
+    # Default store → permanent (expires_at IS NULL)
+    resp = await client.post("/memory/set", json={
+        "namespace": "test",
+        "key": "ttl_default",
+        "value": "should be permanent",
+    })
+    assert resp.status_code == 200
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT expires_at FROM memories WHERE namespace='test' AND key='ttl_default'"
+        )
+    assert row["expires_at"] is None
+
+    # Explicit positive TTL → expires_at is set
+    resp = await client.post("/memory/set", json={
+        "namespace": "test",
+        "key": "ttl_explicit",
+        "value": "should expire",
+        "expiration_days": 7,
+    })
+    assert resp.status_code == 200
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT expires_at FROM memories WHERE namespace='test' AND key='ttl_explicit'"
+        )
+    assert row["expires_at"] is not None
+
+    # Clean up
+    await client.post("/memory/forget", json={"namespace": "test", "key": "ttl_default"})
+    await client.post("/memory/forget", json={"namespace": "test", "key": "ttl_explicit"})

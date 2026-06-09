@@ -176,9 +176,15 @@ class EngramClient:
         project: str | None = None,
         scope: str | None = None,
         namespace: str | None = None,
-        expiration_days: int = 180,
+        expiration_days: int = 0,
     ) -> str:
-        """Store or update a memory. Returns the key."""
+        """Store or update a memory. Returns the key.
+
+        ``expiration_days=0`` (default) means the memory never expires —
+        engram is a durable store; curate/delete deliberately. Pass a
+        positive value only for genuinely ephemeral memories (e.g. a
+        time-boxed reminder).
+        """
         data = await self._request(
             "POST",
             "/memory/set",

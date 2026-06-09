@@ -82,7 +82,7 @@ async def memory_set(
     project: str | None = None,
     tags: str = "",
     tags_search: str = "",
-    expiration_days: int = 180,
+    expiration_days: int = 0,
     metadata: dict | None = None,
     owner: str | None = None,
 ) -> str:
