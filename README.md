@@ -144,7 +144,7 @@ Store or update a memory.
 | `project` | string | `null` | Project name (required when scope=project, null for other scopes) |
 | `tags` | string | `""` | Comma-separated keywords for search boosting |
 | `tags_search` | string | `""` | Additional search-optimized tags |
-| `expiration_days` | int | `180` | Auto-expire after N days (0 = never) |
+| `expiration_days` | int | `0` | `0` = never expires (default — engram is a durable store). Set a positive value only for genuinely ephemeral memories. |
 
 ```bash
 curl -X POST http://localhost:8920/memory/set \
@@ -290,9 +290,11 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_API_TOKEN` | _(empty)_ | Legacy Bearer token (empty = no auth) |
 | `ENGRAM_REQUIRE_AUTH` | `false` | Enable principal-based authentication |
 | `ENGRAM_WARN_UNAUTHED` | `false` | Log warnings for unauthenticated requests |
-| `ENGRAM_CLEANUP_ENABLED` | `true` | Run background expiration cleanup |
+| `ENGRAM_CLEANUP_ENABLED` | `true` | Run background expiration cleanup. **Disabled in production** — engram is manual-curation; nothing is auto-deleted. See note below. |
 | `ENGRAM_CLEANUP_INTERVAL_HOURS` | `6` | Hours between cleanup runs |
 | `ENGRAM_CLEANUP_BATCH_SIZE` | `500` | Max expired records per cleanup run |
+
+> **Expiry / cleanup posture (2026-06-08):** memories are **permanent by default** (`expiration_days=0`) and the background cleanup task is **off in production** (`ENGRAM_CLEANUP_ENABLED=false`), so `expires_at` is inert — nothing is auto-deleted regardless of what a client sends. This matches engram's curate-deliberately model. The cleanup task is being reconsidered as a *consolidation* mechanism (detect stale/duplicate memories, summarize, then prune) rather than a blunt TTL deleter. Re-enabling auto-expiry requires both flipping `ENGRAM_CLEANUP_ENABLED` and having clients set deliberate short TTLs.
 | `ENGRAM_VECTOR_THRESHOLD` | `0.35` | Minimum cosine similarity |
 | `ENGRAM_TRIGRAM_WEIGHT` | `0.15` | Weight for trigram score in combined ranking |
 | `ENGRAM_TRIGRAM_THRESHOLD` | `0.1` | Minimum trigram similarity |
