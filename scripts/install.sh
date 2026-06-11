@@ -100,13 +100,20 @@ CLAUDE_MD_DST="$CLAUDE_DIR/CLAUDE.md"
 
 if [ -f "$CLAUDE_MD_SRC" ]; then
     mkdir -p "$CLAUDE_DIR"
-    if [ -f "$CLAUDE_MD_DST" ]; then
-        # Back up existing before overwriting
-        cp "$CLAUDE_MD_DST" "${CLAUDE_MD_DST}.bak"
-        echo "Backed up existing CLAUDE.md → CLAUDE.md.bak"
+    if [ ! -f "$CLAUDE_MD_DST" ]; then
+        # Fresh machine — install the template
+        cp "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"
+        echo "Installed global CLAUDE.md → $CLAUDE_MD_DST"
+    elif cmp -s "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"; then
+        echo "Global CLAUDE.md already up to date — no change"
+    else
+        # NEVER clobber a hand-edited live config. Stage the template alongside
+        # it so the user can diff/merge deliberately.
+        cp "$CLAUDE_MD_SRC" "${CLAUDE_MD_DST}.new"
+        echo "Existing CLAUDE.md differs from template — left untouched."
+        echo "  Template staged at: ${CLAUDE_MD_DST}.new"
+        echo "  Review: diff \"$CLAUDE_MD_DST\" \"${CLAUDE_MD_DST}.new\""
     fi
-    cp "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"
-    echo "Installed global CLAUDE.md → $CLAUDE_MD_DST"
 else
     echo "NOTE: No docs/CLAUDE.md.global found — skipping global CLAUDE.md install"
 fi
