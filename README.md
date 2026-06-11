@@ -41,7 +41,7 @@ Pre-Phase-4 clients sometimes sent the project name in `user_id` with no `projec
 
 **Namespace is the read boundary.** A principal with read access to a namespace can see every memory in it — all scopes, all user_ids. There is no project-level or scope-level read restriction within a namespace.
 
-**The wrapper enforces write targeting.** Each integration (MCP bridge, web app, pyscript) acts as a harness that resolves the correct scope and user_id for the current context. For example, the Claude Code MCP bridge resolves project identity from `.engram.cfg` in the repo root and injects `scope=project, user_id={project_name}` on every call. The wrapper prevents accidents; the server prevents unauthorized access.
+**The wrapper enforces write targeting.** Each integration (MCP bridge, web app, pyscript) acts as a harness that resolves the correct scope and user_id for the current context. For example, the Claude Code MCP bridge resolves project identity from `.engram.cfg` in the repo root and injects `scope=project, user_id={person}, project={project_name}` on every call. The wrapper prevents accidents; the server prevents unauthorized access.
 
 **Multi-namespace search** enables cross-system collaboration. The search endpoint accepts a `namespaces` array, so one AI can read memories written by another AI system while preserving provenance (the `namespace` field on each result shows who wrote it).
 
@@ -293,11 +293,11 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_CLEANUP_ENABLED` | `true` | Run background expiration cleanup. **Disabled in production** — engram is manual-curation; nothing is auto-deleted. See note below. |
 | `ENGRAM_CLEANUP_INTERVAL_HOURS` | `6` | Hours between cleanup runs |
 | `ENGRAM_CLEANUP_BATCH_SIZE` | `500` | Max expired records per cleanup run |
-
-> **Expiry / cleanup posture (2026-06-08):** memories are **permanent by default** (`expiration_days=0`) and the background cleanup task is **off in production** (`ENGRAM_CLEANUP_ENABLED=false`), so `expires_at` is inert — nothing is auto-deleted regardless of what a client sends. This matches engram's curate-deliberately model. The cleanup task is being reconsidered as a *consolidation* mechanism (detect stale/duplicate memories, summarize, then prune) rather than a blunt TTL deleter. Re-enabling auto-expiry requires both flipping `ENGRAM_CLEANUP_ENABLED` and having clients set deliberate short TTLs.
 | `ENGRAM_VECTOR_THRESHOLD` | `0.35` | Minimum cosine similarity |
 | `ENGRAM_TRIGRAM_WEIGHT` | `0.15` | Weight for trigram score in combined ranking |
 | `ENGRAM_TRIGRAM_THRESHOLD` | `0.1` | Minimum trigram similarity |
+
+> **Expiry / cleanup posture:** memories are **permanent by default** (`expiration_days=0`) and the background cleanup task is **off in production** (`ENGRAM_CLEANUP_ENABLED=false`), so `expires_at` is inert — nothing is auto-deleted regardless of what a client sends. This matches engram's curate-deliberately model. The cleanup task is being reconsidered as a *consolidation* mechanism (detect stale/duplicate memories, summarize, then prune) rather than a blunt TTL deleter. Re-enabling auto-expiry requires both flipping `ENGRAM_CLEANUP_ENABLED` and having clients set deliberate short TTLs.
 
 ## Search Algorithm
 
@@ -349,11 +349,44 @@ Then register in `~/.claude.json`:
 }
 ```
 
+> **Recommended: keep the token out of `~/.claude.json`.** Claude Code rewrites that file, so put the token in `~/.config/engram/identity` instead (`.env`-style, `chmod 600`) and omit it from the `.claude.json` env block:
+>
+> ```
+> memory_api_token=engram_<your-token>
+> memory_api_url=http://localhost:8920
+> memory_namespace=claude-code
+> ```
+>
+> The bridge reads it from there when the `.claude.json` env block omits the token. (An inline env token still works and takes precedence — but a fragile config file is a poor home for a credential.)
+
 The MCP bridge resolves project identity from `.engram.cfg` in the repo root (walk-up search). Create one in each project:
 
 ```
 # .engram.cfg
 project = my-project-name
+```
+
+### Python Client SDK (web apps)
+
+`integrations/python-client/` ships `engram-client` — an async SDK for web/app backends (FastAPI, Django) that need memory:
+
+```bash
+pip install -e path/to/engram/integrations/python-client
+```
+
+```python
+from engram_client import EngramClient
+
+engram = EngramClient.from_env("MYAPP")   # reads MYAPP_ENGRAM_{URL,TOKEN,NAMESPACE,...}
+if await engram.is_available():           # kill-switch-aware health probe; never raises
+    await engram.store("decision/quiz-format", "multiple choice")  # durable by default
+    hits = await engram.search("quiz strategies")
+```
+
+The full conventions — namespace-per-person, per-user token handling, expiry discipline, FastAPI wiring, and migration steps — are in **[docs/webapp-integration-spec.md](docs/webapp-integration-spec.md)**. The package also installs an `engram` CLI for provisioning principals:
+
+```bash
+engram principal create <name> --write <ns> --read <ns,...>   # mints a token, shown once
 ```
 
 ### Custom
