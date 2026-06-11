@@ -145,6 +145,12 @@ class MemoryClient:
         bearer token; returns 401 if anonymous."""
         return await self._request("GET", "/whoami")
 
+    async def namespaces(self) -> dict:
+        """Return the namespaces the caller can read/write, with wildcards
+        expanded server-side to concrete namespaces. Requires a valid token.
+        Shape: ``{"status": "ok", "read": [...], "write": [...]}``."""
+        return await self._request("GET", "/namespaces")
+
     async def inbox_send(
         self,
         to: str,

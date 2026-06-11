@@ -366,6 +366,12 @@ The MCP bridge resolves project identity from `.engram.cfg` in the repo root (wa
 project = my-project-name
 ```
 
+**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, `memory_forget`, `memory_send`/`memory_inbox`/`memory_reply`/`memory_ack`/`memory_inbox_archive` (inter-agent inbox), `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
+
+**Search is permission-driven.** By default (`memory_read_namespaces` empty) the bridge sends *no* namespace on search, so the server returns results from every namespace the **token** can read — grant a principal read of another namespace and it shows up automatically, no client config change. Set `memory_read_namespaces` to a CSV only if you want to *narrow* below the token's permissions.
+
+> **Use a scoped principal for the bridge, not an admin/wildcard token.** The bridge's reach *is* the token's read permissions, so give it a principal scoped to exactly the namespaces it should see (e.g. `claude-code` reading `claude-code, claude-web, grok`). An admin (`*.*`) token would make every search span *all* namespaces and put a god credential on every box.
+
 ### Python Client SDK (web apps)
 
 `integrations/python-client/` ships `engram-client` — an async SDK for web/app backends (FastAPI, Django) that need memory:

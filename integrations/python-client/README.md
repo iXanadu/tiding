@@ -138,9 +138,9 @@ The namespace is configurable per account, not hardcoded. During development, yo
 
 Semantic search across memories. Returns a list of matching items with scores.
 
-### `store(key, value, *, tags="", project=None, scope=None, namespace=None, expiration_days=180)`
+### `store(key, value, *, tags="", project=None, scope=None, namespace=None, expiration_days=0)`
 
-Store or update a memory. Returns the key.
+Store or update a memory. Returns the key. `expiration_days=0` (default) means it never expires — engram is a durable store; pass a positive value only for genuinely ephemeral memories.
 
 ### `get(key, *, project=None, scope=None, namespace=None)`
 
@@ -150,11 +150,19 @@ Retrieve a memory by exact key. Returns the item dict or `None`.
 
 Delete a memory by key. Returns `True` if it existed.
 
-### `health()`
+### `health()` / `is_available()`
 
-Check server health. Returns `{"status": "ok", "checks": {...}}`.
+`health()` returns `{"status": "ok", "checks": {...}}`. `is_available()` is a never-raising convenience: returns `True` only if the client is `enabled` and the server is healthy — use it to gate memory-dependent paths and degrade gracefully.
 
-All methods accept optional `project`, `scope`, and `namespace` overrides. When omitted, the client's defaults are used.
+### `whoami()` / `namespaces()`
+
+Discover the token's identity and reach. `whoami()` returns the principal record (name, type, admin flag, raw read/write lists). `namespaces()` returns `{"read": [...], "write": [...]}` with wildcards expanded to concrete namespaces — use it to show a user what their assistant can recall.
+
+### `EngramClient.from_env(prefix)`
+
+Classmethod that builds a client from `<PREFIX>_ENGRAM_{URL,TOKEN,NAMESPACE,PROJECT,SCOPE,ENABLED}` environment variables (SCOPE defaults to `user`).
+
+All read/write methods accept optional `project`, `scope`, and `namespace` overrides. When omitted, the client's defaults are used.
 
 ## Authentication
 

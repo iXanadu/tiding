@@ -155,7 +155,28 @@ VERSION = _get_version()
 
 mcp = FastMCP(
     "claude-memory",
-    instructions="Persistent semantic memory for Claude Code sessions",
+    instructions=(
+        "Persistent semantic memory for AI agents (engram). Use it to remember and "
+        "recall across sessions.\n"
+        "\n"
+        "WHEN: search at the start of a task to recall prior context; store at "
+        "milestones — decisions, lessons, fixes, session progress. Memory is DURABLE "
+        "(permanent by default) — write what a future session will want; curate "
+        "deliberately rather than relying on expiry.\n"
+        "\n"
+        "SCOPES (choose per call): 'shared' = knowledge useful across all "
+        "machines/projects (lessons, fixes, patterns); 'project' = state for the "
+        "current project (pass project_dir so it resolves correctly); 'machine' = "
+        "host-local facts; 'user' = personal facts. Search is scope-isolated — query "
+        "the scope you stored under.\n"
+        "\n"
+        "IDENTITY: call memory_whoami to see who you are and which namespaces you can "
+        "read/write. You do not choose the namespace — the bridge targets it for you, "
+        "and your reach is whatever your token permits.\n"
+        "\n"
+        "INBOX: other sessions can message you; a 📬 banner appears on store/search — "
+        "call memory_inbox to read."
+    ),
 )
 
 _client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
@@ -255,10 +276,13 @@ async def memory_search(
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
+    # Empty memory_read_namespaces => omit namespaces so the server resolves the
+    # search from the token's read permissions (single source of truth). A CSV
+    # value narrows to an explicit subset.
     read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
     result = await _client.search(
         query=query,
-        namespaces=read_ns,
+        namespaces=read_ns or None,
         scope=resolved_scope,
         user_id=user_id,
         project=project,
@@ -412,6 +436,43 @@ async def memory_status() -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"Memory service unreachable: {e}\nServer version: {VERSION}"
+
+
+@mcp.tool()
+async def memory_whoami() -> str:
+    """Show who this session is to engram and what memory it can reach.
+
+    Returns the authenticated principal (name, type, admin flag), the
+    namespace this bridge writes to, and the namespaces this token can read
+    and write (wildcards expanded to the concrete namespaces on the server).
+    Use it to understand your reach: you don't pick namespaces — your token's
+    permissions decide what search returns and where stores land.
+    """
+    if not settings.memory_api_token:
+        return (
+            "Not authenticated — no token configured. Running anonymously; memory "
+            "may be unavailable or read-only depending on server policy."
+        )
+    try:
+        who = await _client.whoami()
+    except Exception as e:
+        return f"Could not resolve identity (is the token valid / server reachable?): {e}"
+    lines = [
+        f"Principal: {who.get('name')} (type={who.get('type')}, admin={who.get('is_admin')})",
+        f"Server: {settings.memory_api_url}",
+        f"This bridge writes to namespace: {settings.memory_namespace}",
+    ]
+    try:
+        ns = await _client.namespaces()
+        read = ", ".join(ns.get("read", [])) or "(none)"
+        write = ", ".join(ns.get("write", [])) or "(none)"
+    except Exception:
+        # Fall back to the raw (possibly wildcard) lists from /whoami.
+        read = ", ".join(who.get("read_namespaces", [])) or "(none)"
+        write = ", ".join(who.get("write_namespaces", [])) or "(none)"
+    lines.append(f"Can READ namespaces:  {read}")
+    lines.append(f"Can WRITE namespaces: {write}")
+    return "\n".join(lines)
 
 
 def _format_inbox_message(m: dict) -> str:

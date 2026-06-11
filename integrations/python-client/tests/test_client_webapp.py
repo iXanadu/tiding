@@ -65,3 +65,17 @@ async def test_is_available_false_when_unreachable(monkeypatch):
 
     monkeypatch.setattr(c, "health", boom)
     assert await c.is_available() is False
+
+
+@pytest.mark.asyncio
+async def test_namespaces_wraps_endpoint(monkeypatch):
+    c = EngramClient(url="http://x", token="t", namespace="n", project="")
+
+    async def fake_request(method, path, **kw):
+        assert method == "GET" and path == "/namespaces"
+        return {"status": "ok", "read": ["a", "b"], "write": ["a"]}
+
+    monkeypatch.setattr(c, "_request", fake_request)
+    out = await c.namespaces()
+    assert out["read"] == ["a", "b"]
+    assert out["write"] == ["a"]

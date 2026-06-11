@@ -299,6 +299,12 @@ class EngramClient:
         """Return the authenticated principal record. Triggers user_id cache."""
         return await self._request("GET", "/whoami")
 
+    async def namespaces(self) -> dict:
+        """Return the namespaces this token can read/write, with wildcards
+        expanded server-side to concrete namespaces. Lets an app show a user
+        what their assistant can recall. Shape: ``{"status", "read", "write"}``."""
+        return await self._request("GET", "/namespaces")
+
     async def _resolve_reader_identity(self) -> str | None:
         """Return the inbox identity for this client. Order: explicit
         constructor arg > principal name from ``/whoami`` (cached) > None.

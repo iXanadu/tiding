@@ -1,9 +1,12 @@
 """Test MCP tool functions directly (they're just async functions)."""
 
+import json
+
 import httpx
 import respx
 from unittest.mock import patch
 
+from engram_mcp.config import settings as cfg
 from engram_mcp.server import (
     VERSION,
     memory_store,
@@ -11,6 +14,7 @@ from engram_mcp.server import (
     memory_get,
     memory_forget,
     memory_status,
+    memory_whoami,
 )
 
 
@@ -294,3 +298,57 @@ async def test_memory_search_admin_override(respx_mock):
     body = route.calls.last.request.read()
     assert b'"user_id":"ixanadu"' in body
     assert b'"project":"other-app"' in body
+
+
+# --- memory_whoami -----------------------------------------------------------
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_whoami_shows_identity_and_namespaces(respx_mock):
+    respx_mock.get("/whoami").mock(return_value=httpx.Response(200, json={
+        "name": "claude-code", "type": "agent", "is_admin": False,
+        "read_namespaces": ["claude-code", "beast"], "write_namespaces": ["claude-code"],
+    }))
+    respx_mock.get("/namespaces").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "read": ["claude-code", "claude-web", "grok", "beast"],
+        "write": ["claude-code"],
+    }))
+    with patch.object(cfg, "memory_api_token", "engram_test"):
+        out = await memory_whoami()
+    assert "Principal: claude-code" in out
+    assert "admin=False" in out
+    # namespaces come from /namespaces (wildcard-expanded), not the raw /whoami list
+    assert "Can READ namespaces:  claude-code, claude-web, grok, beast" in out
+    assert "Can WRITE namespaces: claude-code" in out
+
+
+async def test_memory_whoami_anonymous_when_no_token():
+    with patch.object(cfg, "memory_api_token", ""):
+        out = await memory_whoami()
+    assert "Not authenticated" in out
+
+
+# --- perms-driven search -----------------------------------------------------
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_search_omits_namespaces_when_read_list_empty(respx_mock):
+    """Empty memory_read_namespaces => the bridge sends no namespace(s), so the
+    server resolves the search from the token's read permissions."""
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    with patch.object(cfg, "memory_read_namespaces", ""):
+        await memory_search(query="hello", scope="shared")
+    body = json.loads(route.calls.last.request.content)
+    assert "namespaces" not in body
+    assert "namespace" not in body
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_search_narrows_when_read_list_set(respx_mock):
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    with patch.object(cfg, "memory_read_namespaces", "claude-code,beast"):
+        await memory_search(query="hello", scope="shared")
+    body = json.loads(route.calls.last.request.content)
+    assert body["namespaces"] == ["claude-code", "beast"]
