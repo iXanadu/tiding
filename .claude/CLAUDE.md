@@ -1,6 +1,6 @@
 # engram
 
-Generic semantic memory service for AI agents. FastAPI + pgvector + Ollama embeddings.
+Generic semantic memory service for AI agents. FastAPI + pgvector + in-process sentence-transformers embeddings.
 
 ## Project Structure
 
@@ -11,7 +11,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + Ollama embed
   - `server/dependencies.py` — auth helpers (get_current_principal, require_admin, check_namespace_access)
 - `integrations/homeassistant/` — Pyscript client + Blueprint for HA voice assistants
 - `integrations/claude-code/` — MCP bridge (engram-mcp) for Claude Code
-- `scripts/` — install/start/restart/uninstall + ollama-warmup + migrate_ha_memory
+- `scripts/` — install/start/restart/uninstall + migrate_ha_memory
 - `launchd/` + `systemd/` — Service templates
 - `tests/` — 88 tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, principals_api, permissions, bootstrap)
 - `docs/` — System prompts, model selection, project-migration guide, CLAUDE.md.global
@@ -28,7 +28,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + Ollama embed
 - Config prefix: `ENGRAM_` (env vars and `.env` file)
 - Database: `engram` (PostgreSQL + pgvector + pg_trgm)
 - Default port: 8920
-- Embedding model: nomic-embed-text via Ollama (:11434)
+- Embedding model: nomic-ai/nomic-embed-text-v1.5 (in-process via sentence-transformers, no external service)
 - pyenv virtualenv: `engram-3.12` (`.python-version` in repo)
 - All memory CRUD goes through `server/services/memory_service.py`
 - Schema auto-created on startup; migration SQL handles upgrades from older schemas

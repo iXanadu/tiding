@@ -1,6 +1,6 @@
 """
 End-to-end tests: the critical semantic recall tests that motivated this project.
-These require a running PostgreSQL and Ollama instance.
+These require a running PostgreSQL instance (embeddings run in-process).
 """
 
 import pytest

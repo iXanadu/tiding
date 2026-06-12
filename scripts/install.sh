@@ -5,7 +5,8 @@
 #   - pyenv + pyenv-virtualenv installed
 #   - Python 3.12+ available via pyenv
 #   - PostgreSQL 17+ with pgvector extension
-#   - Ollama running with nomic-embed-text model
+#   (embeddings run in-process via sentence-transformers; the model
+#    downloads from HuggingFace on first run — no external service needed)
 #
 # Usage:
 #   cd /opt/srv/engram   # or wherever you cloned
