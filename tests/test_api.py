@@ -34,6 +34,8 @@ async def test_set_and_get(client):
     assert data["status"] == "ok"
     assert data["memory"]["value"] == "test_api_value"
     assert data["memory"]["namespace"] == "test"
+    # created_at must surface so readers can date what they recite
+    assert data["memory"]["created_at"] is not None
 
     # Clean up
     await client.post("/memory/forget", json={
@@ -63,6 +65,8 @@ async def test_search(client):
     assert data["status"] == "ok"
     assert len(data["results"]) > 0
     assert any(r["key"] == "favorite_color" for r in data["results"])
+    # every search result carries created_at for recency-aware reading
+    assert all(r["created_at"] is not None for r in data["results"])
 
     # Clean up
     await client.post("/memory/forget", json={

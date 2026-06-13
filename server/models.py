@@ -83,6 +83,7 @@ class MemoryItem(BaseModel):
     tags: str
     tags_search: str
     score: float | None = None
+    created_at: datetime | None = None
 
 
 class InboxBanner(BaseModel):

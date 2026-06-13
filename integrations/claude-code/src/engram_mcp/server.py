@@ -1,6 +1,7 @@
 """MCP server providing persistent semantic memory for Claude Code."""
 
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -18,6 +19,42 @@ from engram_mcp.scoping import (
 
 _PRINCIPAL_CACHE: dict | None = None
 _PRINCIPAL_FETCHED = False
+
+
+def _format_recency(created_at_raw) -> str:
+    """Render a memory's age as a prominent, dateable annotation.
+
+    Memory is durable but not self-refreshing: a stored fact is only as current
+    as the day it was written. Surfacing the date inline lets a reader date what
+    it recites ("from memory, 2026-06-10, may be stale") instead of citing it as
+    confirmed-current. Returns e.g. ``📅 2026-06-10 (3d ago)``, or "" if unknown.
+    """
+    if not created_at_raw:
+        return ""
+    try:
+        dt = (
+            created_at_raw
+            if isinstance(created_at_raw, datetime)
+            else datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+        )
+    except (ValueError, TypeError):
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - dt).days
+    if days < 0:
+        rel = "just now"
+    elif days == 0:
+        rel = "today"
+    elif days == 1:
+        rel = "1d ago"
+    elif days < 30:
+        rel = f"{days}d ago"
+    elif days < 365:
+        rel = f"{days // 30}mo ago"
+    else:
+        rel = f"{days // 365}y ago"
+    return f"📅 {dt.date().isoformat()} ({rel})"
 
 
 async def _get_principal_name() -> str | None:
@@ -303,7 +340,9 @@ async def memory_search(
     for mem in result["results"]:
         score = f" (score: {mem['score']:.3f})" if mem.get("score") else ""
         tags = f" [{mem['tags']}]" if mem.get("tags") else ""
-        lines.append(f"**{mem['key']}**{tags}{score}\n{mem['value']}")
+        recency = _format_recency(mem.get("created_at"))
+        age = f" · {recency}" if recency else ""
+        lines.append(f"**{mem['key']}**{tags}{score}{age}\n{mem['value']}")
     return banner_text + "\n\n---\n\n".join(lines)
 
 
@@ -345,7 +384,9 @@ async def memory_get(
         return f"No memory found with key '{key}'"
     mem = result["memory"]
     tags = f"\nTags: {mem['tags']}" if mem.get("tags") else ""
-    return f"**{mem['key']}**{tags}\n{mem['value']}"
+    recency = _format_recency(mem.get("created_at"))
+    stored = f"\nStored: {recency}" if recency else ""
+    return f"**{mem['key']}**{tags}{stored}\n{mem['value']}"
 
 
 @mcp.tool()

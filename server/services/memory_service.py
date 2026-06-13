@@ -149,7 +149,7 @@ async def memory_get(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT namespace, key, value, scope, user_id, project, tags, tags_search
+            SELECT namespace, key, value, scope, user_id, project, tags, tags_search, created_at
             FROM memories
             WHERE namespace = $1 AND key = $2 AND scope = $3
               AND user_id IS NOT DISTINCT FROM $4
@@ -200,6 +200,7 @@ async def memory_search(
             WITH vector_results AS (
                 SELECT
                     namespace, key, value, scope, user_id, project, tags, tags_search,
+                    created_at,
                     1 - (embedding <=> $1) AS vec_score,
                     similarity(search_text, $2) AS trgm_score
                 FROM memories
@@ -245,6 +246,7 @@ async def memory_search(
                     tags=row["tags"],
                     tags_search=row["tags_search"],
                     score=round(float(row["combined_score"]), 4),
+                    created_at=row["created_at"],
                 )
             )
             keys_to_update.setdefault(row["namespace"], []).append(row["key"])

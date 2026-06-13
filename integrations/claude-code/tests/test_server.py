@@ -15,6 +15,7 @@ from engram_mcp.server import (
     memory_forget,
     memory_status,
     memory_whoami,
+    _format_recency,
 )
 
 
@@ -125,6 +126,7 @@ async def test_memory_search_results(respx_mock):
                         "tags": "preference",
                         "tags_search": "",
                         "score": 0.92,
+                        "created_at": "2026-06-10T12:00:00+00:00",
                     }
                 ],
             },
@@ -134,6 +136,8 @@ async def test_memory_search_results(respx_mock):
     assert "color" in result
     assert "blue" in result
     assert "0.920" in result
+    # recency surfaces inline so the reader can date the fact
+    assert "📅 2026-06-10" in result
 
 
 @respx.mock(base_url="http://localhost:8920")
@@ -171,6 +175,7 @@ async def test_memory_get_found(respx_mock):
                     "scope": "machine",
                     "tags": "tag1",
                     "tags_search": "",
+                    "created_at": "2026-06-10T12:00:00+00:00",
                 },
             },
         )
@@ -178,6 +183,7 @@ async def test_memory_get_found(respx_mock):
     result = await memory_get(key="test-key")
     assert "test-key" in result
     assert "the value" in result
+    assert "Stored: 📅 2026-06-10" in result
 
 
 @respx.mock(base_url="http://localhost:8920")
@@ -352,3 +358,44 @@ async def test_search_narrows_when_read_list_set(respx_mock):
         await memory_search(query="hello", scope="shared")
     body = json.loads(route.calls.last.request.content)
     assert body["namespaces"] == ["claude-code", "beast"]
+
+
+# --- _format_recency (read-defensive recency annotation) ---
+
+from datetime import datetime, timedelta, timezone
+
+
+def test_format_recency_blank_when_missing():
+    assert _format_recency(None) == ""
+    assert _format_recency("") == ""
+
+
+def test_format_recency_bad_input_is_safe():
+    # never raise into the formatter — unparseable input degrades to no annotation
+    assert _format_recency("not-a-date") == ""
+    assert _format_recency(12345) == ""
+
+
+def test_format_recency_today():
+    now = datetime.now(timezone.utc).isoformat()
+    out = _format_recency(now)
+    assert out.startswith("📅 ")
+    assert "(today)" in out
+
+
+def test_format_recency_relative_buckets():
+    now = datetime.now(timezone.utc)
+    assert "(3d ago)" in _format_recency((now - timedelta(days=3)).isoformat())
+    assert "mo ago)" in _format_recency((now - timedelta(days=90)).isoformat())
+    assert "y ago)" in _format_recency((now - timedelta(days=800)).isoformat())
+
+
+def test_format_recency_shows_absolute_date():
+    # the absolute date is the durable part — present regardless of clock skew
+    assert "📅 2026-06-10" in _format_recency("2026-06-10T12:00:00+00:00")
+
+
+def test_format_recency_naive_datetime_assumed_utc():
+    # a tz-naive stamp must not raise; treated as UTC
+    out = _format_recency("2026-06-10T12:00:00")
+    assert "📅 2026-06-10" in out
