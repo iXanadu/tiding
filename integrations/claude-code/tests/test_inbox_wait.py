@@ -1,0 +1,108 @@
+"""Tests for engram-inbox-wait, the shell-callable inbox watcher."""
+
+import json
+
+import httpx
+import respx
+
+from engram_mcp.client import MemoryClient
+from engram_mcp.inbox_wait import _emit, _poll, _run
+
+
+def _msg(i, **kw):
+    d = {
+        "id": f"inbox/{i}",
+        "from": "admin",
+        "subject": f"s{i}",
+        "thread_id": None,
+        "created_at": "2026-06-14T00:00:00Z",
+    }
+    d.update(kw)
+    return d
+
+
+class _Args:
+    def __init__(self, **kw):
+        self.project_dir = ""
+        self.address = "engram"
+        self.poll_interval = 0.0
+        self.follow = False
+        self.timeout = 5.0
+        self.include_existing = False
+        self.__dict__.update(kw)
+
+
+def test_emit_is_one_json_line(capsys):
+    _emit(_msg(1, **{"from": "agentbeast"}))
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    obj = json.loads(lines[0])
+    assert obj == {
+        "id": "inbox/1",
+        "from": "agentbeast",
+        "subject": "s1",
+        "thread_id": None,
+        "created_at": "2026-06-14T00:00:00Z",
+    }
+
+
+def test_emit_handles_from_underscore_alias(capsys):
+    _emit({"id": "inbox/9", "from_": "engram", "subject": "x"})
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["from"] == "engram"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_poll_returns_fresh_and_dedups(respx_mock):
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [_msg(1), _msg(2)]})
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    seen: set = set()
+    fresh = await _poll(c, ["engram"], "engram@h", seen)
+    assert {m["id"] for m in fresh} == {"inbox/1", "inbox/2"}
+    # same backlog on the next poll → nothing new
+    assert await _poll(c, ["engram"], "engram@h", seen) == []
+    await c.close()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_poll_raises_on_bad_status(respx_mock):
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "error"})
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    try:
+        raised = False
+        try:
+            await _poll(c, ["engram"], "engram@h", set())
+        except RuntimeError:
+            raised = True
+        assert raised
+    finally:
+        await c.close()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_oneshot_exits_on_new_mail(respx_mock, capsys):
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [_msg(1)]})
+    )
+    rc = await _run(_Args(include_existing=True))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out.strip())["id"] == "inbox/1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_seeds_backlog_then_wakes_only_on_new(respx_mock, capsys):
+    route = respx_mock.post("/memory/inbox")
+    route.side_effect = [
+        httpx.Response(200, json={"status": "ok", "messages": [_msg(1)]}),            # seed: backlog
+        httpx.Response(200, json={"status": "ok", "messages": [_msg(1)]}),            # poll 1: nothing new
+        httpx.Response(200, json={"status": "ok", "messages": [_msg(1), _msg(2)]}),   # poll 2: NEW inbox/2
+    ]
+    rc = await _run(_Args(include_existing=False))
+    assert rc == 0
+    # only the message that arrived AFTER start, never the seeded backlog
+    out = capsys.readouterr().out.strip()
+    assert json.loads(out)["id"] == "inbox/2"
