@@ -14,6 +14,14 @@ from server.models import InboxMessage, MemoryItem
 INBOX_NAMESPACE = "claude-code"
 INBOX_SCOPE = "inbox"
 INBOX_EXPIRATION_DAYS = 0  # never expire; inbox is not TTL'd
+# Read-side staleness: an open message older than this is flagged "verify before
+# acting" — annotated, NEVER auto-deleted (knowledge is durable; the annotation
+# is the cheap, reversible variant of a coordination TTL).
+INBOX_STALE_AFTER_HOURS = 72
+# Lifecycle statuses. Only "open" is actionable; the rest are drained.
+INBOX_OPEN = "open"
+INBOX_RESOLVED = "resolved"
+INBOX_SUPERSEDED = "superseded"
 
 # Model composition leak: some Claude sessions emit memory_reply bodies ending
 # with tool-call closing tags (e.g. "</body></invoke>") when the parameter
@@ -309,6 +317,13 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
     md = row.get("metadata") or {}
     if isinstance(md, str):
         md = json.loads(md)
+    created_at = row["created_at"]
+    age_hours = None
+    is_stale = False
+    if created_at is not None:
+        delta = datetime.now(timezone.utc) - created_at
+        age_hours = round(delta.total_seconds() / 3600.0, 1)
+        is_stale = age_hours >= INBOX_STALE_AFTER_HOURS
     return InboxMessage(
         id=row["key"],
         to=row["user_id"],
@@ -318,7 +333,14 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         thread_id=md.get("thread_id"),
         read_by=md.get("read_by", []) or [],
         archived=bool(md.get("archived", False)),
-        created_at=row["created_at"],
+        created_at=created_at,
+        status=md.get("status") or INBOX_OPEN,
+        resolved_by=md.get("resolved_by"),
+        resolved_at=md.get("resolved_at"),
+        supersedes=md.get("supersedes"),
+        superseded_by=md.get("superseded_by"),
+        is_stale=is_stale,
+        age_hours=age_hours,
     )
 
 
@@ -328,8 +350,14 @@ async def inbox_send(
     subject: str = "",
     from_: str | None = None,
     thread_id: str | None = None,
+    supersedes: str | None = None,
 ) -> str:
-    """Create an inbox message. Returns the generated message id (memory key)."""
+    """Create an inbox message. Returns the generated message id (memory key).
+
+    When ``supersedes`` names a prior message, that message is marked
+    ``superseded`` (with ``superseded_by`` pointing here) so the stale one drops
+    out of the default inbox view — the sender knows when they're revising.
+    """
     to = to.lower()
     body = _strip_toolcall_trailer(body)
     subject = _strip_toolcall_trailer(subject)
@@ -341,6 +369,8 @@ async def inbox_send(
         "thread_id": thread_id,
         "read_by": [],
         "archived": False,
+        "status": INBOX_OPEN,
+        "supersedes": supersedes,
     }
     # Minimal embedding — we never semantic-search inbox, but the column is NOT NULL.
     search_text = f"{subject} {body}"
@@ -348,22 +378,39 @@ async def inbox_send(
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO memories
-                (namespace, key, value, scope, user_id, tags, tags_search,
-                 embedding, search_text, expires_at, metadata)
-            VALUES ($1, $2, $3, $4, $5, '', '', $6, $7, NULL, $8::jsonb)
-            """,
-            INBOX_NAMESPACE,
-            msg_id,
-            body,
-            INBOX_SCOPE,
-            to,
-            embedding,
-            search_text,
-            json.dumps(metadata),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO memories
+                    (namespace, key, value, scope, user_id, tags, tags_search,
+                     embedding, search_text, expires_at, metadata)
+                VALUES ($1, $2, $3, $4, $5, '', '', $6, $7, NULL, $8::jsonb)
+                """,
+                INBOX_NAMESPACE,
+                msg_id,
+                body,
+                INBOX_SCOPE,
+                to,
+                embedding,
+                search_text,
+                json.dumps(metadata),
+            )
+            if supersedes:
+                await conn.execute(
+                    """
+                    UPDATE memories
+                    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                        'status', $1::text,
+                        'superseded_by', $2::text
+                    )
+                    WHERE namespace = $3 AND scope = $4 AND key = $5
+                    """,
+                    INBOX_SUPERSEDED,
+                    msg_id,
+                    INBOX_NAMESPACE,
+                    INBOX_SCOPE,
+                    supersedes,
+                )
     return msg_id
 
 
@@ -372,11 +419,17 @@ async def inbox_list(
     reader_identity: str | None = None,
     unread_only: bool = True,
     limit: int = 20,
+    include_resolved: bool = False,
 ) -> list[InboxMessage]:
     """List inbox messages addressed to any member of ``listen_set``.
 
     When ``unread_only`` is True and ``reader_identity`` is given, messages
     already read by that reader are filtered out.
+
+    By default only ``open`` messages are returned — resolved and superseded
+    mail has drained and must not wake or trip a fresh session. A NULL/missing
+    status is treated as ``open`` (back-compat with pre-lifecycle messages).
+    Set ``include_resolved=True`` to see the full history.
     """
     listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
@@ -392,6 +445,10 @@ async def inbox_list(
               AND user_id = ANY($3::text[])
               AND COALESCE((metadata->>'archived')::bool, false) = false
               AND (
+                  $7::bool
+                  OR COALESCE(metadata->>'status', $8) = $8
+              )
+              AND (
                   NOT $4::bool
                   OR $5::text IS NULL
                   OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
@@ -405,6 +462,8 @@ async def inbox_list(
             unread_only,
             reader_identity,
             limit,
+            include_resolved,
+            INBOX_OPEN,
         )
     return [_row_to_inbox_message(dict(r)) for r in rows]
 
@@ -430,7 +489,8 @@ async def inbox_banner(
     for m in msgs[:preview_limit]:
         sender = m.from_ or "unknown"
         subject = m.subject or (m.body[:60] + ("…" if len(m.body) > 60 else ""))
-        preview.append(f"{sender} → {m.to}: {subject}")
+        stale = f" ⚠️ STALE ({int(m.age_hours // 24)}d — verify)" if m.is_stale else ""
+        preview.append(f"{sender} → {m.to}: {subject}{stale}")
     return {"unread_count": len(msgs), "preview": preview}
 
 
@@ -503,3 +563,90 @@ async def inbox_archive(message_id: str, reader_identity: str | None = None) -> 
                     message_id,
                 )
     return result.endswith(" 1")
+
+
+async def inbox_resolve(message_id: str, resolver_identity: str | None = None) -> bool:
+    """Mark an inbox message ``resolved`` so it drains from the default view.
+
+    Records who resolved it and when. Also acks for the resolver (resolving
+    implies you've handled it). Either party in a thread may resolve. Returns
+    True if the message exists.
+    """
+    resolved_at = datetime.now(timezone.utc).isoformat()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                || jsonb_build_object('status', $1::text, 'resolved_at', $2::text)
+                || CASE WHEN $3::text IS NULL THEN '{}'::jsonb
+                        ELSE jsonb_build_object('resolved_by', $3::text) END
+                || CASE
+                       WHEN $3::text IS NULL THEN '{}'::jsonb
+                       WHEN COALESCE(metadata->'read_by', '[]'::jsonb) ? $3::text
+                           THEN '{}'::jsonb
+                       ELSE jsonb_build_object(
+                           'read_by',
+                           COALESCE(metadata->'read_by', '[]'::jsonb) || to_jsonb($3::text)
+                       )
+                   END
+            WHERE namespace = $4 AND scope = $5 AND key = $6
+            """,
+            INBOX_RESOLVED,
+            resolved_at,
+            resolver_identity,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            message_id,
+        )
+    return result.endswith(" 1")
+
+
+async def inbox_counts(
+    listen_set: list[str],
+    reader_identity: str | None = None,
+) -> dict:
+    """Return a status digest for a listen_set: ``{open, resolved, superseded,
+    stale}``. ``stale`` is the subset of ``open`` past the staleness threshold.
+    Resolved/superseded counts are reassurance ("handled, not lost") for the
+    inbox digest. NULL/missing status counts as ``open``.
+    """
+    listen_set = [addr.lower() for addr in listen_set]
+    if not listen_set:
+        return {"open": 0, "resolved": 0, "superseded": 0, "stale": 0}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE status = $4) AS open,
+              COUNT(*) FILTER (WHERE status = $5) AS resolved,
+              COUNT(*) FILTER (WHERE status = $6) AS superseded,
+              COUNT(*) FILTER (
+                  WHERE status = $4
+                    AND created_at < (now() - ($7::int * interval '1 hour'))
+              ) AS stale
+            FROM (
+                SELECT COALESCE(metadata->>'status', $4) AS status, created_at
+                FROM memories
+                WHERE namespace = $1
+                  AND scope = $2
+                  AND user_id = ANY($3::text[])
+                  AND COALESCE((metadata->>'archived')::bool, false) = false
+            ) s
+            """,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            listen_set,
+            INBOX_OPEN,
+            INBOX_RESOLVED,
+            INBOX_SUPERSEDED,
+            INBOX_STALE_AFTER_HOURS,
+        )
+    return {
+        "open": row["open"],
+        "resolved": row["resolved"],
+        "superseded": row["superseded"],
+        "stale": row["stale"],
+    }

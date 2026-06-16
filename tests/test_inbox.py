@@ -603,6 +603,189 @@ async def test_autocorrect_host_colon_project(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_resolve_drains_from_default_view(client, db_pool):
+    """A resolved message is hidden from the default (open-only) inbox view but
+    retrievable with include_resolved=True, and records who resolved it."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram", "body": "please look", "from_": "admin@macmini",
+    })
+    msg_id = resp.json()["id"]
+
+    # Visible while open
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    assert len(resp.json()["messages"]) == 1
+    assert resp.json()["messages"][0]["status"] == "open"
+
+    # Resolve it
+    resp = await client.post(f"/memory/inbox/{msg_id}/resolve", json={
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 200
+    assert "resolved" in resp.json()["guidance"].lower()
+
+    # Gone from default view for a DIFFERENT, never-acked reader (fresh-reader fix)
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    assert resp.json()["messages"] == []
+
+    # Retrievable with include_resolved
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+        "unread_only": False, "include_resolved": True,
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["status"] == "resolved"
+    assert msgs[0]["resolved_by"] == "engram@macmini"
+    assert msgs[0]["resolved_at"] is not None
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_resolve_not_found(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/inbox/inbox/nope/resolve", json={
+        "reader_identity": "engram@macmini",
+    })
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_supersede_marks_prior_message(client, db_pool):
+    """Sending with supersedes=<id> marks the prior message superseded so it
+    drops out of the default view (the laptop saga: latest wins)."""
+    await _cleanup_inbox(db_pool)
+    r1 = await client.post("/memory/send", json={
+        "to": "engram", "subject": "v1", "body": "laptop is the hub",
+        "from_": "admin@macmini",
+    })
+    old_id = r1.json()["id"]
+
+    r2 = await client.post("/memory/send", json={
+        "to": "engram", "subject": "v2", "body": "actually laptop is sidelined",
+        "from_": "admin@macmini", "supersedes": old_id,
+    })
+    new_id = r2.json()["id"]
+
+    # Default view: only the new message
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    msgs = resp.json()["messages"]
+    assert [m["id"] for m in msgs] == [new_id]
+    assert msgs[0]["supersedes"] == old_id
+
+    # History shows the old one as superseded, pointing at the replacement
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+        "unread_only": False, "include_resolved": True,
+    })
+    by_id = {m["id"]: m for m in resp.json()["messages"]}
+    assert by_id[old_id]["status"] == "superseded"
+    assert by_id[old_id]["superseded_by"] == new_id
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_resolved_not_counted_in_banner(client, db_pool):
+    """A resolved message must not raise the 📬 banner — drained mail can't wake
+    a session."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram", "body": "handle me", "from_": "admin@macmini",
+    })
+    msg_id = resp.json()["id"]
+    await client.post(f"/memory/inbox/{msg_id}/resolve", json={
+        "reader_identity": "engram@macmini",
+    })
+    resp = await client.post("/memory/search", json={
+        "namespace": "claude-code", "query": "anything",
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    assert resp.json().get("inbox_banner") is None
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_staleness_annotation(client, db_pool):
+    """An open message older than the staleness threshold is flagged is_stale
+    with an age, and the list guidance warns to verify before acting. Never
+    deleted — just annotated."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram", "body": "old coordination", "from_": "admin@macmini",
+    })
+    msg_id = resp.json()["id"]
+    # Backdate created_at past the 72h threshold
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET created_at = now() - interval '100 hours' "
+            "WHERE key=$1 AND scope='inbox'",
+            msg_id,
+        )
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    data = resp.json()
+    m = data["messages"][0]
+    assert m["is_stale"] is True
+    assert m["age_hours"] >= 72
+    assert m["status"] == "open"  # still actionable, just flagged
+    assert "STALE" in data["guidance"]
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_digest_in_list_guidance(client, db_pool):
+    """List guidance carries a status digest (open / hidden counts)."""
+    await _cleanup_inbox(db_pool)
+    keep = await client.post("/memory/send", json={
+        "to": "engram", "body": "open one", "from_": "admin@macmini",
+    })
+    done = await client.post("/memory/send", json={
+        "to": "engram", "body": "done one", "from_": "admin@macmini",
+    })
+    await client.post(f"/memory/inbox/{done.json()['id']}/resolve", json={
+        "reader_identity": "engram@macmini",
+    })
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    g = resp.json()["guidance"]
+    assert "1 open" in g
+    assert "resolved/superseded hidden" in g
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_backcompat_missing_status_is_open(client, db_pool):
+    """Pre-lifecycle messages (no status in metadata) must still show as open."""
+    await _cleanup_inbox(db_pool)
+    resp = await client.post("/memory/send", json={
+        "to": "engram", "body": "legacy", "from_": "admin@macmini",
+    })
+    msg_id = resp.json()["id"]
+    # Simulate an old message: strip the status key entirely
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET metadata = metadata - 'status' "
+            "WHERE key=$1 AND scope='inbox'",
+            msg_id,
+        )
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macbook",
+    })
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["status"] == "open"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_no_autocorrect_for_valid_addresses(client, db_pool):
     """Reserved prefixes and bare names pass through without correction."""
     await _cleanup_inbox(db_pool)

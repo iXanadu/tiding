@@ -14,6 +14,7 @@ from server.models import (
     InboxBanner,
     InboxListRequest,
     InboxListResponse,
+    InboxResolveRequest,
     InboxSendRequest,
     InboxSendResponse,
     MemoryForgetRequest,
@@ -30,6 +31,7 @@ from server.services.inbox_guidance import (
     ack_guidance,
     archive_guidance,
     inbox_list_guidance,
+    resolve_guidance,
     send_guidance,
 )
 from server.services.memory_service import (
@@ -37,7 +39,9 @@ from server.services.memory_service import (
     inbox_ack,
     inbox_archive,
     inbox_banner,
+    inbox_counts,
     inbox_list,
+    inbox_resolve,
     inbox_send,
     memory_forget,
     memory_get,
@@ -196,6 +200,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             subject=req.subject,
             from_=req.from_,
             thread_id=req.thread_id,
+            supersedes=req.supersedes,
         )
         guidance = send_guidance(to=to, reader_identity=req.from_)
         if corrected_from:
@@ -230,6 +235,11 @@ async def list_inbox(req: InboxListRequest, request: Request):
             reader_identity=req.reader_identity,
             unread_only=req.unread_only,
             limit=req.limit,
+            include_resolved=req.include_resolved,
+        )
+        counts = await inbox_counts(
+            listen_set=listen_set,
+            reader_identity=req.reader_identity,
         )
         return InboxListResponse(
             status="ok",
@@ -238,6 +248,8 @@ async def list_inbox(req: InboxListRequest, request: Request):
                 reader_identity=req.reader_identity or "(unknown)",
                 listen_set=listen_set,
                 msg_count=len(messages),
+                stale_count=sum(1 for m in messages if m.is_stale),
+                counts=counts,
             ),
         )
     except Exception as e:
@@ -277,4 +289,27 @@ async def archive_inbox(message_id: str, req: InboxAckRequest, request: Request)
         raise
     except Exception as e:
         logger.exception("inbox_archive failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/inbox/{message_id:path}/resolve", response_model=InboxAckResponse)
+async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Request):
+    """Mark an inbox message resolved so it drains from the default view.
+
+    Unlike archive (a global hard-hide), resolve records who closed the thread
+    and when, and the message stays retrievable via include_resolved=True.
+    """
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    try:
+        updated = await inbox_resolve(
+            message_id=message_id,
+            resolver_identity=req.reader_identity,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Inbox message {message_id!r} not found")
+        return InboxAckResponse(status="ok", id=message_id, guidance=resolve_guidance())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("inbox_resolve failed")
         raise HTTPException(status_code=500, detail=str(e))

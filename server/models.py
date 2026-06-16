@@ -300,6 +300,7 @@ class InboxSendRequest(BaseModel):
     subject: str = ""
     from_: str | None = None  # sender identity — MCP bridge stamps this
     thread_id: str | None = None
+    supersedes: str | None = None  # id of a prior message this one replaces
 
     model_config = {"populate_by_name": True}
 
@@ -328,6 +329,15 @@ class InboxMessage(BaseModel):
     read_by: list[str]
     archived: bool
     created_at: datetime
+    # Lifecycle (coordination ≠ knowledge): a message drains as it is handled.
+    status: str = "open"  # open | resolved | superseded
+    resolved_by: str | None = None
+    resolved_at: datetime | None = None
+    supersedes: str | None = None  # id this message replaces
+    superseded_by: str | None = None  # id of the message that replaced this one
+    # Read-side staleness: annotated, never auto-deleted.
+    is_stale: bool = False
+    age_hours: float | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -343,6 +353,7 @@ class InboxListRequest(BaseModel):
     listen_set: list[str]
     reader_identity: str | None = None
     unread_only: bool = True
+    include_resolved: bool = False  # default view hides resolved/superseded
     limit: int = 20
 
 
@@ -353,6 +364,17 @@ class InboxListResponse(BaseModel):
 
 
 class InboxAckRequest(BaseModel):
+    reader_identity: str
+
+    @field_validator("reader_identity", mode="before")
+    @classmethod
+    def reader_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("'reader_identity' must be a non-empty string")
+        return v.strip()
+
+
+class InboxResolveRequest(BaseModel):
     reader_identity: str
 
     @field_validator("reader_identity", mode="before")
