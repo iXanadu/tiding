@@ -22,11 +22,21 @@ Admin session:
 inside this subprocess, which is unreliable (see commit 223b17b).
 """
 
+import os
 import socket
 
 from engram_mcp.scoping import resolve_project_name
 
 ADMIN_NAME = "admin"
+
+# Opt-in per-session inbox identity. When set, this session is ADDRESSED as
+# ``<value>@<host>`` and sends FROM that identity, while still joining its
+# project's group address for broadcasts. MEMORY scoping is unaffected — it
+# derives from .engram.cfg, not this. This is how two sessions that share one
+# project (and thus shared scope=project memory) get DISTINCT inbox identities
+# so they can DM each other and so the watcher's self-echo filter stays precise.
+# See decision/three-axes-principal-project-address.
+INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
 
 
 def hostname() -> str:
@@ -70,11 +80,22 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
 
     Admin and project sessions are symmetric — the only difference is that
     admin's loose-broadcast name is the literal string ``admin``.
+
+    When ``ENGRAM_INBOX_IDENTITY`` is set, the session keeps its project's group
+    address but is precisely addressed (and sends) as ``<override>@<host>`` — so
+    sibling sessions sharing one project get distinct inbox identities without
+    splitting their shared memory.
     """
     host = hostname()
-    name = derive_project_name(project_dir)
-    reader = f"{name}@{host}"
-    return (reader, [name, f"machine:{host}", reader])
+    project = derive_project_name(project_dir)
+    override = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
+    if override and override != project:
+        reader = f"{override}@{host}"
+        # precise identity first, then the project GROUP address (broadcasts to
+        # all sessions on the project still land), then machine, then self.
+        return (reader, [override, project, f"machine:{host}", reader])
+    reader = f"{project}@{host}"
+    return (reader, [project, f"machine:{host}", reader])
 
 
 def reader_to_address(reader_identity: str) -> str:

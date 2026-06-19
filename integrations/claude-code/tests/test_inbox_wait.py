@@ -12,7 +12,7 @@ from engram_mcp.inbox_wait import _emit, _poll, _run
 def _msg(i, **kw):
     d = {
         "id": f"inbox/{i}",
-        "from": "admin",
+        "from": "peer@elsewhere",
         "subject": f"s{i}",
         "thread_id": None,
         "created_at": "2026-06-14T00:00:00Z",
@@ -63,6 +63,56 @@ async def test_poll_returns_fresh_and_dedups(respx_mock):
     assert {m["id"] for m in fresh} == {"inbox/1", "inbox/2"}
     # same backlog on the next poll → nothing new
     assert await _poll(c, ["engram"], "engram@h", seen) == []
+    await c.close()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_poll_skips_self_echo(respx_mock):
+    # reader is beastchat@macmini; its own sends carry from=beastchat@macmini
+    # (full form) — and its loose name "beastchat" is equally self. Both must be
+    # dropped; mail from a real peer must survive.
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "messages": [
+                    _msg(1, **{"from": "beastchat@macmini"}),  # own outbound, full form
+                    _msg(2, **{"from": "beastchat"}),          # own outbound, loose form
+                    _msg(3, **{"from": "engram@macmini"}),     # genuine peer
+                ],
+            },
+        )
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    seen: set = set()
+    fresh = await _poll(c, ["beastchat"], "beastchat@macmini", seen)
+    assert {m["id"] for m in fresh} == {"inbox/3"}
+    # self-echoes were still recorded as seen, so they never re-fire either
+    assert "inbox/1" in seen and "inbox/2" in seen
+    await c.close()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_poll_sibling_survives_under_distinct_identities(respx_mock):
+    # With a per-session identity (beastchat-app), the sibling session
+    # (beastchat-server) is NOT self — its mail must wake us; only our own
+    # outbound is dropped.
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "messages": [
+                    _msg(1, **{"from": "beastchat-app@macmini"}),     # own echo → drop
+                    _msg(2, **{"from": "beastchat-server@macmini"}),  # sibling → keep
+                ],
+            },
+        )
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    fresh = await _poll(c, ["beastchat-app", "beastchat"], "beastchat-app@macmini", set())
+    assert {m["id"] for m in fresh} == {"inbox/2"}
     await c.close()
 
 

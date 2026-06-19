@@ -31,7 +31,7 @@ import time
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
-from engram_mcp.identity import compute_identity
+from engram_mcp.identity import compute_identity, reader_to_address
 
 
 def _emit(msg: dict) -> None:
@@ -51,8 +51,31 @@ def _emit(msg: dict) -> None:
     )
 
 
+def _own_addresses(reader_identity: str | None) -> set:
+    """The set of addresses that identify THIS watcher's own session.
+
+    A session sends with ``from_ = reader_identity`` (full ``<name>@<host>``
+    form), but its loose role name is also its own. Either, seen as a message
+    ``from``, means the mail is our own outbound echoed back — never a wake.
+    """
+    own = set()
+    if reader_identity:
+        own.add(reader_identity.strip().lower())
+        own.add(reader_to_address(reader_identity).strip().lower())
+    return {a for a in own if a}
+
+
 async def _poll(client, listen_set, reader_identity, seen: set) -> list:
-    """Return new (unseen) messages, recording their ids in ``seen``."""
+    """Return new (unseen) messages, recording their ids in ``seen``.
+
+    Self-echo guard: a session listens on the same loose name it SENDS to (e.g.
+    ``beastchat`` is in both the listen_set and a ``to:`` target), and the inbox
+    has no from==self filter, so a session's own outbound comes back as inbound
+    and wakes it. We drop any message whose ``from`` is one of our own addresses
+    so the watcher never wakes on mail this session itself sent. (When two
+    distinct sessions share one identity, split their inbox addresses so this
+    stays precise — see decision/three-axes-principal-project-address.)
+    """
     result = await client.inbox_list(
         listen_set=listen_set,
         reader_identity=reader_identity,
@@ -61,12 +84,19 @@ async def _poll(client, listen_set, reader_identity, seen: set) -> list:
     )
     if result.get("status") != "ok":
         raise RuntimeError(f"inbox status={result.get('status')!r}")
+    own = _own_addresses(reader_identity)
     fresh = []
     for m in result.get("messages", []):
         mid = m.get("id")
-        if mid and mid not in seen:
-            seen.add(mid)
-            fresh.append(m)
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        sender = (m.get("from") or m.get("from_") or "").strip().lower()
+        if sender and sender in own:
+            # our own outbound, echoed back — record as seen but never wake on it
+            print(f"inbox-wait: skip self-echo {mid} (from {sender!r})", file=sys.stderr, flush=True)
+            continue
+        fresh.append(m)
     return fresh
 
 
