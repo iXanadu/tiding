@@ -35,6 +35,14 @@
         <string>/Users/YOUR_USERNAME</string>
         <key>PATH</key>
         <string>/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Embed model is pinned + fully cached; skip the online HF metadata
+             revalidation at boot. Avoids a startup race (httpx client closed
+             mid-load) that crash-loops the service. Flip OFF only for a
+             deliberate embed-model change that needs a re-download. -->
+        <key>HF_HUB_OFFLINE</key>
+        <string>1</string>
+        <key>TRANSFORMERS_OFFLINE</key>
+        <string>1</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

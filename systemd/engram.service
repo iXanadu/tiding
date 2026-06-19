@@ -21,6 +21,11 @@ ExecStart=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/uvicorn server.mai
 Restart=always
 RestartSec=5
 Environment=PATH=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin:/usr/local/bin:/usr/bin:/bin
+# Embed model is pinned + fully cached; skip the online HF metadata
+# revalidation at boot (avoids a startup race that crash-loops the service).
+# Flip OFF only for a deliberate embed-model change needing a re-download.
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
 
 [Install]
 WantedBy=multi-user.target

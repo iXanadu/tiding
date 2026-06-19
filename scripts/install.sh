@@ -173,6 +173,14 @@ if [[ "$(uname)" == "Darwin" ]]; then
         <string>${HOME}</string>
         <key>PATH</key>
         <string>/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Embed model is pinned + fully cached; skip the online HF metadata
+             revalidation at boot. Avoids a startup race (httpx client closed
+             mid-load) that crash-loops the service. Flip OFF only for a
+             deliberate embed-model change that needs a re-download. -->
+        <key>HF_HUB_OFFLINE</key>
+        <string>1</string>
+        <key>TRANSFORMERS_OFFLINE</key>
+        <string>1</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -218,6 +226,11 @@ ExecStart=${UVICORN} server.main:app --host 0.0.0.0 --port 8920
 Restart=always
 RestartSec=5
 Environment=PATH=${PYENV_ROOT}/versions/${VENV_NAME}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+# Embed model is pinned + fully cached; skip the online HF metadata
+# revalidation at boot (avoids a startup race that crash-loops the service).
+# Flip OFF only for a deliberate embed-model change needing a re-download.
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
 
 [Install]
 WantedBy=multi-user.target
