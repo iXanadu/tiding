@@ -233,12 +233,34 @@ Closes the wildcard-expansion gap consumer apps used to hit by calling `/admin/s
 
 ### Inbox (Inter-Agent Messaging)
 
-Built on top of the memory table. Enables Claude Code sessions (or any agent) to leave messages for each other.
+Built on top of the memory table. Enables Claude Code sessions (or any agent) to leave messages for each other across sessions and machines.
 
-- `POST /memory/send` — Send a message to a project or machine address
+- `POST /memory/send` — Send a message to an address
 - `POST /memory/inbox` — List inbox messages for a set of listen addresses
-- `POST /memory/inbox/{id}/ack` — Mark a message as read
-- `POST /memory/inbox/{id}/archive` — Archive a message
+- `POST /memory/inbox/{id}/ack` — Mark a message as read (per-reader)
+- `POST /memory/inbox/{id}/archive` — Archive a message (global hide)
+
+**Addressing.** An address is a flat string; a session listens on a *set* of them (its `listen_set`) and is reachable on any:
+
+- `<project>` — loose **group** address: every session on that project
+- `machine:<host>` — every session on that machine
+- `<project>@<host>` — that one session, **precisely**
+
+Replies (`memory_reply`) thread automatically and route back to the sender's group address.
+
+**Per-session identity (`ENGRAM_INBOX_IDENTITY`).** Two sessions on one project — e.g. a web backend and a native app sharing one `.engram.cfg` — share project *memory* but need distinct inbox identities so they can DM each other without cross-waking. Set `ENGRAM_INBOX_IDENTITY=<name>` and the session is addressed as `<name>@<host>` while still joining the `<project>` group for broadcasts. Memory scoping is unaffected (it stays `.engram.cfg`-derived). Set it in **both** the MCP server env block and the watcher command so send-from and listen identity agree.
+
+**Auto-wake watcher (`engram-inbox-wait`).** A dormant session never learns a reply arrived — it only resumes when the human types. The `engram-inbox-wait` console script (installed with the [Claude Code bridge](#claude-code)) polls the inbox and emits one line per new message, which the Claude Code harness turns into a wake-up:
+
+```bash
+# always-on: arm at session start under the Monitor tool, one wake per message
+engram-inbox-wait --follow --project-dir /path/to/repo
+
+# one-shot: exits on the first new message (Bash background → single wake)
+engram-inbox-wait --project-dir /path/to/repo
+```
+
+It authenticates from `~/.config/engram/identity` (a bare shell doesn't inherit the bridge's env). It seeds on the existing backlog so it only wakes on mail arriving *after* it starts, and it drops your own outbound (`from == self`) so you never wake on your own sends.
 
 ### Admin Endpoints
 
@@ -367,6 +389,8 @@ project = my-project-name
 ```
 
 **Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, `memory_forget`, `memory_send`/`memory_inbox`/`memory_reply`/`memory_ack`/`memory_inbox_archive` (inter-agent inbox), `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
+
+The bridge also installs the **`engram-inbox-wait`** console script — arm it at session start (under Claude Code's Monitor tool) so the session wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake watcher](#inbox-inter-agent-messaging).
 
 **Search is permission-driven.** By default (`memory_read_namespaces` empty) the bridge sends *no* namespace on search, so the server returns results from every namespace the **token** can read — grant a principal read of another namespace and it shows up automatically, no client config change. Set `memory_read_namespaces` to a CSV only if you want to *narrow* below the token's permissions.
 
