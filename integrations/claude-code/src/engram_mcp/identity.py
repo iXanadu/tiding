@@ -25,7 +25,7 @@ inside this subprocess, which is unreliable (see commit 223b17b).
 import os
 import socket
 
-from engram_mcp.scoping import resolve_project_name
+from engram_mcp.scoping import resolve_inbox_identity, resolve_project_name
 
 ADMIN_NAME = "admin"
 
@@ -35,8 +35,27 @@ ADMIN_NAME = "admin"
 # derives from .engram.cfg, not this. This is how two sessions that share one
 # project (and thus shared scope=project memory) get DISTINCT inbox identities
 # so they can DM each other and so the watcher's self-echo filter stays precise.
+#
+# Two sources, in precedence order:
+#   1. ENGRAM_INBOX_IDENTITY env var (override / escape hatch)
+#   2. ``inbox_identity = <name>`` in .engram.cfg (the durable, per-repo,
+#      version-controlled source — preferred, since the claude-memory MCP
+#      server is registered ONCE globally with no per-session env block, so
+#      .engram.cfg resolved from project_dir is the only per-session knob)
 # See decision/three-axes-principal-project-address.
 INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
+
+
+def resolve_session_identity(project_dir: str | None) -> str | None:
+    """The session's declared inbox identity, or None to use the project name.
+
+    Env var wins over .engram.cfg so a session can override the file on the fly.
+    """
+    env = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
+    if env:
+        return env
+    declared = resolve_inbox_identity(project_dir)
+    return declared.lower() if declared else None
 
 
 def hostname() -> str:
@@ -81,14 +100,15 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     Admin and project sessions are symmetric — the only difference is that
     admin's loose-broadcast name is the literal string ``admin``.
 
-    When ``ENGRAM_INBOX_IDENTITY`` is set, the session keeps its project's group
+    When a session identity is declared (``ENGRAM_INBOX_IDENTITY`` env var or
+    ``inbox_identity`` in .engram.cfg), the session keeps its project's group
     address but is precisely addressed (and sends) as ``<override>@<host>`` — so
     sibling sessions sharing one project get distinct inbox identities without
     splitting their shared memory.
     """
     host = hostname()
     project = derive_project_name(project_dir)
-    override = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
+    override = resolve_session_identity(project_dir) or ""
     if override and override != project:
         reader = f"{override}@{host}"
         # precise identity first, then the project GROUP address (broadcasts to

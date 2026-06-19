@@ -38,13 +38,14 @@ def write_project_cfg(directory: str, name: str) -> str:
     return path
 
 
-def _parse_engram_cfg(path: str) -> str | None:
-    """Read a .engram.cfg file and return the declared project name, or None.
+def _parse_engram_cfg(path: str, key: str = "project") -> str | None:
+    """Read a .engram.cfg file and return the value of ``key``, or None.
 
-    Format: INI-ish, one line ``project = <name>``. ``#`` comments and blank
-    lines are ignored. Quotes around the value are stripped. Names are
-    restricted to ``[A-Za-z0-9._-]`` to prevent path-separator or shell
-    injection into downstream user_id.
+    Format: INI-ish, lines ``<key> = <value>``. ``#`` comments and blank lines
+    are ignored. Quotes around the value are stripped. Values are restricted to
+    ``[A-Za-z0-9._-]`` to prevent path-separator or shell injection into
+    downstream user_id / inbox address. The first matching line wins; a present
+    but malformed value returns None (does not fall through to other lines).
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -54,8 +55,8 @@ def _parse_engram_cfg(path: str) -> str | None:
                     continue
                 if "=" not in line:
                     continue
-                key, _, value = line.partition("=")
-                if key.strip().lower() != "project":
+                k, _, value = line.partition("=")
+                if k.strip().lower() != key:
                     continue
                 name = value.strip().strip('"').strip("'")
                 if _VALID_NAME.match(name):
@@ -66,13 +67,11 @@ def _parse_engram_cfg(path: str) -> str | None:
     return None
 
 
-def resolve_project_name(project_dir: str | None) -> str | None:
-    """Walk up from ``project_dir`` looking for ``.engram.cfg``.
+def _find_cfg_path(project_dir: str | None) -> str | None:
+    """Walk up from ``project_dir`` and return the path of the first
+    ``.engram.cfg`` found, or None.
 
-    Returns the declared name, or None if no file is found, the file is
-    malformed, or ``project_dir`` is not an absolute path we can walk.
-
-    Boundary rules:
+    Boundary rules (shared by every key read from .engram.cfg):
     - When ``project_dir`` is under ``$HOME/projects/``, walk-up stops at
       ``$HOME/projects`` (doesn't cross into ``$HOME``).
     - Walk-up NEVER crosses ``$HOME``. ``$HOME/.engram.cfg`` is only read when
@@ -101,7 +100,7 @@ def resolve_project_name(project_dir: str | None) -> str | None:
         if current != home or started_at_home:
             candidate = os.path.join(current, PROJECT_CFG_FILENAME)
             if os.path.isfile(candidate):
-                return _parse_engram_cfg(candidate)
+                return candidate
         # Boundary stops
         if under_projects and current == projects_root:
             return None
@@ -112,6 +111,31 @@ def resolve_project_name(project_dir: str | None) -> str | None:
             break
         current = parent
     return None
+
+
+def resolve_project_name(project_dir: str | None) -> str | None:
+    """Walk up from ``project_dir`` for ``.engram.cfg`` and return ``project``.
+
+    Returns the declared name, or None if no file is found, the file is
+    malformed, or ``project_dir`` is not an absolute path we can walk.
+    """
+    path = _find_cfg_path(project_dir)
+    return _parse_engram_cfg(path, "project") if path else None
+
+
+def resolve_inbox_identity(project_dir: str | None) -> str | None:
+    """Walk up from ``project_dir`` for ``.engram.cfg`` and return the optional
+    ``inbox_identity``, or None.
+
+    This is the per-repo, file-driven source for a session's inbox address —
+    kept SEPARATE from ``project`` so two sessions sharing one project (one
+    shared scope=project memory bucket) can declare distinct inbox identities
+    (e.g. ``inbox_identity = beastchat-server`` vs ``beastchat-app``). It is the
+    durable equivalent of the ``ENGRAM_INBOX_IDENTITY`` env var, which still
+    wins as an override. See decision/three-axes-principal-project-address.
+    """
+    path = _find_cfg_path(project_dir)
+    return _parse_engram_cfg(path, "inbox_identity") if path else None
 
 
 def _has_claude_dir(path: str) -> bool:

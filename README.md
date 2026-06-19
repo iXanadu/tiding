@@ -248,7 +248,21 @@ Built on top of the memory table. Enables Claude Code sessions (or any agent) to
 
 Replies (`memory_reply`) thread automatically and route back to the sender's group address.
 
-**Per-session identity (`ENGRAM_INBOX_IDENTITY`).** Two sessions on one project — e.g. a web backend and a native app sharing one `.engram.cfg` — share project *memory* but need distinct inbox identities so they can DM each other without cross-waking. Set `ENGRAM_INBOX_IDENTITY=<name>` and the session is addressed as `<name>@<host>` while still joining the `<project>` group for broadcasts. Memory scoping is unaffected (it stays `.engram.cfg`-derived). Set it in **both** the MCP server env block and the watcher command so send-from and listen identity agree.
+**Per-session identity.** Two sessions on one project — e.g. a web backend and a native app sharing one `.engram.cfg` — share project *memory* but need distinct inbox identities so they can DM each other without cross-waking. Declare an identity and the session is addressed as `<name>@<host>` while still joining the `<project>` group for broadcasts. Memory scoping is unaffected (it stays `project`-derived). Two sources, env winning as an override:
+
+```ini
+# .engram.cfg — preferred: per-repo, version-controlled, resolved from the
+# session's working dir so the MCP send path AND the watcher both pick it up
+# automatically (the claude-memory MCP server is registered once, globally,
+# so there is no per-session env block to rely on).
+project       = beastchat          # shared memory bucket — same for both sessions
+inbox_identity = beastchat-server  # distinct inbox address — different per session
+```
+
+```bash
+# ENGRAM_INBOX_IDENTITY env var — overrides the file when set (escape hatch)
+export ENGRAM_INBOX_IDENTITY=beastchat-server
+```
 
 **Auto-wake watcher (`engram-inbox-wait`).** A dormant session never learns a reply arrived — it only resumes when the human types. The `engram-inbox-wait` console script (installed with the [Claude Code bridge](#claude-code)) polls the inbox and emits one line per new message, which the Claude Code harness turns into a wake-up:
 

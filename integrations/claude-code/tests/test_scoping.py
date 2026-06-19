@@ -7,11 +7,43 @@ from engram_mcp.scoping import (
     AmbiguousIdentity,
     _parse_engram_cfg,
     ensure_project_identity,
+    resolve_inbox_identity,
     resolve_partition,
     resolve_project_name,
     resolve_scope_and_user_id,
     write_project_cfg,
 )
+
+
+def test_resolve_inbox_identity_from_cfg(tmp_path):
+    (tmp_path / ".engram.cfg").write_text(
+        "project = beastchat\ninbox_identity = beastchat-server\n"
+    )
+    # project and inbox identity come from the SAME file but are independent
+    assert resolve_project_name(str(tmp_path)) == "beastchat"
+    assert resolve_inbox_identity(str(tmp_path)) == "beastchat-server"
+
+
+def test_resolve_inbox_identity_absent_is_none(tmp_path):
+    (tmp_path / ".engram.cfg").write_text("project = beastchat\n")
+    assert resolve_project_name(str(tmp_path)) == "beastchat"
+    assert resolve_inbox_identity(str(tmp_path)) is None
+
+
+def test_resolve_inbox_identity_walks_up(tmp_path):
+    (tmp_path / ".engram.cfg").write_text(
+        "project = beastchat\ninbox_identity = beastchat-app\n"
+    )
+    sub = tmp_path / "ios" / "src"
+    sub.mkdir(parents=True)
+    assert resolve_inbox_identity(str(sub)) == "beastchat-app"
+
+
+def test_parse_engram_cfg_reads_named_key(tmp_path):
+    cfg = tmp_path / ".engram.cfg"
+    cfg.write_text("project = foo\ninbox_identity = foo-app\n")
+    assert _parse_engram_cfg(str(cfg), "inbox_identity") == "foo-app"
+    assert _parse_engram_cfg(str(cfg)) == "foo"  # defaults to project
 
 
 def test_machine_scope():
