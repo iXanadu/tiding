@@ -16,6 +16,7 @@ from engram_mcp.server import (
     memory_inbox,
     memory_inbox_archive,
     memory_reply,
+    memory_resolve,
     memory_search,
     memory_send,
 )
@@ -507,3 +508,42 @@ async def test_memory_inbox_archive(respx_mock):
             project_dir="/Users/ixanadu/projects/engram",
         )
     assert "Archived inbox/m1" in result
+
+
+# --- memory_resolve ---
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve(respx_mock):
+    respx_mock.post("/memory/inbox/inbox/m1/resolve").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/m1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_resolve(
+            message_id="inbox/m1",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    assert "Resolved inbox/m1" in result
+    assert "engram" in result  # resolver identity is echoed
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve_forwards_guidance(respx_mock):
+    respx_mock.post("/memory/inbox/inbox/m1/resolve").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "id": "inbox/m1",
+                "guidance": "GUIDANCE_SENTINEL: resolve is reversible",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_resolve(
+            message_id="inbox/m1",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    assert "Resolved" in result
+    assert "GUIDANCE_SENTINEL" in result

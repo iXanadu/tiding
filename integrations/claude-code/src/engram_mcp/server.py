@@ -698,6 +698,38 @@ async def memory_inbox_archive(
     return _append_guidance(head, result)
 
 
+@mcp.tool()
+async def memory_resolve(
+    message_id: str,
+    project_dir: str = "",
+) -> str:
+    """Resolve an inbox thread so it drains from the default view once the
+    loop is closed. Response includes resolve-vs-archive semantics — read it.
+
+    Unlike archive (a global hard-hide for noise/mistakes), resolve records
+    who closed the thread and when, and the message stays retrievable via
+    memory_inbox(unread_only=False) / include_resolved. Either party in a
+    thread may resolve. Use this to drain finished threads — shipped work,
+    FYIs whose loop is closed, wrong-session noise — so inboxes don't pile
+    up as stale-but-open. Keep only threads that still need you to act.
+
+    Args:
+        message_id: The inbox message id (e.g. "inbox/abc-123")
+        project_dir: Your working directory path (required for identity)
+    """
+    reader_identity, _ = compute_identity(project_dir or None)
+    try:
+        result = await _client.inbox_resolve(
+            message_id=message_id,
+            reader_identity=reader_identity,
+            project_dir=project_dir or None,
+        )
+    except Exception as e:
+        return f"Resolve failed: {e}"
+    head = f"Resolved {result['id']} as {reader_identity}"
+    return _append_guidance(head, result)
+
+
 def main():
     mcp.run(transport="stdio")
 

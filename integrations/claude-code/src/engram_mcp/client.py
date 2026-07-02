@@ -218,6 +218,19 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def inbox_resolve(
+        self,
+        message_id: str,
+        reader_identity: str,
+        project_dir: str | None = None,
+    ) -> dict:
+        return await self._request(
+            "POST",
+            f"/memory/inbox/{message_id}/resolve",
+            json={"reader_identity": reader_identity},
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def forget(
         self,
         key: str,
