@@ -179,6 +179,7 @@ class MemoryClient:
         unread_only: bool = True,
         limit: int = 20,
         project_dir: str | None = None,
+        newest_first: bool = False,
     ) -> dict:
         return await self._request(
             "POST",
@@ -188,6 +189,7 @@ class MemoryClient:
                 "reader_identity": reader_identity,
                 "unread_only": unread_only,
                 "limit": limit,
+                "newest_first": newest_first,
             },
             headers=self._provenance_headers(project_dir),
         )

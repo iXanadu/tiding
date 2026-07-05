@@ -76,11 +76,17 @@ async def _poll(client, listen_set, reader_identity, seen: set) -> list:
     distinct sessions share one identity, split their inbox addresses so this
     stays precise — see decision/three-axes-principal-project-address.)
     """
+    # newest_first is load-bearing: the watcher never acks, so its unread set
+    # only grows. With the default oldest-first order, once unread exceeds the
+    # limit the newest mail is truncated out of the window and never emitted —
+    # the watcher goes blind exactly when the inbox is busy. Newest-first keeps
+    # new arrivals in the window regardless of backlog size; `seen` dedups.
     result = await client.inbox_list(
         listen_set=listen_set,
         reader_identity=reader_identity,
         unread_only=True,
         limit=50,
+        newest_first=True,
     )
     if result.get("status") != "ok":
         raise RuntimeError(f"inbox status={result.get('status')!r}")

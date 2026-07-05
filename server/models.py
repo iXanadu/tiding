@@ -355,6 +355,7 @@ class InboxListRequest(BaseModel):
     unread_only: bool = True
     include_resolved: bool = False  # default view hides resolved/superseded
     limit: int = 20
+    newest_first: bool = False  # watcher sets True so new mail never truncates out
 
 
 class InboxListResponse(BaseModel):

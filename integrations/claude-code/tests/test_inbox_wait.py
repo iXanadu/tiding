@@ -67,6 +67,21 @@ async def test_poll_returns_fresh_and_dedups(respx_mock):
 
 
 @respx.mock(base_url="http://localhost:8920")
+async def test_poll_requests_newest_first(respx_mock):
+    # Load-bearing: the watcher never acks, so an oldest-first LIMIT would
+    # truncate new mail out of the window once the backlog exceeds it. The
+    # watcher MUST request newest_first so new arrivals stay in-window.
+    route = respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": []})
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    await _poll(c, ["engram"], "engram@h", set())
+    body = json.loads(route.calls.last.request.content)
+    assert body["newest_first"] is True
+    await c.close()
+
+
+@respx.mock(base_url="http://localhost:8920")
 async def test_poll_skips_self_echo(respx_mock):
     # reader is beastchat@macmini; its own sends carry from=beastchat@macmini
     # (full form) — and its loose name "beastchat" is equally self. Both must be

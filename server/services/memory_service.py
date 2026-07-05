@@ -420,6 +420,7 @@ async def inbox_list(
     unread_only: bool = True,
     limit: int = 20,
     include_resolved: bool = False,
+    newest_first: bool = False,
 ) -> list[InboxMessage]:
     """List inbox messages addressed to any member of ``listen_set``.
 
@@ -430,14 +431,23 @@ async def inbox_list(
     mail has drained and must not wake or trip a fresh session. A NULL/missing
     status is treated as ``open`` (back-compat with pre-lifecycle messages).
     Set ``include_resolved=True`` to see the full history.
+
+    ``newest_first`` flips the sort to ``created_at DESC``. Display callers
+    (memory_inbox) want oldest-first reading order and leave this False. The
+    ``--follow`` watcher sets it True: it never acks, so its unread set grows
+    unbounded, and an oldest-first ``LIMIT`` would truncate genuinely-new mail
+    out of the window once the backlog exceeds ``limit`` — the watcher would go
+    blind exactly when the inbox is busy. Newest-first keeps new arrivals in
+    the window regardless of backlog size (its ``seen`` set dedups the rest).
     """
     listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
         return []
+    order = "DESC" if newest_first else "ASC"
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT key, value, user_id, metadata, created_at
             FROM memories
             WHERE namespace = $1
@@ -453,7 +463,7 @@ async def inbox_list(
                   OR $5::text IS NULL
                   OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
               )
-            ORDER BY created_at ASC
+            ORDER BY created_at {order}
             LIMIT $6
             """,
             INBOX_NAMESPACE,

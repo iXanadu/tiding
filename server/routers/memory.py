@@ -236,6 +236,7 @@ async def list_inbox(req: InboxListRequest, request: Request):
             unread_only=req.unread_only,
             limit=req.limit,
             include_resolved=req.include_resolved,
+            newest_first=req.newest_first,
         )
         counts = await inbox_counts(
             listen_set=listen_set,

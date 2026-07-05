@@ -798,3 +798,43 @@ async def test_no_autocorrect_for_valid_addresses(client, db_pool):
         assert resp.status_code == 200
         assert resp.json()["corrected_from"] is None
     await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_newest_first_keeps_new_mail_in_window(client, db_pool):
+    """newest_first surfaces the latest message even when the backlog exceeds
+    the limit — the watcher-blindness bug (oldest-first + LIMIT truncated new
+    mail out once unread > limit). Backlog-size-independent by construction.
+    """
+    await _cleanup_inbox(db_pool)
+    # Send a backlog larger than the query limit, in order. The last one sent
+    # is the newest by created_at.
+    ids = []
+    for i in range(4):
+        resp = await client.post("/memory/send", json={
+            "to": "engram", "body": f"m{i}", "from_": "peer@elsewhere",
+        })
+        assert resp.status_code == 200
+        ids.append(resp.json()["id"])
+    newest_id = ids[-1]
+
+    common = {
+        "listen_set": ["engram"],
+        "reader_identity": "engram@macmini",
+        "unread_only": True,
+        "limit": 2,  # smaller than the 4-message backlog
+    }
+
+    # Default oldest-first: the newest message is truncated OUT of the window.
+    resp = await client.post("/memory/inbox", json={**common, "newest_first": False})
+    oldest_window = [m["id"] for m in resp.json()["messages"]]
+    assert len(oldest_window) == 2
+    assert newest_id not in oldest_window
+
+    # newest_first: the newest message is IN the window regardless of backlog.
+    resp = await client.post("/memory/inbox", json={**common, "newest_first": True})
+    newest_window = [m["id"] for m in resp.json()["messages"]]
+    assert len(newest_window) == 2
+    assert newest_id == newest_window[0]  # DESC → newest first
+
+    await _cleanup_inbox(db_pool)
