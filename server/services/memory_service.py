@@ -22,6 +22,10 @@ INBOX_STALE_AFTER_HOURS = 72
 INBOX_OPEN = "open"
 INBOX_RESOLVED = "resolved"
 INBOX_SUPERSEDED = "superseded"
+# Marker recorded as resolved_by when the background stale-sweep drains a
+# read-but-unresolved message — distinguishes a policy drain from a human/agent
+# resolve in the audit trail.
+INBOX_STALE_SWEEP_ACTOR = "system:stale-sweep"
 
 # Model composition leak: some Claude sessions emit memory_reply bodies ending
 # with tool-call closing tags (e.g. "</body></invoke>") when the parameter
@@ -611,6 +615,60 @@ async def inbox_resolve(message_id: str, resolver_identity: str | None = None) -
             message_id,
         )
     return result.endswith(" 1")
+
+
+async def inbox_autoresolve_stale(
+    older_than_hours: int = INBOX_STALE_AFTER_HOURS,
+    resolver: str = INBOX_STALE_SWEEP_ACTOR,
+    batch_size: int = 1000,
+) -> int:
+    """Auto-resolve open inbox messages that a recipient has READ and that are
+    older than ``older_than_hours``. Returns the number resolved.
+
+    This drains the read-but-never-resolved tail that otherwise accumulates
+    without bound: resolve is manual and optional, one-way FYIs never get a
+    reply to close them, and dormant recipients never return to resolve their
+    own mail — so relying on per-agent discipline leaves the pile growing.
+
+    Safe by construction. It only touches messages that are ALREADY read (so it
+    never hides undelivered mail — the "not going through" case), are past the
+    staleness threshold, and are not archived. Resolve is reversible and stays
+    retrievable via ``include_resolved`` — nothing is deleted. The ``resolver``
+    marker (``system:stale-sweep``) keeps policy drains distinct from human ones.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                || jsonb_build_object(
+                       'status', $1::text,
+                       'resolved_at', to_jsonb(now()),
+                       'resolved_by', $2::text
+                   )
+            WHERE key IN (
+                SELECT key FROM memories
+                WHERE namespace = $3 AND scope = $4
+                  AND COALESCE(metadata->>'status', $5) = $5
+                  AND COALESCE((metadata->>'archived')::bool, false) = false
+                  AND jsonb_array_length(COALESCE(metadata->'read_by', '[]'::jsonb)) > 0
+                  AND created_at < now() - make_interval(hours => $6)
+                ORDER BY created_at ASC
+                LIMIT $7
+            )
+              AND namespace = $3 AND scope = $4
+            """,
+            INBOX_RESOLVED,
+            resolver,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            INBOX_OPEN,
+            older_than_hours,
+            batch_size,
+        )
+    # asyncpg returns a command tag like "UPDATE 138"
+    return int(result.split()[-1]) if result.startswith("UPDATE") else 0
 
 
 async def inbox_counts(

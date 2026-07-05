@@ -10,7 +10,10 @@ from server.config import settings
 from server.db import close_pool, init_pool
 from server.embeddings import close_client, init_client
 from server.routers import admin, dashboard, health, identity, memory, principals
-from server.services.cleanup_task import expiration_cleanup_loop
+from server.services.cleanup_task import (
+    expiration_cleanup_loop,
+    inbox_autoresolve_loop,
+)
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper()),
@@ -73,15 +76,18 @@ async def lifespan(app: FastAPI):
 
     await _bootstrap_admin()
 
-    cleanup_task = None
+    background_tasks = []
     if settings.cleanup_enabled:
-        cleanup_task = asyncio.create_task(expiration_cleanup_loop())
+        background_tasks.append(asyncio.create_task(expiration_cleanup_loop()))
+    if settings.inbox_autoresolve_enabled:
+        background_tasks.append(asyncio.create_task(inbox_autoresolve_loop()))
     yield
     logger.info("Shutting down")
-    if cleanup_task is not None:
-        cleanup_task.cancel()
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
         try:
-            await cleanup_task
+            await task
         except asyncio.CancelledError:
             pass
     await close_client()

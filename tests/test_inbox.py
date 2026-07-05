@@ -2,6 +2,8 @@
 
 import pytest
 
+from server.services.memory_service import inbox_autoresolve_stale
+
 
 async def _cleanup_inbox(db_pool):
     async with db_pool.acquire() as conn:
@@ -836,5 +838,55 @@ async def test_newest_first_keeps_new_mail_in_window(client, db_pool):
     newest_window = [m["id"] for m in resp.json()["messages"]]
     assert len(newest_window) == 2
     assert newest_id == newest_window[0]  # DESC → newest first
+
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_autoresolve_drains_read_and_stale(client, db_pool):
+    """The stale-sweep resolves READ + stale mail, but never unread or fresh
+    mail — draining the read-but-unresolved pile without hiding undelivered
+    messages, and reversibly (resolve, not delete)."""
+    await _cleanup_inbox(db_pool)
+
+    async def _send(body):
+        r = await client.post("/memory/send", json={
+            "to": "engram", "body": body, "from_": "peer@elsewhere",
+        })
+        assert r.status_code == 200
+        return r.json()["id"]
+
+    read_stale = await _send("read + stale")
+    unread_stale = await _send("unread + stale")
+    read_fresh = await _send("read + fresh")
+
+    # mark the two "read" ones read
+    for mid in (read_stale, read_fresh):
+        r = await client.post(f"/memory/inbox/{mid}/ack",
+                              json={"reader_identity": "engram@macmini"})
+        assert r.status_code == 200
+
+    # backdate the two "stale" ones past the 72h threshold
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET created_at = now() - interval '100 hours' "
+            "WHERE scope='inbox' AND key = ANY($1::text[])",
+            [read_stale, unread_stale],
+        )
+
+    resolved = await inbox_autoresolve_stale(older_than_hours=72)
+    assert resolved == 1  # only read_stale qualifies (read AND stale)
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT key, metadata->>'status' AS status, "
+            "metadata->>'resolved_by' AS resolved_by "
+            "FROM memories WHERE scope='inbox' AND key = ANY($1::text[])",
+            [read_stale, unread_stale, read_fresh],
+        )
+    state = {r["key"]: (r["status"], r["resolved_by"]) for r in rows}
+    assert state[read_stale] == ("resolved", "system:stale-sweep")
+    assert state[unread_stale][0] in (None, "open")   # unread → never touched
+    assert state[read_fresh][0] in (None, "open")     # fresh → never touched
 
     await _cleanup_inbox(db_pool)

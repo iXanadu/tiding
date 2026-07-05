@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     cleanup_interval_hours: int = 6
     cleanup_batch_size: int = 500
 
+    # Inbox stale auto-resolve — drains read-but-unresolved mail so the open
+    # pile doesn't grow without bound (resolve is manual/optional; dormant
+    # recipients never return to resolve their own mail). Only touches ALREADY
+    # read + stale mail; reversible (resolve, not delete).
+    inbox_autoresolve_enabled: bool = True
+    inbox_autoresolve_interval_hours: int = 6
+    inbox_autoresolve_after_hours: int = 72
+
     # Search tuning
     vector_threshold: float = 0.35
     trigram_weight: float = 0.15
