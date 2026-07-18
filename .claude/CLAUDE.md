@@ -2,6 +2,15 @@
 
 Generic semantic memory service for AI agents. FastAPI + pgvector + in-process sentence-transformers embeddings.
 
+## Sources of Truth
+
+- **`BACKLOG.md` (repo root)** — the single source of truth for deferred work, shared between the owner and Claude. Git-tracked (survives memory decay). READ IT EVERY SESSION; update it CONTINUOUSLY.
+- Session state / decisions / progress → engram memory at `scope=project` (memory-first; no state files).
+
+## The Pin-It List — READ EVERY SESSION
+
+`BACKLOG.md` at the repo root is force-loaded into context each run. Triage every defect on discovery: BLOCKING (breaks build / wrong-or-harmful output / destroys data → fix now) vs DEGRADING (still does its job → pin it and keep moving). If it's not in `BACKLOG.md`, it's not tracked. When idle, pull the next OPEN item.
+
 ## Project Structure
 
 - `server/` — FastAPI app (config, db, embeddings, auth, routers, services)
