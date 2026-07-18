@@ -46,6 +46,52 @@ ADMIN_NAME = "admin"
 INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
 
 
+# Session-stable project_dir pin.
+#
+# Inbox identity is derived entirely from the per-call ``project_dir`` argument.
+# The caller (the LLM) must pass it on EVERY tool call, but nothing forces that —
+# and when a call omits it, ``derive_project_name(None)`` silently falls back to
+# ``admin``. A session that passed project_dir on reads (``memory_inbox``) but
+# omitted it on writes (``memory_reply``/``memory_ack``/``memory_send``) therefore
+# READ as its project yet WROTE as admin: reply-by-parent fails ("not in
+# listen_set"), acks misfile onto the wrong reader, and sends go out under the
+# wrong sender. Reported 2026-07-18 by projbeta / projalpha@macmini /
+# admin@macmini — the read/write identity divergence bug.
+#
+# The MCP bridge runs as ONE stdio subprocess per Claude session (same lifetime
+# assumption the ``_PRINCIPAL_CACHE`` module global already relies on), so a
+# module-level pin is exactly session-scoped. We remember the first usable
+# project_dir and recall it whenever a later call omits one, keeping a session's
+# read and write identity consistent. There is no other per-session identity
+# source: the bridge is registered once globally with no per-session env block,
+# and ~/.config/engram/identity carries only the token, not the project.
+_SESSION_PROJECT_DIR: str | None = None
+
+
+def remember_project_dir(project_dir: str | None) -> str | None:
+    """Pin an explicit ``project_dir``; recall the pinned one when absent.
+
+    - A usable (absolute) ``project_dir`` is honored and becomes the session
+      pin. Last explicit value wins, so a session that genuinely changes its
+      working directory re-pins rather than being locked to the first.
+    - An empty / None / relative ``project_dir`` recalls the pinned value
+      instead of falling through to the ``admin`` default. Returns None only on
+      a cold session that has never yet seen a usable project_dir (nothing to
+      recall — behaviour then matches the pre-pin default).
+    """
+    global _SESSION_PROJECT_DIR
+    if project_dir and os.path.isabs(project_dir):
+        _SESSION_PROJECT_DIR = project_dir
+        return project_dir
+    return _SESSION_PROJECT_DIR
+
+
+def reset_session_pin() -> None:
+    """Clear the session project_dir pin. For tests / process reuse only."""
+    global _SESSION_PROJECT_DIR
+    _SESSION_PROJECT_DIR = None
+
+
 def resolve_session_identity(project_dir: str | None) -> str | None:
     """The session's declared inbox identity, or None to use the project name.
 
@@ -105,7 +151,14 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     address but is precisely addressed (and sends) as ``<override>@<host>`` — so
     sibling sessions sharing one project get distinct inbox identities without
     splitting their shared memory.
+
+    ``project_dir`` is first passed through the session pin
+    (``remember_project_dir``): an explicit value is honored and remembered, an
+    omitted one recalls the session's pinned dir. This keeps read and write
+    identity consistent within a session even when the caller passes project_dir
+    on some tool calls but not others (see the pin's module note).
     """
+    project_dir = remember_project_dir(project_dir)
     host = hostname()
     project = derive_project_name(project_dir)
     override = resolve_session_identity(project_dir) or ""

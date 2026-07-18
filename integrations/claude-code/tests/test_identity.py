@@ -69,6 +69,86 @@ def test_override_equal_to_project_is_a_noop(monkeypatch):
     assert listen_set == ["beastchat", "machine:macmini", "beastchat@macmini"]
 
 
+def test_omitted_project_dir_recalls_the_pinned_identity(monkeypatch):
+    """The read/write divergence bug: a call that omits project_dir must NOT
+    fall back to admin once the session has an established identity.
+
+    Reproduces projbeta/projalpha/admin@macmini (2026-07-18): read as the
+    project, write as admin. With the pin, the write recalls the project.
+    """
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+
+    def _derive(project_dir):
+        # Mirror production: a usable project path resolves to its project,
+        # an empty/None one falls back to admin.
+        return "projbeta" if project_dir else identity.ADMIN_NAME
+
+    monkeypatch.setattr(identity, "derive_project_name", _derive)
+
+    # Read path passes project_dir → pins projbeta.
+    read_reader, _ = compute_identity("/Users/ixanadu/projects/ProjBeta")
+    assert read_reader == "projbeta@macmini"
+
+    # Write path omits project_dir → recalls the pin instead of going admin.
+    write_reader, write_set = compute_identity(None)
+    assert write_reader == "projbeta@macmini"
+    assert write_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
+
+
+def test_cold_session_without_project_dir_still_falls_back_to_admin(monkeypatch):
+    """Nothing pinned yet → behaviour matches the pre-pin default (admin)."""
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: "proj" if project_dir else identity.ADMIN_NAME,
+    )
+    reader, _ = compute_identity(None)
+    assert reader == "admin@macmini"
+
+
+def test_explicit_project_dir_repins_last_wins(monkeypatch):
+    """An explicit usable project_dir always wins and updates the pin."""
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: (project_dir or "").rsplit("/", 1)[-1].lower()
+        if project_dir
+        else identity.ADMIN_NAME,
+    )
+    first, _ = compute_identity("/Users/ixanadu/projects/Alpha")
+    assert first == "alpha@macmini"
+    second, _ = compute_identity("/Users/ixanadu/projects/Beta")
+    assert second == "beta@macmini"
+    # Omitting now recalls the most recent explicit pin (beta), not alpha.
+    recalled, _ = compute_identity("")
+    assert recalled == "beta@macmini"
+
+
+def test_relative_project_dir_does_not_pin(monkeypatch):
+    """A relative path is not a usable identity source — must not become the
+    pin, and must not be honored over an existing pin."""
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: "engram" if project_dir == "/Users/ixanadu/projects/engram"
+        else identity.ADMIN_NAME,
+    )
+    compute_identity("/Users/ixanadu/projects/engram")  # pin engram
+    reader, _ = compute_identity("relative/path")  # not absolute → recalls pin
+    assert reader == "engram@macmini"
+
+
 def test_two_siblings_get_distinct_identities_sharing_a_group(monkeypatch):
     _host(monkeypatch)
     monkeypatch.setattr(identity, "derive_project_name", lambda _d: "beastchat")
