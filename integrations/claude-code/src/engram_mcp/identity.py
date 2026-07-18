@@ -46,11 +46,11 @@ ADMIN_NAME = "admin"
 INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
 
 
-# Session-stable project_dir pin.
+# Session-stable project_dir resolution.
 #
-# Inbox identity is derived entirely from the per-call ``project_dir`` argument.
-# The caller (the LLM) must pass it on EVERY tool call, but nothing forces that —
-# and when a call omits it, ``derive_project_name(None)`` silently falls back to
+# Inbox identity is derived from the per-call ``project_dir`` argument. The
+# caller (the LLM) is expected to pass it on EVERY tool call, but nothing forces
+# that — and when a call omits it, ``derive_project_name(None)`` falls back to
 # ``admin``. A session that passed project_dir on reads (``memory_inbox``) but
 # omitted it on writes (``memory_reply``/``memory_ack``/``memory_send``) therefore
 # READ as its project yet WROTE as admin: reply-by-parent fails ("not in
@@ -58,36 +58,62 @@ INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
 # wrong sender. Reported 2026-07-18 by projbeta / projalpha@macmini /
 # admin@macmini — the read/write identity divergence bug.
 #
-# The MCP bridge runs as ONE stdio subprocess per Claude session (same lifetime
-# assumption the ``_PRINCIPAL_CACHE`` module global already relies on), so a
-# module-level pin is exactly session-scoped. We remember the first usable
-# project_dir and recall it whenever a later call omits one, keeping a session's
-# read and write identity consistent. There is no other per-session identity
-# source: the bridge is registered once globally with no per-session env block,
-# and ~/.config/engram/identity carries only the token, not the project.
+# Two session-scoped anchors close this (the MCP bridge runs as ONE stdio
+# subprocess per Claude session — same lifetime assumption ``_PRINCIPAL_CACHE``
+# already relies on):
+#
+#   1. _STARTUP_CWD — the bridge's spawn working directory, captured once at
+#      import. Claude Code now launches each stdio bridge with cwd = the
+#      session's project root (verified 2026-07-18 across 5 live sessions; the
+#      223b17b-era claim that ``os.getcwd()`` is "unrelated to the CC session" is
+#      OBSOLETE — that is why project_dir became a hand-passed arg). This is the
+#      reliable per-session anchor the arg was standing in for.
+#
+#   2. _SESSION_PROJECT_DIR — the last EXPLICIT project_dir a caller passed, an
+#      override for the rare cross-project / cwd-changed case.
+#
+# CRUCIAL: neither anchor is "trusted as identity". Both are only the DIRECTORY
+# that ``derive_project_name`` walks up from — and ``.engram.cfg`` is gold there:
+# resolve_project_name returns the declared name whenever a cfg exists up the
+# chain, and the raw dir basename is used ONLY as the pre-.engram.cfg bootstrap
+# fallback (a brand-new project not yet configured). So a reliable cwd + an
+# existing .engram.cfg = deterministically correct identity, with zero
+# dependence on the LLM re-supplying project_dir per call.
+try:
+    _STARTUP_CWD: str | None = os.getcwd()
+except OSError:  # pragma: no cover - cwd unlinked; nothing to anchor to
+    _STARTUP_CWD = None
+
 _SESSION_PROJECT_DIR: str | None = None
 
 
 def remember_project_dir(project_dir: str | None) -> str | None:
-    """Pin an explicit ``project_dir``; recall the pinned one when absent.
+    """Resolve the effective directory to derive identity from.
 
-    - A usable (absolute) ``project_dir`` is honored and becomes the session
-      pin. Last explicit value wins, so a session that genuinely changes its
-      working directory re-pins rather than being locked to the first.
-    - An empty / None / relative ``project_dir`` recalls the pinned value
-      instead of falling through to the ``admin`` default. Returns None only on
-      a cold session that has never yet seen a usable project_dir (nothing to
-      recall — behaviour then matches the pre-pin default).
+    Precedence:
+      1. An explicit, usable (absolute) ``project_dir`` — honored and remembered
+         as the session override (last explicit value wins, so a session that
+         genuinely changes its working directory re-pins).
+      2. The last explicit override remembered this session.
+      3. ``_STARTUP_CWD`` — the bridge's spawn cwd (the session's project root).
+
+    Only falls through to None on a cold session with no explicit arg AND no
+    usable startup cwd, matching the pre-pin ``admin`` default. The returned
+    directory is fed to ``derive_project_name``, where ``.engram.cfg`` (if any)
+    is authoritative — this function chooses the *anchor*, not the identity.
     """
     global _SESSION_PROJECT_DIR
     if project_dir and os.path.isabs(project_dir):
         _SESSION_PROJECT_DIR = project_dir
         return project_dir
-    return _SESSION_PROJECT_DIR
+    return _SESSION_PROJECT_DIR or _STARTUP_CWD
 
 
 def reset_session_pin() -> None:
-    """Clear the session project_dir pin. For tests / process reuse only."""
+    """Clear the explicit session override. For tests / process reuse only.
+
+    Does not touch ``_STARTUP_CWD`` — that is the immutable spawn anchor.
+    """
     global _SESSION_PROJECT_DIR
     _SESSION_PROJECT_DIR = None
 

@@ -97,8 +97,12 @@ def test_omitted_project_dir_recalls_the_pinned_identity(monkeypatch):
     assert write_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
 
 
-def test_cold_session_without_project_dir_still_falls_back_to_admin(monkeypatch):
-    """Nothing pinned yet → behaviour matches the pre-pin default (admin)."""
+def test_cold_session_without_project_dir_or_cwd_falls_back_to_admin(monkeypatch):
+    """No explicit arg, no pin, no startup cwd → pre-anchor default (admin).
+
+    (conftest neutralizes _STARTUP_CWD to None so this isolates the true
+    nothing-to-anchor-to case.)
+    """
     _host(monkeypatch)
     monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
     monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
@@ -109,6 +113,48 @@ def test_cold_session_without_project_dir_still_falls_back_to_admin(monkeypatch)
     )
     reader, _ = compute_identity(None)
     assert reader == "admin@macmini"
+
+
+def test_startup_cwd_anchors_identity_when_project_dir_omitted(monkeypatch):
+    """The durable fix: an omitted project_dir resolves from the bridge's spawn
+    cwd (its project root), so identity never silently drops to admin.
+
+    derive_project_name is left REAL-ish here (delegating to .engram.cfg via a
+    stub) to show cwd is only the ANCHOR — the declared name is what wins.
+    """
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    # cwd = the session's project root; .engram.cfg there declares 'projbeta'
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/projects/ProjBeta")
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: "projbeta"
+        if project_dir == "/Users/ixanadu/projects/ProjBeta"
+        else identity.ADMIN_NAME,
+    )
+    reader, listen_set = compute_identity(None)
+    assert reader == "projbeta@macmini"
+    assert listen_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
+
+
+def test_explicit_project_dir_overrides_startup_cwd(monkeypatch):
+    """An explicit arg still wins over the cwd anchor (admin cross-project work,
+    or a session operating on a dir other than its cwd)."""
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/projects/Alpha")
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: (project_dir or "").rsplit("/", 1)[-1].lower()
+        if project_dir
+        else identity.ADMIN_NAME,
+    )
+    reader, _ = compute_identity("/Users/ixanadu/projects/Beta")
+    assert reader == "beta@macmini"
 
 
 def test_explicit_project_dir_repins_last_wins(monkeypatch):

@@ -1,19 +1,24 @@
 import pytest
 import respx
 
+import engram_mcp.identity as identity
 from engram_mcp.client import MemoryClient
 from engram_mcp.identity import reset_session_pin
 
 
 @pytest.fixture(autouse=True)
-def _reset_identity_pin():
-    """Clear the session project_dir pin before each test.
+def _reset_identity_pin(monkeypatch):
+    """Isolate the session-scoped identity anchors before each test.
 
-    The pin is a module global (session-scoped in production, but a single
-    process across a test run), so without this reset an earlier test's
-    project_dir would leak into a later test that omits one.
+    Both are module globals (session-scoped in production, a single process
+    across a test run), so without this an earlier test's state would leak:
+      - the explicit override pin (_SESSION_PROJECT_DIR) is cleared, and
+      - the startup-cwd anchor (_STARTUP_CWD) is neutralized to None, so a test
+        that omits project_dir reproduces the pre-anchor ``admin`` default
+        unless it explicitly opts into a cwd by setting identity._STARTUP_CWD.
     """
     reset_session_pin()
+    monkeypatch.setattr(identity, "_STARTUP_CWD", None)
     yield
     reset_session_pin()
 
