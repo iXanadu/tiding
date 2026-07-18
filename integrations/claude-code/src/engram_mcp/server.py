@@ -8,10 +8,11 @@ from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
-from engram_mcp.identity import compute_identity, reader_to_address
+from engram_mcp.identity import compute_identity, reader_to_address, remember_project_dir
 from engram_mcp.scoping import (
     AmbiguousIdentity,
     ensure_project_identity,
+    is_real_project_name,
     resolve_partition,
     write_project_cfg,
 )
@@ -98,17 +99,18 @@ async def _resolve_partition_with_identity(
     """
     effective_scope = scope or settings.memory_default_scope
     both_overridden = bool(user_id_override) and bool(project_override)
+    # Anchor the directory: explicit arg → session pin → bridge startup cwd.
+    # Using the anchor (not the raw arg) lets the identity gate fire even when a
+    # caller omits project_dir — a forgetful call can no longer slip past setup.
+    effective_dir = remember_project_dir(project_dir or None)
     if effective_scope == "project" and not both_overridden:
-        effective = project_dir if project_dir and Path(project_dir).is_absolute() else None
-        # Skip ensure when project_dir isn't a usable absolute path — the
-        # tool's project_dir docstring already directs callers to pass one.
-        if effective:
-            ensure_project_identity(effective)  # side effect: writes cfg or raises
+        if effective_dir and Path(effective_dir).is_absolute():
+            ensure_project_identity(effective_dir)  # side effect: returns cfg name or raises
     principal_name = await _get_principal_name() if effective_scope == "project" else None
     resolved_scope, resolved_user_id, resolved_project = resolve_partition(
         scope or None,
         settings.memory_default_scope,
-        project_dir or None,
+        effective_dir,
         principal_name=principal_name,
     )
     if user_id_override:
@@ -125,6 +127,20 @@ def _identity_error_message(e: AmbiguousIdentity) -> str:
     written to file-based ``.claude/projects/.../MEMORY.md`` when this
     error fires, hiding the prompt from the user. DO NOT do that.
     """
+    # Offer the basename as option (1) only when it's a usable name. When it's
+    # empty (the basename was a deploy label / placeholder) we skip the
+    # suggestion and ask for a real name outright.
+    if e.suggested:
+        option_one = (
+            f"     (1) Declare this folder as project '{e.suggested}' "
+            f"(folder-name suggestion)?\n"
+        )
+    else:
+        option_one = (
+            "     (1) Provide a real project name "
+            "(the folder name looks like a deploy label / placeholder, "
+            "so it isn't offered as a default)?\n"
+        )
     return (
         f"STOP. Project identity is required for scope=project at "
         f"'{e.project_dir}'.\n\n"
@@ -136,8 +152,7 @@ def _identity_error_message(e: AmbiguousIdentity) -> str:
         f"Ask the user this exact question and WAIT for their answer:\n\n"
         f'  "I\'m in {e.project_dir}. This isn\'t a known project. For\n'
         f"   memory storage, do you want to:\n"
-        f"     (1) Declare this folder as project '{e.suggested}' "
-        f"(basename suggestion)?\n"
+        f"{option_one}"
         f"     (2) Treat it as admin territory (project = admin)?\n"
         f'     (3) Use a custom project name?"\n\n'
         f"After the user picks, call:\n"
@@ -452,6 +467,15 @@ async def memory_declare_identity(
         return "Error: project_dir is required."
     if not name or not name.strip():
         return "Error: name is required."
+    # Refuse to persist a deploy label / placeholder as the identity — otherwise
+    # resolve_project_name would reject it on read and re-trigger the prompt on
+    # every call (an infinite interrogation loop). 'admin' is real and allowed.
+    if not is_real_project_name(name.strip()):
+        return (
+            f"Error: '{name.strip()}' is a deploy label / placeholder, not a "
+            f"project identity. Pick a distinct project name (or 'admin' for "
+            f"maintenance territory)."
+        )
     try:
         path = write_project_cfg(project_dir.strip(), name.strip())
     except ValueError as e:

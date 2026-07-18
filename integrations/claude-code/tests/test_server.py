@@ -15,6 +15,7 @@ from engram_mcp.server import (
     memory_forget,
     memory_status,
     memory_whoami,
+    memory_declare_identity,
     _format_recency,
 )
 
@@ -399,3 +400,24 @@ def test_format_recency_naive_datetime_assumed_utc():
     # a tz-naive stamp must not raise; treated as UTC
     out = _format_recency("2026-06-10T12:00:00")
     assert "📅 2026-06-10" in out
+
+
+async def test_declare_identity_rejects_sentinel(tmp_path):
+    # A deploy label / placeholder can't be persisted as identity — else read
+    # would reject it and the prompt would loop forever.
+    result = await memory_declare_identity(project_dir=str(tmp_path), name="prod")
+    assert "deploy label" in result.lower() or "placeholder" in result.lower()
+    assert not (tmp_path / ".engram.cfg").exists()  # nothing written
+
+
+async def test_declare_identity_allows_real_name(tmp_path):
+    result = await memory_declare_identity(project_dir=str(tmp_path), name="my-app")
+    assert "Declared project identity: my-app" in result
+    assert (tmp_path / ".engram.cfg").exists()
+
+
+async def test_declare_identity_allows_admin(tmp_path):
+    # 'admin' is a real, intentional identity — declaration must succeed.
+    result = await memory_declare_identity(project_dir=str(tmp_path), name="admin")
+    assert "Declared project identity: admin" in result
+    assert "project = admin" in (tmp_path / ".engram.cfg").read_text()

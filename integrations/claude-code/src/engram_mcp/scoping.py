@@ -5,6 +5,44 @@ import socket
 PROJECT_CFG_FILENAME = ".engram.cfg"
 _VALID_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
+# Values that are syntactically valid but are NOT a real project identity — a
+# generic deploy label or an obvious placeholder. A .engram.cfg carrying one of
+# these is treated as UNSET: we interrogate for the real name rather than
+# silently adopting the default. (the owner 2026-07-18: "if .engram.cfg is there, and
+# not whatever the default value is, we use it, otherwise we seek to set it.")
+# NOTE: 'admin' is deliberately absent — it is a real, intentional identity for
+# maintenance sessions, not a placeholder.
+_SENTINEL_NAMES = frozenset(
+    {
+        # generic deploy labels (mirror the /startup Step 0b guard)
+        "prod",
+        "dev",
+        "staging",
+        "main",
+        "trunk",
+        "current",
+        "release",
+        "live",
+        # obvious placeholders
+        "default",
+        "changeme",
+        "placeholder",
+        "unset",
+        "todo",
+        "example",
+        "template",
+    }
+)
+
+
+def is_real_project_name(name: str | None) -> bool:
+    """True when ``name`` is a usable declared identity, not a placeholder.
+
+    A name that is empty, malformed, or a known sentinel (deploy label /
+    placeholder) is NOT real — the caller should interrogate for the real one.
+    """
+    return bool(name) and name.lower() not in _SENTINEL_NAMES
+
 
 class AmbiguousIdentity(Exception):
     """Raised when scope=project resolution can't auto-determine a name.
@@ -117,10 +155,15 @@ def resolve_project_name(project_dir: str | None) -> str | None:
     """Walk up from ``project_dir`` for ``.engram.cfg`` and return ``project``.
 
     Returns the declared name, or None if no file is found, the file is
-    malformed, or ``project_dir`` is not an absolute path we can walk.
+    malformed, ``project_dir`` is not an absolute path we can walk, or the
+    declared value is a sentinel (deploy label / placeholder — treated as
+    unset so the caller interrogates for the real name).
     """
     path = _find_cfg_path(project_dir)
-    return _parse_engram_cfg(path, "project") if path else None
+    if not path:
+        return None
+    name = _parse_engram_cfg(path, "project")
+    return name if is_real_project_name(name) else None
 
 
 def resolve_inbox_identity(project_dir: str | None) -> str | None:
@@ -138,45 +181,51 @@ def resolve_inbox_identity(project_dir: str | None) -> str | None:
     return _parse_engram_cfg(path, "inbox_identity") if path else None
 
 
-def _has_claude_dir(path: str) -> bool:
-    """True if ``path/.claude/`` exists as a directory (project-root signal)."""
-    return os.path.isdir(os.path.join(path, ".claude"))
-
-
 def ensure_project_identity(project_dir: str | None) -> str:
-    """Resolve project identity with auto-write for deterministic cases.
+    """Resolve project identity, interrogating rather than defaulting silently.
 
     Rules (applied in order):
       1. ``project_dir == $HOME``: auto-write ``$HOME/.engram.cfg`` with
-         ``project = admin`` if missing; return ``"admin"``.
-      2. ``project_dir`` is (or has a parent) under ``$HOME/projects/`` that
-         contains a ``.claude/`` directory: auto-write ``.engram.cfg`` there
-         with ``project = <basename>``; return that name.
-      3. Existing ``.engram.cfg`` anywhere up the walk-up chain wins.
-      4. No rule applies: raise ``AmbiguousIdentity``.
+         ``project = admin`` if missing; return ``"admin"``. (Admin is a
+         deterministic, intentional identity — not a project "default value" —
+         so it is the one case we still settle without asking.)
+      2. Existing ``.engram.cfg`` with a REAL declared name anywhere up the
+         walk-up chain wins (honors a hand-written cfg). A cfg whose value is a
+         sentinel (deploy label / placeholder) is treated as unset.
+      3. Otherwise raise ``AmbiguousIdentity`` so the MCP tool layer interrogates
+         the user and writes ``.engram.cfg`` on their answer.
+
+    This deliberately does NOT auto-adopt a basename for clean
+    ``~/projects/<x>/`` layouts (the old "Rule 2" silent auto-write). Per the owner
+    (2026-07-18, option A): never silently adopt a default — always confirm,
+    then set ``.engram.cfg``. The basename is offered as the prompt's
+    suggestion, not stamped without consent.
 
     Raises:
-      AmbiguousIdentity: when no rule determines a name (e.g. ``/tmp/foo/``,
-        ``~/Documents/HomeMaintenance/``, or ``~/projects/<x>/`` without a
-        ``.claude/`` marker). Caller (MCP tool layer) should ask the user.
+      AmbiguousIdentity: whenever no real ``.engram.cfg`` is found. ``suggested``
+        carries the basename to offer, or "" when the basename is itself a
+        sentinel (so the prompt asks for a real name instead of proposing a
+        deploy label).
     """
     if not project_dir or not os.path.isabs(project_dir):
-        raise AmbiguousIdentity(project_dir or "", suggested=os.path.basename(project_dir or ""))
+        basename = os.path.basename(project_dir or "")
+        raise AmbiguousIdentity(
+            project_dir or "",
+            suggested=basename if is_real_project_name(basename) else "",
+        )
     project_dir = os.path.abspath(project_dir)
 
     home = os.path.expanduser("~")
     projects_root = os.path.join(home, "projects")
 
-    # Rule 1: at $HOME → admin (auto-write)
+    # Rule 1: at $HOME → admin (auto-write; admin is intentional, not a default)
     if project_dir == home:
         cfg = os.path.join(home, PROJECT_CFG_FILENAME)
         if not os.path.isfile(cfg):
             write_project_cfg(home, "admin")
         return "admin"
 
-    # Rule 3 precondition: existing cfg via walk-up wins over Rule 2 auto-write.
-    # Walk up looking for either (a) existing cfg — return its name, OR
-    # (b) a .claude/ directory under ~/projects/ — auto-write cfg there.
+    # Rule 2: an existing cfg with a REAL name up the walk-up chain wins.
     under_projects = project_dir.startswith(projects_root + os.sep)
     current = project_dir
     seen: set[str] = set()
@@ -187,16 +236,9 @@ def ensure_project_identity(project_dir: str | None) -> str:
             candidate = os.path.join(current, PROJECT_CFG_FILENAME)
             if os.path.isfile(candidate):
                 parsed = _parse_engram_cfg(candidate)
-                if parsed:
+                if is_real_project_name(parsed):
                     return parsed
-                # fall through to keep walking if malformed
-        # Rule 2: .claude/ under ~/projects/ → auto-write cfg here
-        if under_projects and current != projects_root and current.startswith(projects_root + os.sep):
-            if _has_claude_dir(current):
-                name = os.path.basename(current)
-                if _VALID_NAME.match(name):
-                    write_project_cfg(current, name)
-                    return name
+                # sentinel or malformed → treat as unset, keep walking
         # Boundary stops
         if under_projects and current == projects_root:
             break
@@ -207,8 +249,13 @@ def ensure_project_identity(project_dir: str | None) -> str:
             break
         current = parent
 
-    # Nothing resolved — Rule 3 territory
-    raise AmbiguousIdentity(project_dir, suggested=os.path.basename(project_dir))
+    # Rule 3: nothing real found — interrogate. Offer the basename only if it is
+    # itself a usable name (never propose a deploy label like 'prod'/'dev').
+    basename = os.path.basename(project_dir)
+    raise AmbiguousIdentity(
+        project_dir,
+        suggested=basename if is_real_project_name(basename) else "",
+    )
 
 
 def resolve_scope_and_user_id(

@@ -255,52 +255,37 @@ def test_ensure_identity_rule1_idempotent(tmp_path, monkeypatch):
     assert "# manual" in (tmp_path / ".engram.cfg").read_text()
 
 
-def test_ensure_identity_rule2_autowrites_project_cfg(tmp_path, monkeypatch):
-    # Rule 2: CWD under ~/projects/<x>/ with .claude/ → auto-write cfg with
-    # project=<x>.
+def test_ensure_identity_clean_layout_interrogates_not_autowrites(tmp_path, monkeypatch):
+    # Option A (the owner 2026-07-18): a clean ~/projects/<x>/.claude/ layout with no
+    # .engram.cfg must NOT silently auto-adopt the basename — it raises so the
+    # user confirms. The basename is offered as the suggestion, cfg NOT written.
     _fake_home(tmp_path, monkeypatch)
     project = tmp_path / "projects" / "foo"
     project.mkdir(parents=True)
     (project / ".claude").mkdir()
-    assert not (project / ".engram.cfg").exists()
-    name = ensure_project_identity(str(project))
-    assert name == "foo"
-    assert (project / ".engram.cfg").exists()
-    assert "project = foo" in (project / ".engram.cfg").read_text()
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(project))
+    assert exc_info.value.suggested == "foo"
+    assert not (project / ".engram.cfg").exists()  # nothing written without consent
 
 
-def test_ensure_identity_rule2_autowrites_from_subdir(tmp_path, monkeypatch):
-    # Rule 2 walks up from subdir to find .claude/ at the project root.
+def test_ensure_identity_clean_layout_from_subdir_interrogates(tmp_path, monkeypatch):
+    # Same, walking up from a subdir — still interrogates, still writes nothing.
     _fake_home(tmp_path, monkeypatch)
     project = tmp_path / "projects" / "foo"
     project.mkdir(parents=True)
     (project / ".claude").mkdir()
     subdir = project / "server" / "routers"
     subdir.mkdir(parents=True)
-    name = ensure_project_identity(str(subdir))
-    assert name == "foo"
-    # Cfg written at the project root, not in the subdir
-    assert (project / ".engram.cfg").exists()
-    assert not (subdir / ".engram.cfg").exists()
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(subdir))
+    assert exc_info.value.suggested == "routers"  # basename of the queried dir
+    assert not (project / ".engram.cfg").exists()
 
 
-def test_ensure_identity_rule2_nested_inner_wins(tmp_path, monkeypatch):
-    # Nested: ~/projects/evh/ (no .claude/) wraps ~/projects/evh/evh/ (has
-    # .claude/). Running from the inner, rule 2 writes cfg at inner with
-    # project="evh".
-    _fake_home(tmp_path, monkeypatch)
-    outer = tmp_path / "projects" / "evh"
-    inner = outer / "evh"
-    inner.mkdir(parents=True)
-    (inner / ".claude").mkdir()
-    name = ensure_project_identity(str(inner))
-    assert name == "evh"
-    assert (inner / ".engram.cfg").exists()
-    assert not (outer / ".engram.cfg").exists()
-
-
-def test_ensure_identity_existing_cfg_beats_rule2(tmp_path, monkeypatch):
-    # If a .engram.cfg already exists, it wins over rule 2 auto-write.
+def test_ensure_identity_existing_real_cfg_wins(tmp_path, monkeypatch):
+    # A hand-written / previously-declared .engram.cfg with a REAL name wins,
+    # no interrogation (honors "sometimes I edit .engram first").
     _fake_home(tmp_path, monkeypatch)
     project = tmp_path / "projects" / "foo"
     project.mkdir(parents=True)
@@ -308,6 +293,42 @@ def test_ensure_identity_existing_cfg_beats_rule2(tmp_path, monkeypatch):
     (project / ".engram.cfg").write_text("project = custom-name\n")
     name = ensure_project_identity(str(project))
     assert name == "custom-name"
+
+
+def test_ensure_identity_sentinel_cfg_is_treated_as_unset(tmp_path, monkeypatch):
+    # A .engram.cfg carrying a deploy label / placeholder is NOT a real
+    # identity — interrogate rather than adopt it.
+    _fake_home(tmp_path, monkeypatch)
+    project = tmp_path / "projects" / "site"
+    project.mkdir(parents=True)
+    (project / ".engram.cfg").write_text("project = prod\n")
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(project))
+    # 'site' is a real basename → offered as the suggestion
+    assert exc_info.value.suggested == "site"
+
+
+def test_ensure_identity_sentinel_basename_not_suggested(tmp_path, monkeypatch):
+    # When the folder name itself is a deploy label, don't propose it — the
+    # prompt asks for a real name (suggested == "").
+    _fake_home(tmp_path, monkeypatch)
+    target = tmp_path / "projects" / "prod"
+    target.mkdir(parents=True)
+    with pytest.raises(AmbiguousIdentity) as exc_info:
+        ensure_project_identity(str(target))
+    assert exc_info.value.suggested == ""
+
+
+def test_resolve_project_name_rejects_sentinel_value(tmp_path):
+    # resolve_project_name treats a sentinel cfg value as unset (None).
+    (tmp_path / ".engram.cfg").write_text("project = staging\n")
+    assert resolve_project_name(str(tmp_path)) is None
+
+
+def test_resolve_project_name_admin_is_real(tmp_path):
+    # 'admin' is a real, intentional identity — NOT a sentinel.
+    (tmp_path / ".engram.cfg").write_text("project = admin\n")
+    assert resolve_project_name(str(tmp_path)) == "admin"
 
 
 def test_ensure_identity_rule3_raises_for_home_adjacent(tmp_path, monkeypatch):
