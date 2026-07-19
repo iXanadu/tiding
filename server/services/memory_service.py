@@ -447,28 +447,38 @@ async def inbox_list(
     listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
         return []
-    order = "DESC" if newest_first else "ASC"
+    # Always select the NEWEST `limit` messages (inner DESC LIMIT), then present
+    # them in the caller's reading order (outer sort). Selecting the oldest N
+    # would hide the most-recent mail once the backlog exceeds `limit` — wrong
+    # for an inbox, where newest is most relevant (a small limit made the newest
+    # messages invisible; caught by agentbeast 2026-07-19). Display callers get
+    # the newest N oldest-first for reading; the watcher (newest_first) keeps
+    # newest-first.
+    display_order = "DESC" if newest_first else "ASC"
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT key, value, user_id, metadata, created_at
-            FROM memories
-            WHERE namespace = $1
-              AND scope = $2
-              AND user_id = ANY($3::text[])
-              AND COALESCE((metadata->>'archived')::bool, false) = false
-              AND (
-                  $7::bool
-                  OR COALESCE(metadata->>'status', $8) = $8
-              )
-              AND (
-                  NOT $4::bool
-                  OR $5::text IS NULL
-                  OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
-              )
-            ORDER BY created_at {order}
-            LIMIT $6
+            SELECT key, value, user_id, metadata, created_at FROM (
+                SELECT key, value, user_id, metadata, created_at
+                FROM memories
+                WHERE namespace = $1
+                  AND scope = $2
+                  AND user_id = ANY($3::text[])
+                  AND COALESCE((metadata->>'archived')::bool, false) = false
+                  AND (
+                      $7::bool
+                      OR COALESCE(metadata->>'status', $8) = $8
+                  )
+                  AND (
+                      NOT $4::bool
+                      OR $5::text IS NULL
+                      OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
+                  )
+                ORDER BY created_at DESC
+                LIMIT $6
+            ) recent
+            ORDER BY created_at {display_order}
             """,
             INBOX_NAMESPACE,
             INBOX_SCOPE,
