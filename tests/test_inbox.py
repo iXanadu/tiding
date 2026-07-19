@@ -1,8 +1,28 @@
 """Integration tests for the inbox (inter-session messaging) endpoints."""
 
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from unittest.mock import patch
 
 from server.services.memory_service import inbox_autoresolve_stale
+from server.services import principal_service as ps
+
+
+@pytest_asyncio.fixture
+async def enforced_client(services):
+    """Client with require_auth=true, no legacy api_token — lets principal
+    Bearer tokens authenticate (mirrors the fixture in test_permissions)."""
+    with patch("server.auth.settings") as mock_settings, \
+         patch("server.dependencies.settings") as mock_dep_settings:
+        mock_settings.require_auth = True
+        mock_settings.api_token = ""
+        mock_dep_settings.require_auth = True
+        mock_dep_settings.api_token = ""
+        from server.main import app
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
 
 
 async def _cleanup_inbox(db_pool):
@@ -897,3 +917,63 @@ async def test_autoresolve_drains_read_and_stale(client, db_pool):
     assert state[read_fresh][0] in (None, "open")     # fresh → never touched
 
     await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, db_pool):
+    """MSG-1/MSG-2: `from_principal` and `authority` are stamped by the SERVER
+    from the authenticated token, never from client input. A worker cannot forge
+    the owner badge even by self-labeling `from_="rob"`; only the owner's own
+    (is_admin) token stamps authority=true.
+    """
+    await _cleanup_inbox(db_pool)
+    # type="human" does not auto-generate a token — pass one explicitly.
+    _, owner_tok = await ps.create_principal(
+        name="ib-authtest-owner", type="human", is_admin=True,
+        token="owner-testtok-fixture",
+        write_namespaces=["claude-code"], read_namespaces=["claude-code"],
+    )
+    _, worker_tok = await ps.create_principal(
+        name="ib-authtest-worker", type="agent", is_admin=False,
+        token="worker-testtok-fixture",
+        write_namespaces=["claude-code"], read_namespaces=["claude-code"],
+    )
+    try:
+        # Owner: self-labels from_ freely; the server stamps a verified owner.
+        r = await enforced_client.post("/memory/send", json={
+            "to": "authprobe", "body": "owner directive", "from_": "rob",
+        }, headers={"Authorization": f"Bearer {owner_tok}"})
+        assert r.status_code == 200, r.text
+
+        # Worker forgery: claims from_="rob" AND tries to set authority in the
+        # body (not a real request field) — the server must expose the true
+        # sender and refuse the owner badge.
+        r = await enforced_client.post("/memory/send", json={
+            "to": "authprobe", "body": "forgery", "from_": "rob",
+            "authority": True,  # inert: not a settable field
+        }, headers={"Authorization": f"Bearer {worker_tok}"})
+        assert r.status_code == 200, r.text
+
+        r = await enforced_client.post("/memory/inbox", json={
+            "listen_set": ["authprobe"], "unread_only": False, "limit": 20,
+        }, headers={"Authorization": f"Bearer {owner_tok}"})
+        assert r.status_code == 200
+        by_body = {m["body"]: m for m in r.json()["messages"]}
+
+        owner_msg = by_body["owner directive"]
+        assert owner_msg["authority"] is True
+        assert owner_msg["from_principal"] == "ib-authtest-owner"
+        assert owner_msg["from_"] == "rob"      # self-asserted label preserved
+
+        forge = by_body["forgery"]
+        assert forge["authority"] is False                      # forgery refused
+        assert forge["from_principal"] == "ib-authtest-worker"  # true sender exposed
+        assert forge["from_"] == "rob"          # they may CLAIM a label, but the
+        # verified badge and true principal give them away.
+    finally:
+        await _cleanup_inbox(db_pool)
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM principals WHERE name = ANY($1::text[])",
+                ["ib-authtest-owner", "ib-authtest-worker"],
+            )

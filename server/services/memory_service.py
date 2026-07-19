@@ -332,6 +332,8 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         id=row["key"],
         to=row["user_id"],
         from_=md.get("from"),
+        from_principal=md.get("from_principal"),
+        authority=bool(md.get("authority", False)),
         subject=md.get("subject", ""),
         body=row["value"],
         thread_id=md.get("thread_id"),
@@ -355,6 +357,8 @@ async def inbox_send(
     from_: str | None = None,
     thread_id: str | None = None,
     supersedes: str | None = None,
+    from_principal: str | None = None,
+    authority: bool = False,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -369,6 +373,13 @@ async def inbox_send(
     metadata = {
         "kind": "inbox",
         "from": from_,
+        # Server-derived provenance (never client-settable): the authenticated
+        # principal that actually sent this, and whether it is an owner. `from`
+        # above is the self-asserted label; these are the verified truth the
+        # render layer distinguishes (MSG-1/MSG-2). A worker holding the shared
+        # project token cannot forge `authority` — only an owner principal can.
+        "from_principal": from_principal,
+        "authority": bool(authority),
         "subject": subject,
         "thread_id": thread_id,
         "read_by": [],

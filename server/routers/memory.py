@@ -188,7 +188,8 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
 @router.post("/send", response_model=InboxSendResponse)
 async def send_inbox(req: InboxSendRequest, request: Request):
     """Send an inbox message addressed to a project or machine."""
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    principal = get_current_principal(request)
+    check_namespace_access(principal, INBOX_NAMESPACE, "write")
     try:
         to, corrected_from = autocorrect_address(req.to)
     except ValueError as e:
@@ -201,6 +202,11 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             from_=req.from_,
             thread_id=req.thread_id,
             supersedes=req.supersedes,
+            # Server-derived, unspoofable: taken from the authenticated principal
+            # (request.state), NOT the request body — a client cannot assert
+            # someone else's identity or forge owner authority (MSG-1/MSG-2).
+            from_principal=(principal or {}).get("name"),
+            authority=bool(principal and principal.get("is_admin")),
         )
         guidance = send_guidance(to=to, reader_identity=req.from_)
         if corrected_from:

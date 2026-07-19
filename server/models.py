@@ -323,6 +323,11 @@ class InboxMessage(BaseModel):
     id: str  # memory key, e.g. "inbox/<uuid>"
     to: str
     from_: str | None = None
+    # Server-verified provenance (MSG-1/MSG-2): `from_` above is the sender's
+    # self-asserted label; these two are derived from the authenticated token
+    # and cannot be spoofed by the client.
+    from_principal: str | None = None  # which principal actually sent it (None = unverified/legacy/anon)
+    authority: bool = False            # the sending principal is an owner (is_admin)
     subject: str
     body: str
     thread_id: str | None = None
