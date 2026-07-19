@@ -294,6 +294,12 @@ class NamespacesResponse(BaseModel):
 
 # --- Inbox models (inter-session messaging on top of the memories table) ---
 
+# Message intent — drives wake policy (action/authority-directive wake a dormant
+# agent; fyi does not) and the drive vocabulary (proceed/escalate). None = legacy,
+# treated as waking for back-compat with pre-intent senders.
+INBOX_INTENTS = {"fyi", "action", "proceed", "escalate", "authority-directive"}
+
+
 class InboxSendRequest(BaseModel):
     to: str
     body: str
@@ -301,8 +307,18 @@ class InboxSendRequest(BaseModel):
     from_: str | None = None  # sender identity — MCP bridge stamps this
     thread_id: str | None = None
     supersedes: str | None = None  # id of a prior message this one replaces
+    intent: str | None = None  # fyi | action | proceed | escalate | authority-directive
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("intent")
+    @classmethod
+    def intent_valid(cls, v):
+        if v is not None and v not in INBOX_INTENTS:
+            raise ValueError(
+                f"invalid intent '{v}'; allowed: {sorted(INBOX_INTENTS)} or omit"
+            )
+        return v
 
     @field_validator("to", mode="before")
     @classmethod
@@ -328,6 +344,7 @@ class InboxMessage(BaseModel):
     # and cannot be spoofed by the client.
     from_principal: str | None = None  # which principal actually sent it (None = unverified/legacy/anon)
     authority: bool = False            # the sending principal is an owner (is_admin)
+    intent: str | None = None          # fyi | action | proceed | escalate | authority-directive
     subject: str
     body: str
     thread_id: str | None = None

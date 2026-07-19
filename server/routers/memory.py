@@ -202,6 +202,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             from_=req.from_,
             thread_id=req.thread_id,
             supersedes=req.supersedes,
+            intent=req.intent,
             # Server-derived, unspoofable: taken from the authenticated principal
             # (request.state), NOT the request body — a client cannot assert
             # someone else's identity or forge owner authority (MSG-1/MSG-2).

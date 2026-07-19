@@ -977,3 +977,36 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
                 "DELETE FROM principals WHERE name = ANY($1::text[])",
                 ["ib-authtest-owner", "ib-authtest-worker"],
             )
+
+
+@pytest.mark.asyncio
+async def test_inbox_intent_stored_and_validated(client, db_pool):
+    """MSG-3: `intent` is a client field — stored and returned as-is; an unknown
+    intent is rejected (422); omitting it yields None (back-compat waking default).
+    """
+    await _cleanup_inbox(db_pool)
+    # valid intent → stored
+    r = await client.post("/memory/send", json={
+        "to": "intentprobe", "body": "proceed now", "intent": "proceed",
+    })
+    assert r.status_code == 200, r.text
+    # omitted intent → None (legacy/back-compat)
+    r = await client.post("/memory/send", json={
+        "to": "intentprobe", "body": "no intent",
+    })
+    assert r.status_code == 200, r.text
+    # unknown intent → 422, never stored
+    r = await client.post("/memory/send", json={
+        "to": "intentprobe", "body": "bad", "intent": "shout",
+    })
+    assert r.status_code == 422, r.text
+
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["intentprobe"], "unread_only": False, "limit": 20,
+    })
+    assert r.status_code == 200
+    by_body = {m["body"]: m for m in r.json()["messages"]}
+    assert by_body["proceed now"]["intent"] == "proceed"
+    assert by_body["no intent"]["intent"] is None
+    assert "bad" not in by_body  # rejected before storage
+    await _cleanup_inbox(db_pool)

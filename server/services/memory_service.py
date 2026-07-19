@@ -334,6 +334,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         from_=md.get("from"),
         from_principal=md.get("from_principal"),
         authority=bool(md.get("authority", False)),
+        intent=md.get("intent"),
         subject=md.get("subject", ""),
         body=row["value"],
         thread_id=md.get("thread_id"),
@@ -359,6 +360,7 @@ async def inbox_send(
     supersedes: str | None = None,
     from_principal: str | None = None,
     authority: bool = False,
+    intent: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -380,6 +382,7 @@ async def inbox_send(
         # project token cannot forge `authority` — only an owner principal can.
         "from_principal": from_principal,
         "authority": bool(authority),
+        "intent": intent,
         "subject": subject,
         "thread_id": thread_id,
         "read_by": [],
