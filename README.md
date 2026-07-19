@@ -4,6 +4,8 @@ Semantic memory service for AI agents. Store, search, and recall memories using 
 
 Engram gives any AI agent persistent memory via a simple HTTP API. Originally built for Home Assistant voice assistants, it now serves Claude Code, custom agents, and any system that can make HTTP requests.
 
+> **Storage is PostgreSQL only** (pgvector + pg_trgm, via asyncpg) — **never SQLite.** Engram's archived ancestor `ha-semantic-memory` used SQLite; that project is deprecated and unrelated to engram's storage.
+
 ## How It Works
 
 1. **Store** a memory with a key, value, and optional tags

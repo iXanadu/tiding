@@ -155,3 +155,39 @@ async def test_store_with_project(mock_api, client):
     )
     assert captured["project"] == "engram"
     assert captured["user_id"] == "ixanadu"
+
+
+def test_provenance_uses_anchor_when_project_dir_omitted(monkeypatch):
+    # D-1: an omitted project_dir must report the session's real project (via
+    # the startup-cwd anchor), not collapse to admin/empty.
+    import engram_mcp.client as client_mod
+    import engram_mcp.identity as identity
+    from engram_mcp.client import MemoryClient
+
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/projects/ProjBeta")
+    monkeypatch.setattr(
+        client_mod,
+        "derive_project_name",
+        lambda d: "projbeta" if d == "/Users/ixanadu/projects/ProjBeta" else "admin",
+    )
+    c = MemoryClient("http://localhost:8920")
+    headers = c._provenance_headers(None)
+    assert headers["X-Engram-Project"] == "projbeta"
+    assert headers["X-Engram-Cwd"] == "/Users/ixanadu/projects/ProjBeta"
+
+
+def test_provenance_explicit_project_dir_still_wins(monkeypatch):
+    import engram_mcp.client as client_mod
+    import engram_mcp.identity as identity
+    from engram_mcp.client import MemoryClient
+
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/projects/ProjBeta")
+    monkeypatch.setattr(
+        client_mod,
+        "derive_project_name",
+        lambda d: (d or "").rsplit("/", 1)[-1].lower() or "admin",
+    )
+    c = MemoryClient("http://localhost:8920")
+    headers = c._provenance_headers("/Users/ixanadu/projects/engram")
+    assert headers["X-Engram-Project"] == "engram"
+    assert headers["X-Engram-Cwd"] == "/Users/ixanadu/projects/engram"

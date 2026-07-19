@@ -3,7 +3,7 @@ import socket
 
 import httpx
 
-from engram_mcp.identity import derive_project_name
+from engram_mcp.identity import derive_project_name, remember_project_dir
 
 
 class MemoryClient:
@@ -27,10 +27,17 @@ class MemoryClient:
 
         Server stores these into ``metadata.project`` / ``metadata.cwd`` on
         memory rows so the dashboard can filter by origin.
+
+        Resolve through the session anchor (``remember_project_dir``) so an
+        omitted ``project_dir`` reports the session's REAL project — via the
+        startup-cwd anchor / ``.engram.cfg`` — instead of collapsing to
+        ``admin`` / empty. Identity resolution already ran (and set the pin)
+        before this call, so this only reads the effective directory.
         """
+        effective = remember_project_dir(project_dir)
         return {
-            "X-Engram-Project": derive_project_name(project_dir),
-            "X-Engram-Cwd": (project_dir or "").strip(),
+            "X-Engram-Project": derive_project_name(effective),
+            "X-Engram-Cwd": (effective or "").strip(),
         }
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
