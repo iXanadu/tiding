@@ -42,7 +42,41 @@ The rules that make it safe come down to one sentence:
    *your* seat map: role (`-server`/`-app`), provider (`-grok`/`-codex`),
    or provider+ordinal (`-claude-2`).
 
-## Wiring a Grok / Codex agent (checklist)
+## The wiring playbook (per box, per provider)
+
+One command does the exacting parts — principal, identity file, verification —
+and prints the exact registration snippet for your provider's config:
+
+```bash
+# new provider, mint a principal (admin token from your secret store):
+scripts/wire-provider.sh gpt --kind http --admin-token "$ADMIN_TOKEN"
+# existing token:
+scripts/wire-provider.sh grok --kind grok --token engram_xxx
+```
+
+The shared plumbing (the bridge package in its venv) is installed once by
+`scripts/install.sh`; every provider on the box reuses it. Per provider, the
+whole wiring is: **one identity file + one selector line + one paste** —
+see [design/provider-credentials.md](design/provider-credentials.md) for the
+resolution rules.
+
+**Project-side, the reference layout is provider-neutral** (a live example
+pattern):
+
+```
+myproject/
+  .engram.cfg            # project = myproject   ← the ONLY engram line a repo carries
+  AGENTS.md              # provider-neutral project instructions
+  CLAUDE.md -> AGENTS.md # symlink so Claude Code reads the same file
+  skills/                # provider-neutral startup/wrapup/init workflows
+  BACKLOG.md             # lean open-items ledger (see backlog-standard.md)
+```
+
+Globally the same trick applies: keep one canonical agent-rules file (e.g.
+`~/.agents/AGENTS.md`) and symlink/import it from each provider's global
+config — provider files carry only provider-specific mechanics.
+
+## Wiring a Grok / Codex agent (manual checklist)
 
 ```bash
 # 1. Mint the principal (as an admin) — mirror your main agent's grants
