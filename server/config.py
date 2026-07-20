@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     embed_model: str = "nomic-ai/nomic-embed-text-v1.5"
 
     # Server
-    host: str = "0.0.0.0"
+    # SEC-1 secure-by-default: bind loopback unless the operator deliberately
+    # opens up. Non-loopback WITHOUT auth refuses to boot unless
+    # allow_insecure_bind=true (trusted-network opt-out, e.g. Tailscale).
+    host: str = "127.0.0.1"
+    allow_insecure_bind: bool = False
     port: int = 8920
     log_level: str = "info"
 

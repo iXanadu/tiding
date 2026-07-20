@@ -59,9 +59,37 @@ async def _bootstrap_admin():
         logger.info("_bootstrap admin already exists (idempotent).")
 
 
+def check_bind_security(host: str, require_auth: bool, api_token: str,
+                        allow_insecure_bind: bool) -> None:
+    """SEC-1 secure-by-default gate. Refuse to serve a network-reachable,
+    unauthenticated memory store unless the operator explicitly opts out.
+
+    Loopback binds are always fine (tokenless local use is the personal
+    default). A non-loopback bind requires EITHER auth configured
+    (require_auth or an api_token) OR the explicit trusted-network opt-out
+    ENGRAM_ALLOW_INSECURE_BIND=true (e.g. a Tailscale-only LAN).
+    """
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    if loopback or require_auth or api_token or allow_insecure_bind:
+        return
+    raise RuntimeError(
+        f"REFUSING TO START: ENGRAM_HOST={host!r} exposes an UNAUTHENTICATED "
+        "memory store beyond this machine. An open engram on a reachable "
+        "network lets anyone read and write your agents' memory.\n"
+        "Pick ONE:\n"
+        "  1. Bind loopback (default):        ENGRAM_HOST=127.0.0.1\n"
+        "  2. Turn on auth:                   ENGRAM_REQUIRE_AUTH=true (+ principal tokens)\n"
+        "     or set a shared token:          ENGRAM_API_TOKEN=<token>\n"
+        "  3. Trusted private network ONLY:   ENGRAM_ALLOW_INSECURE_BIND=true\n"
+        "     (e.g. Tailscale/WireGuard — never on a public interface)"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting engram service")
+    check_bind_security(settings.host, settings.require_auth,
+                        settings.api_token, settings.allow_insecure_bind)
     if settings.require_auth:
         logger.info("Principal-based authentication ENFORCED (require_auth=true)")
     elif settings.api_token:

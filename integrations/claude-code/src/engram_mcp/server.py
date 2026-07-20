@@ -576,7 +576,20 @@ def _format_inbox_message(m: dict) -> str:
     sender = m.get("from_") or "unknown"
     subject = m.get("subject") or "(no subject)"
     thread = f" [thread: {m['thread_id']}]" if m.get("thread_id") else ""
-    header = f"**{m['id']}**{thread}\nFrom: {sender}  →  {m['to']}\nSubject: {subject}"
+    # MSG-1 sender verification, visible in this render surface: authority +
+    # from_principal are SERVER-stamped from the sender's token — the `From:`
+    # label is self-asserted and may be freely chosen by peers.
+    if m.get("authority"):
+        badge = f" ✓ VERIFIED OWNER ({m.get('from_principal')})"
+    elif m.get("from_principal"):
+        badge = f" [peer: {m.get('from_principal')}]"
+    else:
+        badge = " [unverified]"
+    intent = f"\nIntent: {m['intent']}" if m.get("intent") else ""
+    header = (
+        f"**{m['id']}**{thread}\nFrom: {sender}{badge}  →  {m['to']}"
+        f"\nSubject: {subject}{intent}"
+    )
     body = m.get("body", "")
     return f"{header}\n\n{body}"
 

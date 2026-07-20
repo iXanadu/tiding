@@ -263,7 +263,18 @@
                             <pre x-show="!expandedLoading"
                                  class="text-xs text-slate-300 whitespace-pre-wrap break-all max-h-64 overflow-y-auto"
                                  x-text="expandedValue"></pre>
-                            <div x-show="!expandedLoading && m.metadata" class="mt-2 pt-2 border-t border-engram-border/30 flex gap-4 text-xs text-slate-500">
+                            <div x-show="!expandedLoading && m.metadata" class="mt-2 pt-2 border-t border-engram-border/30 flex gap-4 text-xs text-slate-500 items-center">
+                                <!-- MSG-1 sender-verification badge (inbox rows): the visible
+                                     distinction between verified-owner, self-labeled peer, and
+                                     unverified. authority/from_principal are SERVER-stamped. -->
+                                <span x-show="m.metadata && m.metadata.kind === 'inbox' && m.metadata.authority"
+                                      class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 font-semibold">✓ VERIFIED OWNER<span x-show="m.metadata?.from_principal"> · <span x-text="m.metadata?.from_principal"></span></span></span>
+                                <span x-show="m.metadata && m.metadata.kind === 'inbox' && !m.metadata.authority && m.metadata.from_principal"
+                                      class="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/30">peer · <span x-text="m.metadata?.from_principal"></span></span>
+                                <span x-show="m.metadata && m.metadata.kind === 'inbox' && !m.metadata.authority && !m.metadata.from_principal"
+                                      class="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-500 border border-slate-500/30">unverified sender</span>
+                                <span x-show="m.metadata && m.metadata.kind === 'inbox' && m.metadata.from">label: <span class="text-slate-400" x-text="m.metadata?.from"></span></span>
+                                <span x-show="m.metadata && m.metadata.kind === 'inbox' && m.metadata.intent">intent: <span class="text-slate-400" x-text="m.metadata?.intent"></span></span>
                                 <span x-show="m.metadata && m.metadata.principal">principal: <span class="text-slate-400" x-text="m.metadata?.principal"></span></span>
                                 <span x-show="m.metadata && m.metadata.machine">machine: <span class="text-slate-400" x-text="m.metadata?.machine"></span></span>
                             </div>
