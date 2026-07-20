@@ -1010,3 +1010,147 @@ async def test_inbox_intent_stored_and_validated(client, db_pool):
     assert by_body["no intent"]["intent"] is None
     assert "bad" not in by_body  # rejected before storage
     await _cleanup_inbox(db_pool)
+
+
+# --- Presence / liveness roster (MSG-4) ----------------------------------
+
+async def _cleanup_presence(db_pool):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE namespace='claude-code' AND scope='presence'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_presence_heartbeat_and_roster(client, db_pool):
+    """MSG-4: heartbeats upsert one row per identity; the roster answers
+    'who is on this project, in what state' with staleness annotation."""
+    await _cleanup_presence(db_pool)
+
+    # Two agents on one project, one on another
+    for identity, project, provider, state in [
+        ("foo", "foo", "claude", "running"),
+        ("foo-grok", "foo", "grok", "awaiting-input"),
+        ("bar", "bar", "claude", "running"),
+    ]:
+        r = await client.post("/memory/presence", json={
+            "identity": identity, "project": project,
+            "provider": provider, "state": state,
+            "channels": ["#courseware"] if project == "foo" else [],
+        })
+        assert r.status_code == 200, r.text
+
+    # Project roster: only foo's two agents
+    r = await client.post("/memory/roster", json={"project": "foo"})
+    assert r.status_code == 200
+    entries = r.json()["entries"]
+    assert {e["identity"] for e in entries} == {"foo", "foo-grok"}
+    grok = next(e for e in entries if e["identity"] == "foo-grok")
+    assert grok["provider"] == "grok"
+    assert grok["state"] == "awaiting-input"
+    assert grok["is_stale"] is False
+    assert grok["age_seconds"] < 60
+
+    # Channel roster crosses projects (both foo agents joined #courseware)
+    r = await client.post("/memory/roster", json={"channel": "#courseware"})
+    assert {e["identity"] for e in r.json()["entries"]} == {"foo", "foo-grok"}
+
+    # Whole-box roster sees all three
+    r = await client.post("/memory/roster", json={})
+    assert {e["identity"] for e in r.json()["entries"]} == {"foo", "foo-grok", "bar"}
+
+    # Heartbeat is an UPSERT: state transition, still one row
+    r = await client.post("/memory/presence", json={
+        "identity": "foo-grok", "project": "foo", "provider": "grok",
+        "state": "done",
+    })
+    assert r.status_code == 200
+    # done is hidden by default...
+    r = await client.post("/memory/roster", json={"project": "foo"})
+    assert {e["identity"] for e in r.json()["entries"]} == {"foo"}
+    # ...but visible with include_done
+    r = await client.post("/memory/roster", json={"project": "foo", "include_done": True})
+    assert {e["identity"] for e in r.json()["entries"]} == {"foo", "foo-grok"}
+
+    # Invalid state → 422
+    r = await client.post("/memory/presence", json={
+        "identity": "x", "project": "x", "state": "zombie",
+    })
+    assert r.status_code == 422
+
+    # Staleness: backdate foo's heartbeat past the threshold
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET last_used_at = NOW() - INTERVAL '11 minutes' "
+            "WHERE scope='presence' AND key='presence/foo'"
+        )
+    r = await client.post("/memory/roster", json={"project": "foo"})
+    foo = next(e for e in r.json()["entries"] if e["identity"] == "foo")
+    assert foo["is_stale"] is True
+
+    await _cleanup_presence(db_pool)
+
+
+# --- Broadcast: #channels + multi-recipient fan-out (MSG-5) ---------------
+
+@pytest.mark.asyncio
+async def test_channel_send_and_subscribe(client, db_pool):
+    """MSG-5b: '#channel' is a valid address; agents from DIFFERENT projects
+    that include the channel in their listen_set all receive one message."""
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": "#courseware", "body": "coalition broadcast", "from_": "rob",
+        "intent": "authority-directive",
+    })
+    assert r.status_code == 200, r.text
+
+    # Agents from three different projects, all subscribed to the channel
+    for reader, home in [("projalpha@m", "projalpha"),
+                         ("projgamma@m", "projgamma"),
+                         ("projbeta@m", "projbeta")]:
+        resp = await client.post("/memory/inbox", json={
+            "listen_set": [home, "#courseware"],
+            "reader_identity": reader,
+            "unread_only": True,
+        })
+        msgs = resp.json()["messages"]
+        assert len(msgs) == 1, f"{reader} missed the channel broadcast"
+        assert msgs[0]["to"] == "#courseware"
+        assert msgs[0]["intent"] == "authority-directive"
+
+    # An agent NOT subscribed does not receive it
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["unrelated"],
+        "reader_identity": "unrelated@m",
+        "unread_only": True,
+    })
+    assert resp.json()["messages"] == []
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_multi_recipient_fanout(client, db_pool):
+    """MSG-5c: 'to' accepts a list — each recipient gets their own message id."""
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": ["alpha", "beta", "alpha"],   # dupe deduped
+        "body": "ad-hoc fanout",
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["ids"] is not None and len(data["ids"]) == 2
+    assert data["id"] == data["ids"][0]
+
+    for who in ("alpha", "beta"):
+        resp = await client.post("/memory/inbox", json={
+            "listen_set": [who], "reader_identity": f"{who}@m",
+            "unread_only": True,
+        })
+        msgs = resp.json()["messages"]
+        assert len(msgs) == 1
+        assert msgs[0]["body"] == "ad-hoc fanout"
+
+    # Single-string 'to' still returns ids=None (back-compat shape)
+    r = await client.post("/memory/send", json={"to": "alpha", "body": "solo"})
+    assert r.json()["ids"] is None
+    await _cleanup_inbox(db_pool)

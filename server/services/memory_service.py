@@ -506,6 +506,130 @@ async def inbox_list(
     return [_row_to_inbox_message(dict(r)) for r in rows]
 
 
+# --- Presence / liveness roster (MSG-4) ----------------------------------
+#
+# Presence rows reuse the memories table exactly as inbox does — zero schema
+# migration:
+#   namespace = 'claude-code'          (PRESENCE_NAMESPACE)
+#   scope     = 'presence'
+#   user_id   = <bare project name>    — the roster grouping key
+#   key       = 'presence/<identity>'  — one row per live identity (upserted)
+#   metadata  = {provider, state, overlays, channels, last_seen}
+#
+# State is SELF-REPORTED by the harness (the worker POSTs its transitions);
+# engram never scrapes. last_seen staleness is the only server-side signal:
+# a session that dies mid-run stops heartbeating and goes stale.
+
+PRESENCE_NAMESPACE = INBOX_NAMESPACE
+PRESENCE_SCOPE = "presence"
+PRESENCE_STALE_AFTER_SECONDS = 600  # 10 min without a heartbeat → stale
+
+
+async def presence_update(
+    identity: str,
+    project: str,
+    state: str,
+    provider: str | None = None,
+    overlays: list[str] | None = None,
+    channels: list[str] | None = None,
+) -> None:
+    """Upsert this identity's presence row (self-reported heartbeat).
+
+    First insert embeds a small search text (column is NOT NULL); subsequent
+    heartbeats update only value/metadata — no re-embedding on every beat.
+    """
+    identity = identity.lower()
+    project = project.lower()
+    now = datetime.now(timezone.utc)
+    metadata = {
+        "kind": "presence",
+        "provider": provider,
+        "state": state,
+        "overlays": overlays or [],
+        "channels": channels or [],
+        "last_seen": now.isoformat(),
+    }
+    value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
+    key = f"presence/{identity}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Heartbeat timestamp rides last_used_at (no updated_at column).
+        updated = await conn.execute(
+            """
+            UPDATE memories
+            SET value = $1, metadata = $2::jsonb, last_used_at = NOW()
+            WHERE namespace = $3 AND scope = $4 AND user_id = $5 AND key = $6
+            """,
+            value, json.dumps(metadata),
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
+        )
+        if updated == "UPDATE 0":
+            embedding = await embed(value)
+            await conn.execute(
+                """
+                INSERT INTO memories
+                    (namespace, key, value, scope, user_id, tags, tags_search,
+                     embedding, search_text, expires_at, metadata)
+                VALUES ($1, $2, $3, $4, $5, '', '', $6, $7, NULL, $8::jsonb)
+                ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+                    SET value = EXCLUDED.value, metadata = EXCLUDED.metadata,
+                        last_used_at = NOW()
+                """,
+                PRESENCE_NAMESPACE, key, value, PRESENCE_SCOPE, project,
+                embedding, value, json.dumps(metadata),
+            )
+
+
+async def roster_list(
+    project: str | None = None,
+    channel: str | None = None,
+    include_done: bool = False,
+) -> list[dict]:
+    """Who is on a project (or channel, or the whole box) and in what state.
+
+    Returns entry dicts sorted freshest-first. Staleness is annotated, never
+    deleted — a stale 'running' entry means the session likely died mid-run.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, value, user_id, metadata, last_used_at
+            FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND ($3::text IS NULL OR user_id = $3)
+            ORDER BY last_used_at DESC
+            """,
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE,
+            project.lower() if project else None,
+        )
+    now = datetime.now(timezone.utc)
+    entries = []
+    for r in rows:
+        md = r["metadata"] or {}
+        if isinstance(md, str):
+            md = json.loads(md)
+        state = md.get("state") or "running"
+        if state == "done" and not include_done:
+            continue
+        if channel and channel.lower() not in [c.lower() for c in md.get("channels") or []]:
+            continue
+        last_seen = r["last_used_at"] or now
+        age = (now - last_seen).total_seconds()
+        entries.append({
+            "identity": r["key"].removeprefix("presence/"),
+            "project": r["user_id"],
+            "state": state,
+            "provider": md.get("provider"),
+            "overlays": md.get("overlays") or [],
+            "channels": md.get("channels") or [],
+            "last_seen": last_seen,
+            "age_seconds": round(age, 1),
+            "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
+        })
+    return entries
+
+
 async def inbox_banner(
     listen_set: list[str],
     reader_identity: str | None,

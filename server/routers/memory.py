@@ -25,6 +25,11 @@ from server.models import (
     MemorySearchResponse,
     MemorySetRequest,
     MemorySetResponse,
+    PresenceUpdateRequest,
+    PresenceUpdateResponse,
+    RosterEntry,
+    RosterRequest,
+    RosterResponse,
 )
 from server.services.identity import autocorrect_address, validate_listen_set
 from server.services.inbox_guidance import (
@@ -47,6 +52,8 @@ from server.services.memory_service import (
     memory_get,
     memory_search,
     memory_set,
+    presence_update,
+    roster_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,40 +194,55 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
 
 @router.post("/send", response_model=InboxSendResponse)
 async def send_inbox(req: InboxSendRequest, request: Request):
-    """Send an inbox message addressed to a project or machine."""
+    """Send an inbox message to a project, machine, #channel, or a list of
+    recipients (ad-hoc fan-out: one message row per recipient)."""
     principal = get_current_principal(request)
     check_namespace_access(principal, INBOX_NAMESPACE, "write")
+    raw_targets = req.to if isinstance(req.to, list) else [req.to]
     try:
-        to, corrected_from = autocorrect_address(req.to)
+        corrected: list[tuple[str, str | None]] = [
+            autocorrect_address(t) for t in raw_targets
+        ]
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     try:
-        msg_id = await inbox_send(
-            to=to,
-            body=req.body,
-            subject=req.subject,
-            from_=req.from_,
-            thread_id=req.thread_id,
-            supersedes=req.supersedes,
-            intent=req.intent,
-            # Server-derived, unspoofable: taken from the authenticated principal
-            # (request.state), NOT the request body — a client cannot assert
-            # someone else's identity or forge owner authority (MSG-1/MSG-2).
-            from_principal=(principal or {}).get("name"),
-            authority=bool(principal and principal.get("is_admin")),
-        )
-        guidance = send_guidance(to=to, reader_identity=req.from_)
-        if corrected_from:
+        ids: list[str] = []
+        for to, _orig in corrected:
+            msg_id = await inbox_send(
+                to=to,
+                body=req.body,
+                subject=req.subject,
+                from_=req.from_,
+                thread_id=req.thread_id,
+                supersedes=req.supersedes if not ids else None,  # supersede once
+                intent=req.intent,
+                # Server-derived, unspoofable: taken from the authenticated principal
+                # (request.state), NOT the request body — a client cannot assert
+                # someone else's identity or forge owner authority (MSG-1/MSG-2).
+                from_principal=(principal or {}).get("name"),
+                authority=bool(principal and principal.get("is_admin")),
+            )
+            ids.append(msg_id)
+        first_to, first_corrected = corrected[0]
+        if len(corrected) == 1:
+            guidance = send_guidance(to=first_to, reader_identity=req.from_)
+            if first_corrected:
+                guidance = (
+                    f"⚠️  ADDRESS AUTO-CORRECTED: '{first_corrected}' → '{first_to}'\n"
+                    f"    The ':' delimiter is reserved for 'machine:' and 'topic:' prefixes.\n"
+                    f"    Use '{first_to}' (any machine) or 'name@host' (specific machine).\n"
+                    f"    Your message was delivered to '{first_to}'.\n\n"
+                ) + guidance
+        else:
             guidance = (
-                f"⚠️  ADDRESS AUTO-CORRECTED: '{corrected_from}' → '{to}'\n"
-                f"    The ':' delimiter is reserved for 'machine:' and 'topic:' prefixes.\n"
-                f"    Use '{to}' (any machine) or 'name@host' (specific machine).\n"
-                f"    Your message was delivered to '{to}'.\n\n"
-            ) + guidance
+                f"Fan-out: delivered to {len(corrected)} recipients "
+                f"({', '.join(t for t, _ in corrected)}). Each got its own message id."
+            )
         return InboxSendResponse(
             status="ok",
-            id=msg_id,
-            corrected_from=corrected_from,
+            id=ids[0],
+            ids=ids if len(ids) > 1 else None,
+            corrected_from=first_corrected,
             guidance=guidance,
         )
     except Exception as e:
@@ -320,4 +342,58 @@ async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Requ
         raise
     except Exception as e:
         logger.exception("inbox_resolve failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Presence / liveness roster (MSG-4) ----------------------------------
+
+@router.post("/presence", response_model=PresenceUpdateResponse)
+async def update_presence(req: PresenceUpdateRequest, request: Request):
+    """Self-reported liveness heartbeat: the harness POSTs its own state
+    transitions (running → awaiting-input → done). Engram never scrapes."""
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    try:
+        await presence_update(
+            identity=req.identity,
+            project=req.project,
+            state=req.state,
+            provider=req.provider,
+            overlays=req.overlays,
+            channels=req.channels,
+        )
+        return PresenceUpdateResponse(status="ok", identity=req.identity, state=req.state)
+    except Exception as e:
+        logger.exception("presence_update failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/roster", response_model=RosterResponse)
+async def get_roster(req: RosterRequest, request: Request):
+    """Who is live on a project (or #channel, or the whole box), in what state.
+
+    Solves address discoverability: an agent asks the roster instead of
+    guessing addresses, and can see whether a peer is actually staffed
+    (state + is_stale) before messaging it."""
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    try:
+        entries = await roster_list(
+            project=req.project,
+            channel=req.channel,
+            include_done=req.include_done,
+        )
+        live = sum(1 for e in entries if not e["is_stale"])
+        scope_desc = req.channel or req.project or "all projects"
+        return RosterResponse(
+            status="ok",
+            entries=[RosterEntry(**e) for e in entries],
+            guidance=(
+                f"{len(entries)} known on {scope_desc} ({live} fresh, "
+                f"{len(entries) - live} stale). Address an entry by its "
+                f"'identity' (DM) or its 'project' (group). A stale entry's "
+                f"session has stopped heartbeating — it may be dead; its state "
+                f"is last-known, not current."
+            ),
+        )
+    except Exception as e:
+        logger.exception("roster_list failed")
         raise HTTPException(status_code=500, detail=str(e))

@@ -301,7 +301,9 @@ INBOX_INTENTS = {"fyi", "action", "proceed", "escalate", "authority-directive"}
 
 
 class InboxSendRequest(BaseModel):
-    to: str
+    # A single address, or a list for ad-hoc multi-recipient fan-out
+    # (each recipient gets their own message row / id).
+    to: str | list[str]
     body: str
     subject: str = ""
     from_: str | None = None  # sender identity — MCP bridge stamps this
@@ -323,9 +325,22 @@ class InboxSendRequest(BaseModel):
     @field_validator("to", mode="before")
     @classmethod
     def to_not_empty(cls, v):
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("'to' must be a non-empty string")
-        return v.strip()
+        if isinstance(v, str):
+            if not v.strip():
+                raise ValueError("'to' must be a non-empty string")
+            return v.strip()
+        if isinstance(v, list):
+            if not v or not all(isinstance(a, str) and a.strip() for a in v):
+                raise ValueError("'to' list must be non-empty strings")
+            # dedupe, preserve order
+            seen, out = set(), []
+            for a in v:
+                a = a.strip()
+                if a.lower() not in seen:
+                    seen.add(a.lower())
+                    out.append(a)
+            return out
+        raise ValueError("'to' must be a string or list of strings")
 
     @field_validator("body", mode="before")
     @classmethod
@@ -366,7 +381,8 @@ class InboxMessage(BaseModel):
 
 class InboxSendResponse(BaseModel):
     status: str
-    id: str
+    id: str                       # first (or only) message id — back-compat
+    ids: list[str] | None = None  # all ids when 'to' was a list (fan-out)
     corrected_from: str | None = None
     guidance: str | None = None
 
@@ -384,6 +400,67 @@ class InboxListResponse(BaseModel):
     status: str
     messages: list[InboxMessage]
     guidance: str | None = None
+
+
+# --- Presence / liveness roster (MSG-4) ---------------------------------
+
+PRESENCE_STATES = {"running", "awaiting-input", "done"}
+
+
+class PresenceUpdateRequest(BaseModel):
+    """Self-reported liveness heartbeat. The harness POSTs its own state
+    transitions (running → awaiting-input → done); engram never scrapes or
+    infers state — last_seen is the only server-side fallback signal."""
+    identity: str            # inbox identity, e.g. "projdelta-grok"
+    project: str             # bare project name (the roster grouping key)
+    state: str               # running | awaiting-input | done
+    provider: str | None = None      # claude | grok | codex | ...
+    overlays: list[str] = []         # e.g. ["projdelta/builders"]
+    channels: list[str] = []         # e.g. ["#courseware"]
+
+    @field_validator("identity", "project", mode="before")
+    @classmethod
+    def presence_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("must be a non-empty string")
+        return v.strip().lower()
+
+    @field_validator("state")
+    @classmethod
+    def state_valid(cls, v):
+        if v not in PRESENCE_STATES:
+            raise ValueError(f"invalid state '{v}'; allowed: {sorted(PRESENCE_STATES)}")
+        return v
+
+
+class RosterEntry(BaseModel):
+    identity: str
+    project: str
+    state: str
+    provider: str | None = None
+    overlays: list[str] = []
+    channels: list[str] = []
+    last_seen: datetime
+    age_seconds: float
+    is_stale: bool  # last_seen older than the staleness threshold
+
+
+class RosterRequest(BaseModel):
+    project: str | None = None   # None = whole-box roster
+    channel: str | None = None   # filter to members of a #channel
+    include_done: bool = False   # done sessions hidden by default
+
+
+class RosterResponse(BaseModel):
+    status: str
+    entries: list[RosterEntry]
+    guidance: str | None = None
+
+
+class PresenceUpdateResponse(BaseModel):
+    status: str
+    identity: str
+    state: str
 
 
 class InboxAckRequest(BaseModel):

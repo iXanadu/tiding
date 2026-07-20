@@ -16,7 +16,12 @@ single-principal infrastructure.
 import re
 
 RESERVED_PREFIXES = ("machine:", "topic:")
-ADDRESS_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-:@]{0,127}$")
+# Leading '#' marks a cross-project coalition CHANNEL (e.g. '#courseware'):
+# a named address distinct from any project, that agents from different
+# projects subscribe to at launch. The sigil keeps channels from colliding
+# with project names in the flat address space (mirrors the reserved
+# 'machine:' prefix). See docs/design/messaging-architecture.md §3.3.
+ADDRESS_RE = re.compile(r"^#?[a-zA-Z0-9][a-zA-Z0-9_.\-:@]{0,127}$")
 
 
 def validate_address(address: str) -> str:
@@ -24,7 +29,7 @@ def validate_address(address: str) -> str:
 
     Addresses must be non-empty, <=128 chars, and match ``ADDRESS_RE``.
     Reserved prefixes (``machine:``, ``topic:``) are allowed — senders may
-    target them intentionally.
+    target them intentionally. A leading ``#`` marks a coalition channel.
     """
     if not isinstance(address, str) or not address.strip():
         raise ValueError("address must be a non-empty string")
