@@ -1,10 +1,57 @@
 # Engram
 
-Semantic memory service for AI agents. Store, search, and recall memories using hybrid vector + trigram search powered by PostgreSQL (pgvector) and in-process sentence-transformers embeddings.
+**A shared brain and message bus for your AI agents — across projects, machines, and providers.**
 
-Engram gives any AI agent persistent memory via a simple HTTP API. Originally built for Home Assistant voice assistants, it now serves Claude Code, custom agents, and any system that can make HTTP requests.
+Engram gives every agent you run — Claude Code, Grok, Codex, a Home Assistant
+voice pipeline, anything that can make an HTTP request — one persistent memory
+and one inbox. Agents remember across sessions, hand work to each other,
+negotiate contracts in threads, and **wake each other up**: a message to a
+dormant session resurrects it and it acts, no human relaying. You, the owner,
+command the whole team with verified authority from a single message.
+
+Three things it does that a memory API alone doesn't:
+
+- **Agents coordinate as peers.** Three project agents (course authoring →
+  media generation → learner delivery) ran ~60 days as independent "senior
+  engineers," growing their APIs through threaded negotiation over engram —
+  the human involved only at real approval gates.
+- **Nobody stalls.** A worker idle at a task boundary is woken by one inbox
+  message and continues — measured live at ~26s from an independent sender's
+  `proceed` to the worker acting, zero keystrokes. An always-awake driver
+  agent plus the presence roster ("who's on this project, in what state")
+  turns multi-hour unattended runs from hope into mechanism.
+- **The owner's voice is unforgeable.** Sender identity and owner authority
+  are stamped server-side from the authenticated token. One
+  `authority-directive` to a project group or cross-project `#channel` lands
+  on every agent as **✓ VERIFIED OWNER** — and no agent token can fake it.
+
+**vs. the field:** memory layers (mem0, Letta, MCP memory servers) give one
+agent a better memory. Engram's primitive is different: durable, addressable,
+*waking* mail on top of shared memory — cross-provider coordination as
+infrastructure. Single-operator by design: you run your own instance; every
+adopter runs theirs.
+
+**60-second aha** (full setup in [Quick Start](#quick-start)):
+
+```bash
+# one identity sends...
+curl -s -H "Content-Type: application/json" \
+  -d '{"to":"myproject","from_":"me@laptop","subject":"hi","body":"first mail"}' \
+  http://localhost:8920/memory/send
+# ...another receives (and if it were a dormant session, this would wake it)
+curl -s -H "Content-Type: application/json" \
+  -d '{"listen_set":["myproject"],"reader_identity":"myproject@laptop"}' \
+  http://localhost:8920/memory/inbox
+```
+
+**Docs:** [Getting started + security posture](docs/getting-started.md) ·
+[Messaging](docs/messaging.md) · [Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md) ·
+[Architecture](docs/design/messaging-architecture.md)
 
 > **Storage is PostgreSQL only** (pgvector + pg_trgm, via asyncpg) — **never SQLite.** Engram's archived ancestor `ha-semantic-memory` used SQLite; that project is deprecated and unrelated to engram's storage.
+>
+> **Secure by default:** binds `127.0.0.1`; a network-reachable bind without
+> auth refuses to start. See [security posture](docs/getting-started.md#️-security-posture--read-this-before-exposing-anything).
 
 ## How It Works
 
@@ -103,7 +150,7 @@ cp .env.example .env
 #   ENGRAM_DB_PASSWORD=
 
 # Run
-uvicorn server.main:app --host 0.0.0.0 --port 8920
+uvicorn server.main:app --port 8920   # loopback by default; see security posture before exposing
 ```
 
 The embedding model (nomic-ai/nomic-embed-text-v1.5, ~270MB) is downloaded automatically on first start and cached in `~/.cache/huggingface/`. No external services required — embeddings run in-process using MPS (Apple Silicon GPU) or CPU.
@@ -115,7 +162,7 @@ If you prefer Docker for PostgreSQL:
 ```bash
 docker compose up -d
 # Then run the server natively
-uvicorn server.main:app --host 0.0.0.0 --port 8920
+uvicorn server.main:app --port 8920   # loopback by default; see security posture before exposing
 ```
 
 ## API Reference
@@ -322,7 +369,8 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_DB_USER` | `engram` | Database user |
 | `ENGRAM_DB_PASSWORD` | `engram` | Database password |
 | `ENGRAM_EMBED_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace embedding model |
-| `ENGRAM_HOST` | `0.0.0.0` | Server bind address |
+| `ENGRAM_HOST` | `127.0.0.1` | Server bind address. Non-loopback **without auth refuses to start** (secure by default) |
+| `ENGRAM_ALLOW_INSECURE_BIND` | `false` | Explicit opt-out: allow a tokenless non-loopback bind on a **trusted private network only** (Tailscale/WireGuard) |
 | `ENGRAM_PORT` | `8920` | Server port |
 | `ENGRAM_LOG_LEVEL` | `info` | Log level |
 | `ENGRAM_API_TOKEN` | _(empty)_ | Legacy Bearer token (empty = no auth) |
