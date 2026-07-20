@@ -424,6 +424,32 @@ class InboxListResponse(BaseModel):
     guidance: str | None = None
 
 
+# --- Inbox long-poll wait (any-harness wake primitive) --------------------
+
+class InboxWaitRequest(BaseModel):
+    """Block until new mail arrives (or timeout). Lets ANY harness — anything
+    that can POST — implement wake-on-message without engram's watcher binary."""
+    listen_set: list[str]
+    reader_identity: str | None = None
+    timeout_seconds: float = 30.0   # capped server-side
+    since: datetime | None = None   # only mail newer than this; default = request arrival
+    include_fyi: bool = False       # fyi is informational: excluded from wakes by default
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def timeout_bounds(cls, v):
+        if not (0 <= v <= 300):
+            raise ValueError("timeout_seconds must be between 0 and 300")
+        return v
+
+
+class InboxWaitResponse(BaseModel):
+    status: str                 # "ok" (messages) | "timeout" (none arrived)
+    messages: list["InboxMessage"]
+    waited_seconds: float
+    guidance: str | None = None
+
+
 # --- Presence / liveness roster (MSG-4) ---------------------------------
 
 PRESENCE_STATES = {"running", "awaiting-input", "done"}

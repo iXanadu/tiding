@@ -1154,3 +1154,50 @@ async def test_multi_recipient_fanout(client, db_pool):
     r = await client.post("/memory/send", json={"to": "alpha", "body": "solo"})
     assert r.json()["ids"] is None
     await _cleanup_inbox(db_pool)
+
+
+# --- Long-poll wait: the any-harness wake primitive ------------------------
+
+@pytest.mark.asyncio
+async def test_inbox_wait_returns_new_mail_and_filters(client, db_pool):
+    """/memory/inbox/wait returns mail newer than `since`, excludes fyi and
+    self-echo, and times out cleanly when nothing arrives."""
+    await _cleanup_inbox(db_pool)
+    from datetime import datetime, timezone, timedelta
+    cursor = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+
+    # seed: one waking message, one fyi, one self-echo — all newer than cursor
+    for body, from_, intent in [
+        ("wake me", "peer@elsewhere", "action"),
+        ("just fyi", "peer@elsewhere", "fyi"),
+        ("own echo", "waittest@m", None),
+    ]:
+        payload = {"to": "waittest", "body": body, "from_": from_}
+        if intent:
+            payload["intent"] = intent
+        r = await client.post("/memory/send", json=payload)
+        assert r.status_code == 200
+
+    r = await client.post("/memory/inbox/wait", json={
+        "listen_set": ["waittest"], "reader_identity": "waittest@m",
+        "timeout_seconds": 5, "since": cursor,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "ok"
+    assert [m["body"] for m in data["messages"]] == ["wake me"]  # fyi + self filtered
+
+    # timeout path: cursor in the future → nothing qualifies
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    r = await client.post("/memory/inbox/wait", json={
+        "listen_set": ["waittest"], "timeout_seconds": 0, "since": future,
+    })
+    assert r.json()["status"] == "timeout"
+    assert r.json()["messages"] == []
+
+    # bounds: absurd timeout rejected
+    r = await client.post("/memory/inbox/wait", json={
+        "listen_set": ["waittest"], "timeout_seconds": 9999,
+    })
+    assert r.status_code == 422
+    await _cleanup_inbox(db_pool)

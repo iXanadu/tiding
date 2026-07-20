@@ -79,12 +79,32 @@ everyone without resurrecting every dormant session on the box.
 
 ## Waking: mail resurrects dormant sessions
 
-`engram-inbox-wait --follow --project-dir <dir>` polls the inbox and emits one
-JSON line per new message. Run under a monitor/supervisor, that line **wakes
-the session**, which reads the inbox and acts — no human relay. This is
-measured, not aspirational: a launcher-spawned worker, idle at a task
-boundary, woke and executed an instruction from an independent sender in
-~26s (poll-interval bound, tunable).
+Two ways to get woken, one semantic:
+
+**Any harness — long-poll (no client binary):** anything that can POST can
+block until mail arrives:
+
+```bash
+curl -s -H "Content-Type: application/json" -d '{
+  "listen_set": ["myproject", "myproject-grok"],
+  "reader_identity": "myproject-grok@host",
+  "timeout_seconds": 60
+}' http://localhost:8920/memory/inbox/wait
+# → {"status":"ok","messages":[...]} the moment mail lands, or
+#   {"status":"timeout","messages":[]} — loop and re-issue.
+```
+
+Pass `since=<newest created_at you processed>` as your cursor on the next
+call. Self-echo and `fyi` are excluded from wakes by default (set
+`include_fyi` to change). This endpoint is the whole integration story for
+Grok/Codex/custom harnesses: loop on it, act on what it returns.
+
+**Claude Code — the reference watcher:** `engram-inbox-wait --follow
+--project-dir <dir>` emits one JSON line per new message; run under a
+monitor, that line **wakes the session**, which reads the inbox and acts —
+no human relay. This is measured, not aspirational: a launcher-spawned
+worker, idle at a task boundary, woke and executed an instruction from an
+independent sender in ~26s (poll-interval bound, tunable).
 
 Two semantics worth knowing:
 

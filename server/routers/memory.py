@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -17,6 +19,8 @@ from server.models import (
     InboxResolveRequest,
     InboxSendRequest,
     InboxSendResponse,
+    InboxWaitRequest,
+    InboxWaitResponse,
     MemoryForgetRequest,
     MemoryForgetResponse,
     MemoryGetRequest,
@@ -342,6 +346,65 @@ async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Requ
         raise
     except Exception as e:
         logger.exception("inbox_resolve failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Inbox long-poll wait: the any-harness wake primitive -----------------
+
+@router.post("/inbox/wait", response_model=InboxWaitResponse)
+async def wait_inbox(req: InboxWaitRequest, request: Request):
+    """Block until new mail arrives for the listen_set, or timeout.
+
+    Any harness that can POST gets wake-on-message with no client binary:
+    loop on this endpoint and act on what it returns. Self-echo (mail whose
+    self-asserted `from` matches the reader) and `fyi` intent are excluded
+    from wakes by default — same semantics as the reference watcher.
+    """
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    try:
+        listen_set = validate_listen_set(req.listen_set)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    started = datetime.now(timezone.utc)
+    since = req.since or started
+    own = {a.lower() for a in listen_set}
+    if req.reader_identity:
+        own.add(req.reader_identity.strip().lower())
+    poll_every = 2.0
+    try:
+        while True:
+            msgs = await inbox_list(
+                listen_set=listen_set,
+                reader_identity=req.reader_identity,
+                unread_only=True,
+                limit=50,
+                newest_first=True,
+            )
+            fresh = [
+                m for m in msgs
+                if m.created_at and m.created_at > since
+                and (m.from_ or "").strip().lower() not in own
+                and (req.include_fyi or (m.intent or "") != "fyi")
+            ]
+            waited = (datetime.now(timezone.utc) - started).total_seconds()
+            if fresh:
+                fresh.sort(key=lambda m: m.created_at)  # oldest-first reading order
+                return InboxWaitResponse(
+                    status="ok", messages=fresh, waited_seconds=round(waited, 1),
+                    guidance=(
+                        "New mail. Ack/reply/resolve what you handle, then wait "
+                        "again passing since=<newest created_at you received> as "
+                        "your cursor."
+                    ),
+                )
+            if waited >= req.timeout_seconds:
+                return InboxWaitResponse(
+                    status="timeout", messages=[], waited_seconds=round(waited, 1),
+                    guidance="No new mail. Re-issue the wait to keep listening.",
+                )
+            await asyncio.sleep(min(poll_every, max(0.05, req.timeout_seconds - waited)))
+    except Exception as e:
+        logger.exception("inbox_wait failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
