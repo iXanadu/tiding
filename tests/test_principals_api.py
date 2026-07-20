@@ -116,14 +116,14 @@ async def test_update_principal(client):
         await client.post("/admin/principals", json={"name": "api-upd-test", "type": "agent"})
         resp = await client.patch("/admin/principals/api-upd-test", json={
             "is_admin": True,
-            "read_namespaces": ["claude-code", "beast"],
-            "write_namespaces": ["claude-code"],
+            "read_namespaces": ["fleet", "beast"],
+            "write_namespaces": ["fleet"],
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["is_admin"] is True
-        assert data["read_namespaces"] == ["claude-code", "beast"]
-        assert data["write_namespaces"] == ["claude-code"]
+        assert data["read_namespaces"] == ["fleet", "beast"]
+        assert data["write_namespaces"] == ["fleet"]
     finally:
         await _cleanup_principal("api-upd-test")
 

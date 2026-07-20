@@ -2,10 +2,32 @@ from datetime import datetime
 
 from pydantic import BaseModel, field_validator
 
+from server.config import settings
+
+
+def _canon_ns(v):
+    """NS-1: canonicalize legacy namespace names at the API boundary so a
+    rename is a relabel, never a breaking change (old clients keep working)."""
+    if isinstance(v, str):
+        return settings.canonical_namespace(v)
+    if isinstance(v, list):
+        return [settings.canonical_namespace(x) if isinstance(x, str) else x for x in v]
+    return v
+
+
+class _NamespacedRequest(BaseModel):
+    """Mixin: any request model with namespace/namespaces fields gets alias
+    canonicalization automatically."""
+
+    @field_validator("namespace", "namespaces", mode="before", check_fields=False)
+    @classmethod
+    def _canonicalize_namespace(cls, v):
+        return _canon_ns(v)
+
 
 # --- Request models (match original Pyscript tool interface) ---
 
-class MemorySetRequest(BaseModel):
+class MemorySetRequest(_NamespacedRequest):
     namespace: str
     key: str
     value: str
@@ -27,7 +49,7 @@ class MemorySetRequest(BaseModel):
         return v
 
 
-class MemoryGetRequest(BaseModel):
+class MemoryGetRequest(_NamespacedRequest):
     namespace: str
     key: str
     scope: str = "user"
@@ -35,7 +57,7 @@ class MemoryGetRequest(BaseModel):
     project: str | None = None
 
 
-class MemorySearchRequest(BaseModel):
+class MemorySearchRequest(_NamespacedRequest):
     namespace: str | None = None
     namespaces: list[str] | None = None
     query: str
@@ -63,7 +85,7 @@ class MemorySearchRequest(BaseModel):
         return None
 
 
-class MemoryForgetRequest(BaseModel):
+class MemoryForgetRequest(_NamespacedRequest):
     namespace: str
     key: str
     scope: str = "user"
@@ -130,7 +152,7 @@ class MemoryListItem(BaseModel):
     owner: str | None = None
 
 
-class MemoryUpdateRequest(BaseModel):
+class MemoryUpdateRequest(_NamespacedRequest):
     namespace: str
     key: str
     scope: str
@@ -168,7 +190,7 @@ class MemoryStatsResponse(BaseModel):
     stats: list[NamespaceStats]
 
 
-class BulkDeleteRequest(BaseModel):
+class BulkDeleteRequest(_NamespacedRequest):
     namespace: str
     key_prefix: str
     scope: str | None = None

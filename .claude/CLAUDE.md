@@ -48,7 +48,7 @@ Three independent dimensions scope every memory:
 
 | Dimension | Purpose | Examples |
 |-----------|---------|----------|
-| **namespace** | Which system (required, no default) | `claude-code`, `ha`, `beast` |
+| **namespace** | Which system (required, no default) | `fleet`, `ha`, `beast` |
 | **scope** | Visibility level | `shared`, `machine`, `project`, `user` |
 | **user_id** | Identity within namespace | `global`, hostname, dirname, HA UUID |
 

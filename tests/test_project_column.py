@@ -13,7 +13,7 @@ async def test_project_scope_set_get_roundtrip(client):
     try:
         # ixanadu's wip/current in project engram
         resp = await client.post("/memory/set", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-test-key",
             "value": "ixanadu writes to engram",
             "scope": "project",
@@ -24,7 +24,7 @@ async def test_project_scope_set_get_roundtrip(client):
 
         # Get it back
         resp = await client.post("/memory/get", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-test-key",
             "scope": "project",
             "user_id": "ixanadu",
@@ -38,7 +38,7 @@ async def test_project_scope_set_get_roundtrip(client):
         assert data["memory"]["user_id"] == "ixanadu"
     finally:
         await client.post("/memory/forget", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-test-key",
             "scope": "project",
             "user_id": "ixanadu",
@@ -52,7 +52,7 @@ async def test_project_isolation_same_key_different_project(client):
     two distinct rows, no collision."""
     try:
         await client.post("/memory/set", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-iso",
             "value": "engram value",
             "scope": "project",
@@ -60,7 +60,7 @@ async def test_project_isolation_same_key_different_project(client):
             "project": "engram",
         })
         await client.post("/memory/set", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-iso",
             "value": "projalpha value",
             "scope": "project",
@@ -70,14 +70,14 @@ async def test_project_isolation_same_key_different_project(client):
 
         # Both exist independently
         r1 = await client.post("/memory/get", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-iso",
             "scope": "project",
             "user_id": "ixanadu",
             "project": "engram",
         })
         r2 = await client.post("/memory/get", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-iso",
             "scope": "project",
             "user_id": "ixanadu",
@@ -88,7 +88,7 @@ async def test_project_isolation_same_key_different_project(client):
     finally:
         for proj in ("engram", "projalpha"):
             await client.post("/memory/forget", json={
-                "namespace": "claude-code",
+                "namespace": "fleet",
                 "key": "phase4-iso",
                 "scope": "project",
                 "user_id": "ixanadu",
@@ -101,7 +101,7 @@ async def test_non_project_scopes_unchanged(client):
     """scope=user/shared/machine ignore project (it stays NULL)."""
     try:
         resp = await client.post("/memory/set", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-user-scope",
             "value": "user-scope memory",
             "scope": "user",
@@ -110,7 +110,7 @@ async def test_non_project_scopes_unchanged(client):
         assert resp.status_code == 200
 
         resp = await client.post("/memory/get", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-user-scope",
             "scope": "user",
             "user_id": "alice",
@@ -119,7 +119,7 @@ async def test_non_project_scopes_unchanged(client):
         assert resp.json()["memory"]["project"] is None
     finally:
         await client.post("/memory/forget", json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "phase4-user-scope",
             "scope": "user",
             "user_id": "alice",

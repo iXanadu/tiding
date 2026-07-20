@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     memory_api_url: str = "http://localhost:8920"
     memory_api_token: str = ""
-    memory_namespace: str = "claude-code"
+    memory_namespace: str = "fleet"
     memory_read_namespaces: str = ""  # empty = search every namespace the token can read (server resolves from the principal's perms); set a CSV only to narrow
     memory_default_scope: str = "machine"
 

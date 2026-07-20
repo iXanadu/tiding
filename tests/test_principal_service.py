@@ -115,11 +115,11 @@ async def test_update_principal(db_pool):
         updated, _ = await ps.update_principal(
             "test-update",
             is_admin=True,
-            read_namespaces=["claude-code", "beast"],
+            read_namespaces=["fleet", "beast"],
             write_namespaces=["human"],
         )
         assert updated["is_admin"] is True
-        assert updated["read_namespaces"] == ["claude-code", "beast"]
+        assert updated["read_namespaces"] == ["fleet", "beast"]
         assert updated["write_namespaces"] == ["human"]
     finally:
         await _cleanup_principal("test-update")

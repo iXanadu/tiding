@@ -28,7 +28,7 @@ async def enforced_client(services):
 async def _cleanup_inbox(db_pool):
     async with db_pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM memories WHERE namespace='claude-code' AND scope='inbox'"
+            "DELETE FROM memories WHERE namespace='fleet' AND scope='inbox'"
         )
 
 
@@ -223,7 +223,7 @@ async def test_banner_on_search(client, db_pool):
 
     # Regular search with listen_set should get a banner
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "query": "anything",
         "listen_set": ["engram"],
         "reader_identity": "engram@macmini",
@@ -236,7 +236,7 @@ async def test_banner_on_search(client, db_pool):
 
     # Without listen_set, no banner
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "query": "anything",
     })
     assert resp.json().get("inbox_banner") is None
@@ -257,7 +257,7 @@ async def test_banner_on_set(client, db_pool):
     })
 
     resp = await client.post("/memory/set", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "key": "banner-on-set-probe",
         "value": "hello",
         "scope": "machine",
@@ -276,7 +276,7 @@ async def test_banner_on_set(client, db_pool):
 
     # Without listen_set, no banner on set (matches /search behavior)
     resp = await client.post("/memory/set", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "key": "banner-on-set-probe-2",
         "value": "hello",
         "scope": "machine",
@@ -299,7 +299,7 @@ async def test_memory_set_records_project_and_cwd_metadata(client, db_pool):
     resp = await client.post(
         "/memory/set",
         json={
-            "namespace": "claude-code",
+            "namespace": "fleet",
             "key": "provenance-probe",
             "value": "hello",
             "scope": "machine",
@@ -315,7 +315,7 @@ async def test_memory_set_records_project_and_cwd_metadata(client, db_pool):
 
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT metadata FROM memories WHERE key=$1 AND namespace='claude-code'",
+            "SELECT metadata FROM memories WHERE key=$1 AND namespace='fleet'",
             "provenance-probe",
         )
     assert row is not None
@@ -335,7 +335,7 @@ async def test_memory_set_records_project_and_cwd_metadata(client, db_pool):
 async def test_banner_absent_when_empty(client, db_pool):
     await _cleanup_inbox(db_pool)
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "query": "anything",
         "listen_set": ["engram"],
         "reader_identity": "engram@macmini",
@@ -370,9 +370,9 @@ async def test_search_excludes_inbox_scope(client, db_pool):
     assert resp.status_code == 200
     for r in resp.json()["results"]:
         assert not r["key"].startswith("inbox/")
-    # And searching claude-code for the same phrase must not surface inbox
+    # And searching fleet for the same phrase must not surface inbox
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "query": "pineapple",
         "limit": 10,
     })
@@ -561,7 +561,7 @@ async def test_banner_caps_at_preview_limit(client, db_pool):
             "from_": "projgamma@macbook",
         })
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code",
+        "namespace": "fleet",
         "query": "anything",
         "listen_set": ["engram"],
         "reader_identity": "engram@macmini",
@@ -725,7 +725,7 @@ async def test_resolved_not_counted_in_banner(client, db_pool):
         "reader_identity": "engram@macmini",
     })
     resp = await client.post("/memory/search", json={
-        "namespace": "claude-code", "query": "anything",
+        "namespace": "fleet", "query": "anything",
         "listen_set": ["engram"], "reader_identity": "engram@macbook",
     })
     assert resp.json().get("inbox_banner") is None
@@ -931,12 +931,12 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
     _, owner_tok = await ps.create_principal(
         name="ib-authtest-owner", type="human", is_admin=True,
         token="owner-testtok-fixture",
-        write_namespaces=["claude-code"], read_namespaces=["claude-code"],
+        write_namespaces=["fleet"], read_namespaces=["fleet"],
     )
     _, worker_tok = await ps.create_principal(
         name="ib-authtest-worker", type="agent", is_admin=False,
         token="worker-testtok-fixture",
-        write_namespaces=["claude-code"], read_namespaces=["claude-code"],
+        write_namespaces=["fleet"], read_namespaces=["fleet"],
     )
     try:
         # Owner: self-labels from_ freely; the server stamps a verified owner.
@@ -1017,7 +1017,7 @@ async def test_inbox_intent_stored_and_validated(client, db_pool):
 async def _cleanup_presence(db_pool):
     async with db_pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM memories WHERE namespace='claude-code' AND scope='presence'"
+            "DELETE FROM memories WHERE namespace='fleet' AND scope='presence'"
         )
 
 

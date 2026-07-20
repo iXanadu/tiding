@@ -34,7 +34,7 @@ async def test_whoami_returns_principal(client):
             json={
                 "name": "whoami-agent",
                 "type": "agent",
-                "read_namespaces": ["claude-code", "beast"],
+                "read_namespaces": ["fleet", "beast"],
                 "write_namespaces": ["beast"],
             },
         )
@@ -47,7 +47,7 @@ async def test_whoami_returns_principal(client):
         assert data["type"] == "agent"
         assert data["is_admin"] is False
         assert data["active"] is True
-        assert data["read_namespaces"] == ["claude-code", "beast"]
+        assert data["read_namespaces"] == ["fleet", "beast"]
         assert data["write_namespaces"] == ["beast"]
     finally:
         await _cleanup_principal("whoami-agent")
@@ -91,16 +91,16 @@ async def test_namespaces_explicit_lists(client):
             json={
                 "name": "ns-agent-explicit",
                 "type": "agent",
-                "read_namespaces": ["claude-code", "ha"],
-                "write_namespaces": ["claude-code"],
+                "read_namespaces": ["fleet", "ha"],
+                "write_namespaces": ["fleet"],
             },
         )
         token = create.json()["raw_token"]
         resp = await client.get("/namespaces", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200
         data = resp.json()
-        assert sorted(data["read"]) == ["claude-code", "ha"]
-        assert data["write"] == ["claude-code"]
+        assert sorted(data["read"]) == ["fleet", "ha"]
+        assert data["write"] == ["fleet"]
     finally:
         await _cleanup_principal("ns-agent-explicit")
 

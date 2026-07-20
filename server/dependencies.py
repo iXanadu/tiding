@@ -4,7 +4,7 @@ import logging
 
 from fastapi import HTTPException, Request
 
-from server.config import settings
+from server.config import canonical_namespace, settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ async def resolve_read_namespaces(principal: dict | None) -> list[str]:
             status_code=403,
             detail=f"Principal '{principal.get('name')}' has no read namespace permissions.",
         )
-    return list(read_perms)
+    # NS-1: expand grants in canonical space (dedup preserves order)
+    return list(dict.fromkeys(canonical_namespace(ns) for ns in read_perms))
 
 
 def get_current_principal(request: Request) -> dict | None:
@@ -106,7 +107,11 @@ def check_namespace_access(
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
-    if "*" in allowed or namespace in allowed:
+    # NS-1: compare in canonical namespace space so a principal whose grants
+    # still name a legacy alias keeps working through a rename.
+    namespace = canonical_namespace(namespace)
+    allowed_canon = {canonical_namespace(a) for a in allowed}
+    if "*" in allowed or namespace in allowed_canon:
         return
 
     logger.warning(

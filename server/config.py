@@ -20,6 +20,25 @@ class Settings(BaseSettings):
     # allow_insecure_bind=true (trusted-network opt-out, e.g. Tailscale).
     host: str = "127.0.0.1"
     allow_insecure_bind: bool = False
+
+    # NS-1 provider-agnostic namespaces. `primary_namespace` is where inbox +
+    # presence rows live. `namespace_aliases` maps legacy names to canonical
+    # ones at the API boundary ("old=new,old2=new2") so clients sending an old
+    # name keep working through a rename — a relabel, never a repartition.
+    # Reversible: flip the alias direction and reverse the data UPDATE.
+    primary_namespace: str = "fleet"
+    namespace_aliases: str = "claude-code=fleet"
+
+    def canonical_namespace(self, ns: str | None) -> str | None:
+        if not ns:
+            return ns
+        for pair in self.namespace_aliases.split(","):
+            if "=" in pair:
+                old, new = pair.split("=", 1)
+                if ns.strip().lower() == old.strip().lower():
+                    return new.strip().lower()
+        return ns
+
     port: int = 8920
     log_level: str = "info"
 
@@ -58,3 +77,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def canonical_namespace(ns: str | None) -> str | None:
+    """Module-level NS-1 canonicalizer bound to the real settings instance —
+    import this by name where `settings` may be test-patched."""
+    return settings.canonical_namespace(ns)

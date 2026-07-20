@@ -45,7 +45,7 @@ The rules that make it safe come down to one sentence:
 ```bash
 # 1. Mint the principal (as an admin) — mirror your main agent's grants
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"grok","type":"agent","read_namespaces":["claude-code","grok"],"write_namespaces":["claude-code"]}' \
+  -d '{"name":"grok","type":"agent","read_namespaces":["fleet","grok"],"write_namespaces":["fleet"]}' \
   http://localhost:8920/admin/principals
 # → raw token shown ONCE; store it in the provider's config (never the repo)
 

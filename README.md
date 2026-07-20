@@ -67,7 +67,7 @@ Four independent dimensions partition every memory:
 
 | Dimension | Purpose | Examples |
 |-----------|---------|----------|
-| **namespace** | Which system is writing | `claude-code`, `ha`, `beast`, `projbeta` |
+| **namespace** | Which system is writing | `fleet`, `ha`, `beast`, `projbeta` |
 | **scope** | Visibility level | `shared`, `machine`, `project`, `user`, `inbox` |
 | **user_id** | Identity (the person, or machine for scope=machine) | `ixanadu`, hostname, `global`, HA UUID |
 | **project** | Project name (only for `scope=project`) | `engram`, `projalpha`, `admin` |
@@ -105,7 +105,7 @@ Set `ENGRAM_API_TOKEN` to a Bearer token. All requests must include it. Leave em
 Enable `ENGRAM_REQUIRE_AUTH=true` for principal-based authentication. Each client gets its own identity with explicit namespace permissions:
 
 ```
-claude-code:    read: [claude-code, claude-web]    write: [claude-code]
+claude-code:    read: [fleet, claude-web]          write: [fleet]
 projbeta:   read: [projbeta]                write: [projbeta]
 ha-system:      read: [ha]                          write: [ha]
 ```
@@ -440,7 +440,7 @@ Then register in `~/.claude.json`:
 > ```
 > memory_api_token=engram_<your-token>
 > memory_api_url=http://localhost:8920
-> memory_namespace=claude-code
+> memory_namespace=fleet
 > ```
 >
 > The bridge reads it from there when the `.claude.json` env block omits the token. (An inline env token still works and takes precedence — but a fragile config file is a poor home for a credential.)
@@ -458,7 +458,7 @@ The bridge also installs the **`engram-inbox-wait`** console script — arm it a
 
 **Search is permission-driven.** By default (`memory_read_namespaces` empty) the bridge sends *no* namespace on search, so the server returns results from every namespace the **token** can read — grant a principal read of another namespace and it shows up automatically, no client config change. Set `memory_read_namespaces` to a CSV only if you want to *narrow* below the token's permissions.
 
-> **Use a scoped principal for the bridge, not an admin/wildcard token.** The bridge's reach *is* the token's read permissions, so give it a principal scoped to exactly the namespaces it should see (e.g. `claude-code` reading `claude-code, claude-web, grok`). An admin (`*.*`) token would make every search span *all* namespaces and put a god credential on every box.
+> **Use a scoped principal for the bridge, not an admin/wildcard token.** The bridge's reach *is* the token's read permissions, so give it a principal scoped to exactly the namespaces it should see (e.g. `claude-code` reading `fleet, claude-web, grok`). An admin (`*.*`) token would make every search span *all* namespaces and put a god credential on every box.
 
 ### Python Client SDK (web apps)
 

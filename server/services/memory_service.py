@@ -11,7 +11,8 @@ from server.db import get_pool
 from server.embeddings import embed
 from server.models import InboxMessage, MemoryItem
 
-INBOX_NAMESPACE = "claude-code"
+# NS-1: inbox/presence rows live in the primary (provider-agnostic) namespace.
+INBOX_NAMESPACE = settings.primary_namespace
 INBOX_SCOPE = "inbox"
 INBOX_EXPIRATION_DAYS = 0  # never expire; inbox is not TTL'd
 # Read-side staleness: an open message older than this is flagged "verify before
