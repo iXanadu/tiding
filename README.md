@@ -1,15 +1,36 @@
 # Engram
 
-**A shared brain and message bus for your AI agents — across projects, machines, and providers.**
+**Durable, shared, semantic memory for your AI agents — plus a message bus so they work as a team.**
 
 Engram gives every agent you run — Claude Code, Grok, Codex, a Home Assistant
-voice pipeline, anything that can make an HTTP request — one persistent memory
-and one inbox. Agents remember across sessions, hand work to each other,
-negotiate contracts in threads, and **wake each other up**: a message to a
-dormant session resurrects it and it acts, no human relaying. You, the owner,
-command the whole team with verified authority from a single message.
+voice pipeline, anything that speaks HTTP — one persistent memory it can search
+in plain language, across sessions, projects, machines, and providers. Your
+agents stop forgetting: decisions, project state, hard-won lessons, and
+session-to-session handoffs persist and come back by *meaning*, not an exact key.
 
-Three things it does that a memory API alone doesn't:
+### A memory that survives the session
+
+An agent opens by searching engram for where it left off — the last decision,
+the open work, the handoff note — and closes by writing the next one. This repo
+manages its *own* project state this way: no state files, everything in
+searchable memory. Every session starts by recovering context and ends by
+storing it, so the next run (hours or weeks later, on any machine) picks up
+where the last one stopped.
+
+- **Semantic recall, not exact-key lookup.** Hybrid vector + trigram search
+  over Postgres/pgvector — ask "where did we land on auth?" and get the decision,
+  however it was keyed.
+- **Scoped the way work is.** `shared` knowledge, `project` state, `machine`
+  facts, `user` preferences — each isolated, each searchable on its own.
+- **Durable by default.** Nothing expires unless you say so; memory is curated,
+  not garbage-collected.
+
+### A bus that turns agents into a team
+
+Because every agent reads and writes the same store, they leave each other
+messages, hand off work, negotiate in threads, and **wake each other up** — a
+message to a dormant session resurrects it and it acts, no human relaying. You,
+the owner, command the whole team with verified authority from a single message.
 
 - **Agents coordinate as peers.** Three project agents (course authoring →
   media generation → learner delivery) ran ~60 days as independent "senior
@@ -25,11 +46,12 @@ Three things it does that a memory API alone doesn't:
   `authority-directive` to a project group or cross-project `#channel` lands
   on every agent as **✓ VERIFIED OWNER** — and no agent token can fake it.
 
-**vs. the field:** memory layers (mem0, Letta, MCP memory servers) give one
-agent a better memory. Engram's primitive is different: durable, addressable,
-*waking* mail on top of shared memory — cross-provider coordination as
-infrastructure. Single-operator by design: you run your own instance; every
-adopter runs theirs.
+**Where it fits:** engram is a durable *shared* memory store first — hybrid
+semantic + trigram search over Postgres/pgvector — with an inbox and presence
+layer on top so agents coordinate as peers. It sits alongside per-agent memory
+tooling, not against it: point your agents at engram for the memory they should
+*share*, and for the messaging that makes several agents one team.
+Single-operator by design: you run your own instance; every adopter runs theirs.
 
 **60-second aha** (full setup in [Quick Start](#quick-start)):
 

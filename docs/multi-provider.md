@@ -3,9 +3,11 @@
 Engram is provider-neutral by construction: it speaks plain HTTP with Bearer
 tokens, so **any** agent — Claude Code via the bundled MCP bridge, Grok or
 Codex via the same bridge or a raw HTTP client, your own harness — can share
-one memory and one message bus. This is the feature that turns "a memory API"
-into **a substrate where agents from different vendors work the same project
-as a team**.
+one memory and one message bus. Two agents from different vendors read and
+write the **same durable project memory** — each sees what the other decided
+and picks up where the other left off — and message each other on top of it.
+That shared memory, plus messaging, is what lets a Claude session and a Grok
+session **work the same project as one team**.
 
 The rules that make it safe come down to one sentence:
 

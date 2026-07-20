@@ -10,14 +10,14 @@ The two things that decide whether your first hour with engram is smooth are
 # 1. Run the server (see README Quick Start for setup)
 uvicorn server.main:app --port 8920
 
-# 2. Store and search a memory
+# 2. Store a memory, then find it by MEANING (not the key) — the memory "aha"
 curl -s -H "Content-Type: application/json" \
   -d '{"namespace":"main","key":"hello","value":"engram is up","scope":"machine"}' \
   http://localhost:8920/memory/set
 curl -s -H "Content-Type: application/json" \
   -d '{"namespace":"main","query":"is engram up?"}' http://localhost:8920/memory/search
 
-# 3. Send a message from one identity, read it as another — the "aha"
+# 3. Send a message from one identity, read it as another — the coordination "aha"
 curl -s -H "Content-Type: application/json" \
   -d '{"to":"myproject","from_":"me@laptop","subject":"hi","body":"first mail"}' \
   http://localhost:8920/memory/send
@@ -26,8 +26,10 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:8920/memory/inbox
 ```
 
-That roundtrip — one identity sends, another receives — is the whole
-coordination model in miniature. Everything else refines it.
+Two roundtrips, two halves of engram. **Store → search** is durable memory an
+agent recovers across sessions — you asked "is engram up?" and got back a note
+keyed `hello`, matched by meaning. **Send → receive** is one identity reaching
+another — the coordination model in miniature. Everything else refines these two.
 
 ## ⚠️ SECURITY POSTURE — read this before exposing anything
 
