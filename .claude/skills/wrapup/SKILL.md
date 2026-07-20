@@ -5,6 +5,12 @@ description: When the user is ending a session, says goodbye, or asks to wrap up
 
 End-of-session wrap-up:
 
+0. **BACKLOG sweep (mandatory, not best-effort):** open `BACKLOG.md` —
+   delete the line for anything shipped this session (journal its story to
+   memory as `fix/<id>` if worth keeping); add a terse public-safe line for
+   anything discovered and still open. The ledger holds OPEN items only
+   (`docs/backlog-standard.md`). Run `scripts/repo-hygiene-check.sh` if any
+   tracked file changed; it must be clean.
 1. Store session summary at scope=project: key=session/YYYY-MM-DD-brief-desc
 2. Promote any generalizable lessons to scope=shared with lesson/ or fix/ key prefix
 3. Commit any uncommitted code changes (stage specific files, not `git add .`)

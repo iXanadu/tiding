@@ -4,12 +4,12 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + in-process s
 
 ## Sources of Truth
 
-- **`BACKLOG.md` (repo root)** — the single source of truth for deferred work, shared between the owner and Claude. Git-tracked (survives memory decay). READ IT EVERY SESSION; update it CONTINUOUSLY.
-- Session state / decisions / progress → engram memory at `scope=project` (memory-first; no state files).
+- **`BACKLOG.md` (repo root)** — the single source of truth for OPEN work. Lean ledger, open items only, written as if public (no completed items, no vuln detail, no PII/topology/client names). Standard: `docs/backlog-standard.md`. READ IT EVERY SESSION.
+- **Journal → engram memory** (`scope=project`): completed-item stories (`fix/<id>`), decisions (`decision/*`), lessons (`lesson/*`, scope=shared), long item detail (`backlog/<ID>`), open-vuln repro detail (`vuln/<ID>` until shipped). Memory-first; no state files.
 
-## The Pin-It List — READ EVERY SESSION
+## The Backlog — READ EVERY SESSION, SWEEP EVERY WRAPUP
 
-`BACKLOG.md` at the repo root is force-loaded into context each run. Triage every defect on discovery: BLOCKING (breaks build / wrong-or-harmful output / destroys data → fix now) vs DEGRADING (still does its job → pin it and keep moving). If it's not in `BACKLOG.md`, it's not tracked. When idle, pull the next OPEN item.
+`BACKLOG.md` is force-loaded each run. Triage every defect on discovery: BLOCKING (breaks build / wrong-or-harmful output / destroys data → fix now) vs DEGRADING (still does its job → add a ledger line and keep moving). If it's not in the ledger, it's not tracked. When idle, pull the top OPEN item. **Done = delete the line in the same commit as the fix** — never accumulate FIXED sections; the story goes to memory. Repo hygiene: `scripts/repo-hygiene-check.sh` must stay clean (assume-public doctrine).
 
 ## Project Structure
 

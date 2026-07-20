@@ -176,7 +176,7 @@ async def test_verify_password(db_pool):
         await ps.create_principal(
             name="test-pw-verify", type="human", password="placeholder-pw-2",
         )
-        result = await ps.verify_password("test-pw-verify", "correct-horse")
+        result = await ps.verify_password("test-pw-verify", "placeholder-pw-2")
         assert result is not None
         assert result["name"] == "test-pw-verify"
 

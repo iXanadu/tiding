@@ -930,12 +930,12 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
     # type="human" does not auto-generate a token — pass one explicitly.
     _, owner_tok = await ps.create_principal(
         name="ib-authtest-owner", type="human", is_admin=True,
-        token="owner-testtok-fixture",
+        token="test-tok-ib-owner",
         write_namespaces=["fleet"], read_namespaces=["fleet"],
     )
     _, worker_tok = await ps.create_principal(
         name="ib-authtest-worker", type="agent", is_admin=False,
-        token="worker-testtok-fixture",
+        token="test-tok-ib-worker",
         write_namespaces=["fleet"], read_namespaces=["fleet"],
     )
     try:

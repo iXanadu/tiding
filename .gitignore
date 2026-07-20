@@ -11,6 +11,5 @@ build/
 *.keys
 .keys
 
-# Operational pin-it list — kept LOCAL/private, never in the public-bound repo.
-# Purged from history 2026-07-19 (was briefly public). See decision/repo-private-until-launch.
-BACKLOG.md
+# Local hygiene denylist for repo-hygiene-check.sh — box-specific, never tracked.
+.hygiene-denylist
