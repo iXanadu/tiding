@@ -27,7 +27,8 @@ async def test_memory_store(respx_mock):
     )
     result = await memory_store(key="test-key", value="hello world", tags="test")
     assert "Stored memory 'test-key'" in result
-    assert "namespace: claude-code" in result
+    # No namespace in the mocked (older-server) response -> falls back to config
+    assert "namespace: fleet" in result
 
 
 @respx.mock(base_url="http://localhost:8920")
@@ -332,6 +333,57 @@ async def test_memory_whoami_anonymous_when_no_token():
     with patch.object(cfg, "memory_api_token", ""):
         out = await memory_whoami()
     assert "Not authenticated" in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_whoami_flags_legacy_alias_namespace(respx_mock):
+    """Configured namespace outside the token's write set -> alias warning.
+
+    This is the exact confusion a live Grok session hit: config said
+    'claude-code', the server canonicalizes to 'fleet', and whoami printed
+    both without explanation."""
+    respx_mock.get("/whoami").mock(return_value=httpx.Response(200, json={
+        "name": "grok", "type": "agent", "is_admin": False,
+        "read_namespaces": ["fleet"], "write_namespaces": ["fleet"],
+    }))
+    respx_mock.get("/namespaces").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "read": ["fleet", "grok"], "write": ["fleet"],
+    }))
+    with patch.object(cfg, "memory_api_token", "engram_test"), \
+         patch.object(cfg, "memory_namespace", "claude-code"):
+        out = await memory_whoami()
+    assert "LEGACY ALIAS" in out
+    assert "Config source:" in out
+    assert "you don't pick namespaces" in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_whoami_no_alias_warning_when_canonical(respx_mock):
+    respx_mock.get("/whoami").mock(return_value=httpx.Response(200, json={
+        "name": "claude-code", "type": "agent", "is_admin": False,
+        "read_namespaces": ["fleet"], "write_namespaces": ["fleet"],
+    }))
+    respx_mock.get("/namespaces").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "read": ["fleet"], "write": ["fleet"],
+    }))
+    with patch.object(cfg, "memory_api_token", "engram_test"):
+        out = await memory_whoami()
+    assert "LEGACY ALIAS" not in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_store_head_prefers_server_canonical_namespace(respx_mock):
+    """Server echoes the canonical namespace it wrote to; display uses it,
+    not the possibly-legacy configured name."""
+    respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(
+            200, json={"status": "ok", "key": "k", "namespace": "fleet"}
+        )
+    )
+    with patch.object(cfg, "memory_namespace", "claude-code"):
+        result = await memory_store(key="k", value="v")
+    assert "namespace: fleet" in result
+    assert "namespace: claude-code" not in result
 
 
 # --- perms-driven search -----------------------------------------------------

@@ -110,7 +110,9 @@ async def set_memory(req: MemorySetRequest, request: Request):
                 )
                 if banner_dict:
                     banner = InboxBanner(**banner_dict)
-        return MemorySetResponse(status="ok", key=key, inbox_banner=banner)
+        return MemorySetResponse(
+            status="ok", key=key, namespace=req.namespace, inbox_banner=banner
+        )
     except Exception as e:
         logger.exception("memory_set failed")
         raise HTTPException(status_code=500, detail=str(e))

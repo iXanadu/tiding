@@ -8,7 +8,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient
-from engram_mcp.config import settings
+from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import compute_identity, reader_to_address, remember_project_dir
 from engram_mcp.scoping import (
     AmbiguousIdentity,
@@ -310,7 +310,10 @@ async def memory_store(
     )
     banner_text = _render_inbox_banner(result.get("inbox_banner"))
     proj_suffix = f", project: {project}" if project else ""
-    head = f"Stored memory '{result['key']}' (namespace: {settings.memory_namespace}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
+    # Prefer the CANONICAL namespace the server says it wrote to (it
+    # canonicalizes legacy aliases); fall back to config for older servers.
+    stored_ns = result.get("namespace") or settings.memory_namespace
+    head = f"Stored memory '{result['key']}' (namespace: {stored_ns}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
     return banner_text + head if banner_text else head
 
 
@@ -557,18 +560,34 @@ async def memory_whoami() -> str:
     lines = [
         f"Principal: {who.get('name')} (type={who.get('type')}, admin={who.get('is_admin')})",
         f"Server: {settings.memory_api_url}",
+        f"Config source: {CONFIG_SOURCE}",
         f"This bridge writes to namespace: {settings.memory_namespace}",
     ]
+    write_list: list[str] = []
     try:
         ns = await _client.namespaces()
         read = ", ".join(ns.get("read", [])) or "(none)"
-        write = ", ".join(ns.get("write", [])) or "(none)"
+        write_list = ns.get("write", [])
+        write = ", ".join(write_list) or "(none)"
     except Exception:
         # Fall back to the raw (possibly wildcard) lists from /whoami.
         read = ", ".join(who.get("read_namespaces", [])) or "(none)"
+        write_list = [w for w in who.get("write_namespaces", []) if w != "*"]
         write = ", ".join(who.get("write_namespaces", [])) or "(none)"
     lines.append(f"Can READ namespaces:  {read}")
     lines.append(f"Can WRITE namespaces: {write}")
+    if write_list and settings.memory_namespace not in write_list:
+        lines.append(
+            f"⚠ Configured namespace '{settings.memory_namespace}' is not in this "
+            f"token's write set — it is probably a LEGACY ALIAS the server "
+            f"canonicalizes (writes actually land in: {write}). Remove the "
+            f"memory_namespace override from your config; the bridge default "
+            f"is already canonical."
+        )
+    lines.append(
+        "Note: you don't pick namespaces — writes are attributed by this token, "
+        "and the server canonicalizes legacy alias names."
+    )
     return "\n".join(lines)
 
 

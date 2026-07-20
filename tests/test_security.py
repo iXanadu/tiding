@@ -52,6 +52,9 @@ async def test_legacy_namespace_client_lands_in_canonical(client, db_pool):
         "value": "written via legacy name", "scope": "machine", "user_id": "t",
     })
     assert r.status_code == 200, r.text
+    # Truth-in-display: the response tells the client where the write REALLY
+    # landed (canonical), so bridges can show 'fleet' not the legacy name.
+    assert r.json()["namespace"] == "fleet"
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT namespace FROM memories WHERE key='ns1-alias-probe'")

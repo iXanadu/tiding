@@ -116,6 +116,10 @@ class InboxBanner(BaseModel):
 class MemorySetResponse(BaseModel):
     status: str
     key: str
+    # The CANONICAL namespace the write landed in (request namespaces are
+    # alias-canonicalized at the boundary) — lets clients display the truth
+    # instead of echoing their possibly-legacy configured name.
+    namespace: str | None = None
     inbox_banner: InboxBanner | None = None
 
 

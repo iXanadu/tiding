@@ -1,9 +1,26 @@
 import pytest
 import respx
 
+import engram_mcp.config as config
 import engram_mcp.identity as identity
 from engram_mcp.client import MemoryClient
 from engram_mcp.identity import reset_session_pin
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(monkeypatch):
+    """Pin bridge settings to deterministic values for every test.
+
+    Settings load from the developer's real ~/.config/engram/identity (or an
+    ENGRAM_IDENTITY-selected file) at import time — without this pin the suite
+    would assert against whatever that box's live credentials say (this bit us
+    when the identity file's namespace flipped fleet-ward and stale assertions
+    kept passing/failing by machine, not by code).
+    """
+    monkeypatch.setattr(config.settings, "memory_api_url", "http://localhost:8920")
+    monkeypatch.setattr(config.settings, "memory_namespace", "fleet")
+    monkeypatch.setattr(config.settings, "memory_read_namespaces", "")
+    monkeypatch.setattr(config.settings, "memory_default_scope", "machine")
 
 
 @pytest.fixture(autouse=True)
