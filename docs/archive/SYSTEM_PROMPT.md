@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-07-20).** Voice-assistant-era system prompt (Home Assistant Assist-style integrations, local tool-calling models). Kept for historical reference; not maintained. The HA integration itself lives in `integrations/homeassistant/`.
+
 # Recommended System Prompt
 
 This is the system prompt to configure in your LLM conversation agent for proactive memory tool calling. It has been tested with **GLM-4.7-Flash** (Ollama) and **Grok-4-fast** (xAI).

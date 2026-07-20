@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-07-20).** From engram's earlier life as the memory backend for a voice/chat assistant. This prompt was written to contrast an *aggressive auto-memorizer* against an assistant that stores memories only on command. Kept for historical reference; not maintained.
+
 # Aggressive Memory Prompt
 
 This is an alternative system prompt for an agent that memorizes aggressively without asking permission. Designed for LLMs with strong tool-calling capabilities (e.g., **Grok-4-fast** via xAI).

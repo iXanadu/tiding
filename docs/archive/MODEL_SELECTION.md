@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-07-20).** From the local-models-only era: a comparison of local LLM tool-calling reliability (Ollama-served models). engram itself no longer depends on any local LLM (embeddings run in-process; chat models are the operator's choice — in practice, frontier models). Kept for historical reference; not maintained.
+
 # LLM Model Selection for Memory Tool Calling
 
 Your choice of local LLM matters **enormously** for agentic memory. The memory tool relies on the LLM making actual tool calls — not just generating text about remembering things. We tested multiple models and found dramatic differences in tool calling reliability.

@@ -23,7 +23,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + in-process s
 - `scripts/` — install/start/restart/uninstall + migrate_ha_memory
 - `launchd/` + `systemd/` — Service templates
 - `tests/` — 88 tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, principals_api, permissions, bootstrap)
-- `docs/` — System prompts, model selection, project-migration guide, CLAUDE.md.global
+- `docs/` — Getting-started, messaging, multi-provider, backlog standard, design/ (architecture, credentials); `docs/archive/` holds superseded-era docs
 
 ## Commands
 
@@ -80,7 +80,7 @@ Auth modes:
 
 - `integrations/claude-code/` — MCP bridge (engram-mcp) that CC uses to talk to engram. Installed in `cc-memory-3.12` pyenv. Replaces the old standalone `claude-memory-mcp` repo (archived).
 - ha-semantic-memory — The original (deprecated, archived on GitHub 2026-02-13). Data migrated to engram DB.
-- `docs/CLAUDE.md.global` — Global `~/.claude/CLAUDE.md` template for new machines. Copy to `~/.claude/CLAUDE.md` after cloning.
+- Global agent config templates live OUTSIDE this repo (operator's own fleet tooling) — the installer never touches provider-global config.
 
 ## State Management
 

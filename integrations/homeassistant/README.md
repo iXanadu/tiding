@@ -41,7 +41,7 @@ Import `blueprints/memory_tool.yaml` as a Script Blueprint in HA:
 
 ### 3. Configure your LLM agent
 
-Add the memory tool instructions to your conversation agent's system prompt. See [docs/SYSTEM_PROMPT.md](../../docs/SYSTEM_PROMPT.md) for the recommended prompt.
+Add the memory tool instructions to your conversation agent's system prompt. See [docs/archive/SYSTEM_PROMPT.md](../../docs/archive/SYSTEM_PROMPT.md) for the recommended prompt.
 
 Key points:
 - Expose `script.memory_tool` to the agent in **Settings > Voice Assistants > Exposed Entities**

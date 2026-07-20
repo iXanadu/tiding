@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-07-20).** Original design spec for the principals/auth system. Phases 1–2 shipped (in places differently than spec'd — e.g. the `human` namespace concept was superseded by the unified-namespace + owner-token model); Phase 3 was closed as unnecessary for single-operator deployments. Current truth: `docs/design/messaging-architecture.md` and `docs/multi-provider.md`. Kept for design history; not maintained.
+
 # Principals: Identity & Access Control for engram
 
 ## The Problem

@@ -93,31 +93,10 @@ fi
 
 mkdir -p "$APP_DIR/logs"
 
-# --- Claude Code global CLAUDE.md ---
-
-CLAUDE_DIR="$HOME/.claude"
-CLAUDE_MD_SRC="$APP_DIR/docs/CLAUDE.md.global"
-CLAUDE_MD_DST="$CLAUDE_DIR/CLAUDE.md"
-
-if [ -f "$CLAUDE_MD_SRC" ]; then
-    mkdir -p "$CLAUDE_DIR"
-    if [ ! -f "$CLAUDE_MD_DST" ]; then
-        # Fresh machine — install the template
-        cp "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"
-        echo "Installed global CLAUDE.md → $CLAUDE_MD_DST"
-    elif cmp -s "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"; then
-        echo "Global CLAUDE.md already up to date — no change"
-    else
-        # NEVER clobber a hand-edited live config. Stage the template alongside
-        # it so the user can diff/merge deliberately.
-        cp "$CLAUDE_MD_SRC" "${CLAUDE_MD_DST}.new"
-        echo "Existing CLAUDE.md differs from template — left untouched."
-        echo "  Template staged at: ${CLAUDE_MD_DST}.new"
-        echo "  Review: diff \"$CLAUDE_MD_DST\" \"${CLAUDE_MD_DST}.new\""
-    fi
-else
-    echo "NOTE: No docs/CLAUDE.md.global found — skipping global CLAUDE.md install"
-fi
+# NOTE: engram's installer deliberately does NOT touch ~/.claude/CLAUDE.md or
+# any other provider-global agent config. Wiring engram into an agent's global
+# instructions is the operator's call — see docs/getting-started.md and
+# docs/design/provider-credentials.md for what to add.
 
 # --- Claude Code MCP sub-package (engram-mcp) ---
 

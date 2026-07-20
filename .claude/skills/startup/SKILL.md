@@ -65,7 +65,7 @@ So this session wakes on *any* inbound message for its whole lifetime — not ju
 
 ## 5. Read Project Identity
 
-Read `.claude/CLAUDE.md` for structure, conventions, and commands. For migration work, also check `docs/project-migration.md` and `docs/commands-to-skills-migration.md`.
+Read `.claude/CLAUDE.md` for structure, conventions, and commands. For migration work, also check `docs/project-migration.md`.
 
 ## 6. Check Current State
 
