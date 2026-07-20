@@ -171,3 +171,24 @@ async def test_run_seeds_backlog_then_wakes_only_on_new(respx_mock, capsys):
     # only the message that arrived AFTER start, never the seeded backlog
     out = capsys.readouterr().out.strip()
     assert json.loads(out)["id"] == "inbox/2"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_poll_fyi_intent_never_wakes(respx_mock):
+    """MSG-3 wake-gating: intent='fyi' is recorded as seen but never emitted
+    (no wake). action / authority-directive / missing intent all wake."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            _msg(1, intent="fyi"),
+            _msg(2, intent="action"),
+            _msg(3, intent="authority-directive"),
+            _msg(4),  # no intent (legacy) → wakes
+        ]})
+    )
+    c = MemoryClient("http://localhost:8920", "")
+    seen: set = set()
+    fresh = await _poll(c, ["engram"], "engram@h", seen)
+    assert {m["id"] for m in fresh} == {"inbox/2", "inbox/3", "inbox/4"}
+    # the fyi is seen (won't re-wake later) even though it never emitted
+    assert "inbox/1" in seen
+    await c.close()

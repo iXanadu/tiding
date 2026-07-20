@@ -1,6 +1,7 @@
 """MCP server providing persistent semantic memory for Claude Code."""
 
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -233,6 +234,35 @@ mcp = FastMCP(
 
 _client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
 
+# --- Presence auto-heartbeat (MSG-4) --------------------------------------
+# Every tool call self-reports "running" for this session, throttled. The
+# server's roster answers "who is live on X" from these beats; a session that
+# stops calling tools goes stale after PRESENCE_STALE_AFTER_SECONDS (server).
+# Fire-and-forget: a failed beat must never break the tool call that drove it.
+_HEARTBEAT_EVERY_SECONDS = 120.0
+_last_heartbeat = 0.0
+
+
+async def _heartbeat(project_dir: str | None) -> None:
+    global _last_heartbeat
+    now = time.monotonic()
+    if now - _last_heartbeat < _HEARTBEAT_EVERY_SECONDS:
+        return
+    _last_heartbeat = now
+    try:
+        reader_identity, listen_set = compute_identity(project_dir or None)
+        identity = reader_identity.split("@", 1)[0]
+        project = listen_set[1] if len(listen_set) == 4 else listen_set[0]
+        await _client.presence_update(
+            identity=identity,
+            project=project,
+            state="running",
+            provider="claude",
+            project_dir=project_dir or None,
+        )
+    except Exception:
+        pass  # presence is best-effort; never fail the caller
+
 
 @mcp.tool()
 async def memory_store(
@@ -265,6 +295,7 @@ async def memory_store(
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
     reader_identity, listen_set = compute_identity(project_dir or None)
+    await _heartbeat(project_dir or None)
     result = await _client.store(
         key=key,
         value=value,
@@ -332,6 +363,7 @@ async def memory_search(
     # search from the token's read permissions (single source of truth). A CSV
     # value narrows to an explicit subset.
     read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
+    await _heartbeat(project_dir or None)
     result = await _client.search(
         query=query,
         namespaces=read_ns or None,
@@ -550,38 +582,100 @@ def _format_inbox_message(m: dict) -> str:
 
 
 @mcp.tool()
+async def memory_roster(
+    project: str = "",
+    channel: str = "",
+    include_done: bool = False,
+    project_dir: str = "",
+) -> str:
+    """Who is live right now — on a project, a #channel, or the whole box.
+
+    Use this INSTEAD of guessing addresses: each entry's 'identity' is a
+    DM-able address, its 'project' is the group address, and state/staleness
+    tells you whether the peer is actually staffed before you message it.
+
+    Args:
+        project: Bare project name to filter (empty = all projects)
+        channel: '#channel' to list coalition members (empty = no filter)
+        include_done: Also show sessions that reported done
+        project_dir: Your working directory path (for identity)
+    """
+    await _heartbeat(project_dir or None)
+    result = await _client.roster(
+        project=project.strip() or None,
+        channel=channel.strip() or None,
+        include_done=include_done,
+        project_dir=project_dir or None,
+    )
+    if result.get("status") != "ok":
+        return f"Roster error: {result}"
+    entries = result.get("entries", [])
+    if not entries:
+        scope = channel or project or "any project"
+        return (
+            f"Roster empty for {scope} — no session has heartbeat. "
+            "A peer may still exist but predate presence reporting; "
+            "sending to its project address will still queue mail."
+        )
+    lines = []
+    for e in entries:
+        stale = " ⚠️ STALE" if e.get("is_stale") else ""
+        age = int(e.get("age_seconds") or 0)
+        lines.append(
+            f"  {e['identity']:<28} [{e.get('provider') or '?'}] "
+            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}"
+        )
+    head = f"Live roster ({len(entries)}):\n" + "\n".join(lines)
+    return _append_guidance(head, result)
+
+
+@mcp.tool()
 async def memory_send(
     to: str,
     body: str,
     subject: str = "",
     thread_id: str = "",
+    intent: str = "",
     project_dir: str = "",
 ) -> str:
-    """Send an inbox message to another Claude session. Response includes
-    current addressing guidance — read it.
+    """Send an inbox message to another session, a #channel, or several
+    recipients at once. Response includes current addressing guidance — read it.
 
     Args:
-        to: Recipient address
+        to: Recipient address. Accepts a project name ('projgamma'), a
+            precise identity, a cross-project channel ('#courseware'), or a
+            comma-separated list ('alpha, beta') for ad-hoc fan-out.
         body: Message body
         subject: Short subject line
         thread_id: Optional thread id to group a back-and-forth
+        intent: Optional message intent — one of fyi | action | proceed |
+            escalate | authority-directive. 'fyi' will NOT wake a dormant
+            recipient (informational); others wake. Omit for default (wakes).
         project_dir: Your working directory path (required for identity)
     """
     if not to or not to.strip():
         return "Error: 'to' is required."
     if not body or not body.strip():
         return "Error: 'body' is required."
+    targets: str | list[str] = to.strip()
+    if "," in targets:
+        targets = [t.strip() for t in targets.split(",") if t.strip()]
     reader_identity, _ = compute_identity(project_dir or None)
+    await _heartbeat(project_dir or None)
     result = await _client.inbox_send(
-        to=to.strip(),
+        to=targets,
         body=body,
         subject=subject,
         from_=reader_identity,
         thread_id=thread_id or None,
         project_dir=project_dir or None,
+        intent=intent.strip() or None,
     )
     corrected_from = result.get("corrected_from")
-    if corrected_from:
+    ids = result.get("ids")
+    if ids:
+        head = f"Fan-out: sent {len(ids)} messages → {to} (from {reader_identity})"
+    elif corrected_from:
         head = f"Sent inbox message {result['id']} → (from {reader_identity})\n⚠️  Address auto-corrected: '{corrected_from}' was rewritten. See guidance below."
     else:
         head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
@@ -603,6 +697,7 @@ async def memory_inbox(
         project_dir: Your working directory path (required for identity)
     """
     reader_identity, listen_set = compute_identity(project_dir or None)
+    await _heartbeat(project_dir or None)
     result = await _client.inbox_list(
         listen_set=listen_set,
         reader_identity=reader_identity,

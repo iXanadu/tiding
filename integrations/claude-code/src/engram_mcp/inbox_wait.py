@@ -102,6 +102,11 @@ async def _poll(client, listen_set, reader_identity, seen: set) -> list:
             # our own outbound, echoed back — record as seen but never wake on it
             print(f"inbox-wait: skip self-echo {mid} (from {sender!r})", file=sys.stderr, flush=True)
             continue
+        if (m.get("intent") or "").strip().lower() == "fyi":
+            # MSG-3 wake-gating: fyi is informational — record as seen so it
+            # never wakes, but leave it unacked for the next interactive read.
+            print(f"inbox-wait: skip fyi {mid} (no wake)", file=sys.stderr, flush=True)
+            continue
         fresh.append(m)
     return fresh
 

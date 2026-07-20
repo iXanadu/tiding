@@ -160,22 +160,69 @@ class MemoryClient:
 
     async def inbox_send(
         self,
-        to: str,
+        to: str | list[str],
         body: str,
         subject: str = "",
         from_: str | None = None,
         thread_id: str | None = None,
         project_dir: str | None = None,
+        intent: str | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
         if from_:
             payload["from_"] = from_
         if thread_id:
             payload["thread_id"] = thread_id
+        if intent:
+            payload["intent"] = intent
         return await self._request(
             "POST",
             "/memory/send",
             json=payload,
+            headers=self._provenance_headers(project_dir),
+        )
+
+    async def presence_update(
+        self,
+        identity: str,
+        project: str,
+        state: str = "running",
+        provider: str | None = None,
+        overlays: list[str] | None = None,
+        channels: list[str] | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Self-reported liveness heartbeat (MSG-4)."""
+        return await self._request(
+            "POST",
+            "/memory/presence",
+            json={
+                "identity": identity,
+                "project": project,
+                "state": state,
+                "provider": provider,
+                "overlays": overlays or [],
+                "channels": channels or [],
+            },
+            headers=self._provenance_headers(project_dir),
+        )
+
+    async def roster(
+        self,
+        project: str | None = None,
+        channel: str | None = None,
+        include_done: bool = False,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Who is live on a project / #channel / the whole box (MSG-4)."""
+        return await self._request(
+            "POST",
+            "/memory/roster",
+            json={
+                "project": project,
+                "channel": channel,
+                "include_done": include_done,
+            },
             headers=self._provenance_headers(project_dir),
         )
 
