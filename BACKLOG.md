@@ -10,18 +10,12 @@
 - **REL-1** Public-release gate: history rewrite push + verification sweep
   (`scripts/repo-hygiene-check.sh` clean on tree AND full history), publish
   checklist review. Repo stays private until this closes.
-- **MSG-6** Verified/self-labeled sender badge in every render surface
-  (dashboard inbox rows + bridge `memory_inbox` output). Server-side stamping
-  already live; this is the visibility half.
 - **IB-6** `unread_only` inbox filter can miss unacked mail under small
   limits — reproduce against a real DB before patching (suspected remnant of
   the fixed newest-N windowing bug).
 
 ## Next (committed, not started)
 
-- **PROV-2** Single provider token: one grant that both partition-reads and
-  inbox-sends, so a non-Claude provider needs exactly one token. Prerequisite
-  for the one-token story in docs/multi-provider.md.
 - **NS-2** Retire the legacy namespace alias once every long-lived session
   has restarted on the current bridge (grace period; verify no stragglers in
   the audit log first).
