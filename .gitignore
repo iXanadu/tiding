@@ -10,3 +10,7 @@ build/
 .pytest_cache/
 *.keys
 .keys
+
+# Operational pin-it list — kept LOCAL/private, never in the public-bound repo.
+# Purged from history 2026-07-19 (was briefly public). See decision/repo-private-until-launch.
+BACKLOG.md
