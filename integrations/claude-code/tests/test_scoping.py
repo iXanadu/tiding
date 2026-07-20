@@ -256,7 +256,7 @@ def test_ensure_identity_rule1_idempotent(tmp_path, monkeypatch):
 
 
 def test_ensure_identity_clean_layout_interrogates_not_autowrites(tmp_path, monkeypatch):
-    # Option A (the owner 2026-07-18): a clean ~/projects/<x>/.claude/ layout with no
+    # Option A (Decision 2026-07-18): a clean ~/projects/<x>/.claude/ layout with no
     # .engram.cfg must NOT silently auto-adopt the basename — it raises so the
     # user confirms. The basename is offered as the suggestion, cfg NOT written.
     _fake_home(tmp_path, monkeypatch)

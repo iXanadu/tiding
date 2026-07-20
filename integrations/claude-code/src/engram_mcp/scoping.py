@@ -8,7 +8,7 @@ _VALID_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 # Values that are syntactically valid but are NOT a real project identity — a
 # generic deploy label or an obvious placeholder. A .engram.cfg carrying one of
 # these is treated as UNSET: we interrogate for the real name rather than
-# silently adopting the default. (the owner 2026-07-18: "if .engram.cfg is there, and
+# silently adopting the default. (Decision 2026-07-18: "if .engram.cfg is there, and
 # not whatever the default value is, we use it, otherwise we seek to set it.")
 # NOTE: 'admin' is deliberately absent — it is a real, intentional identity for
 # maintenance sessions, not a placeholder.
@@ -196,7 +196,7 @@ def ensure_project_identity(project_dir: str | None) -> str:
          the user and writes ``.engram.cfg`` on their answer.
 
     This deliberately does NOT auto-adopt a basename for clean
-    ``~/projects/<x>/`` layouts (the old "Rule 2" silent auto-write). Per the owner
+    ``~/projects/<x>/`` layouts (the old "Rule 2" silent auto-write). Per the operator
     (2026-07-18, option A): never silently adopt a default — always confirm,
     then set ``.engram.cfg``. The basename is offered as the prompt's
     suggestion, not stamped without consent.

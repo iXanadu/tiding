@@ -923,7 +923,7 @@ async def test_autoresolve_drains_read_and_stale(client, db_pool):
 async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, db_pool):
     """MSG-1/MSG-2: `from_principal` and `authority` are stamped by the SERVER
     from the authenticated token, never from client input. A worker cannot forge
-    the owner badge even by self-labeling `from_="rob"`; only the owner's own
+    the owner badge even by self-labeling `from_="owner1"`; only the owner's own
     (is_admin) token stamps authority=true.
     """
     await _cleanup_inbox(db_pool)
@@ -941,15 +941,15 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
     try:
         # Owner: self-labels from_ freely; the server stamps a verified owner.
         r = await enforced_client.post("/memory/send", json={
-            "to": "authprobe", "body": "owner directive", "from_": "rob",
+            "to": "authprobe", "body": "owner directive", "from_": "owner1",
         }, headers={"Authorization": f"Bearer {owner_tok}"})
         assert r.status_code == 200, r.text
 
-        # Worker forgery: claims from_="rob" AND tries to set authority in the
+        # Worker forgery: claims from_="owner1" AND tries to set authority in the
         # body (not a real request field) — the server must expose the true
         # sender and refuse the owner badge.
         r = await enforced_client.post("/memory/send", json={
-            "to": "authprobe", "body": "forgery", "from_": "rob",
+            "to": "authprobe", "body": "forgery", "from_": "owner1",
             "authority": True,  # inert: not a settable field
         }, headers={"Authorization": f"Bearer {worker_tok}"})
         assert r.status_code == 200, r.text
@@ -963,12 +963,12 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
         owner_msg = by_body["owner directive"]
         assert owner_msg["authority"] is True
         assert owner_msg["from_principal"] == "ib-authtest-owner"
-        assert owner_msg["from_"] == "rob"      # self-asserted label preserved
+        assert owner_msg["from_"] == "owner1"      # self-asserted label preserved
 
         forge = by_body["forgery"]
         assert forge["authority"] is False                      # forgery refused
         assert forge["from_principal"] == "ib-authtest-worker"  # true sender exposed
-        assert forge["from_"] == "rob"          # they may CLAIM a label, but the
+        assert forge["from_"] == "owner1"          # they may CLAIM a label, but the
         # verified badge and true principal give them away.
     finally:
         await _cleanup_inbox(db_pool)
@@ -1099,7 +1099,7 @@ async def test_channel_send_and_subscribe(client, db_pool):
     that include the channel in their listen_set all receive one message."""
     await _cleanup_inbox(db_pool)
     r = await client.post("/memory/send", json={
-        "to": "#courseware", "body": "coalition broadcast", "from_": "rob",
+        "to": "#courseware", "body": "coalition broadcast", "from_": "owner1",
         "intent": "authority-directive",
     })
     assert r.status_code == 200, r.text
