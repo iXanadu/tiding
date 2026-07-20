@@ -210,3 +210,35 @@ def test_two_siblings_get_distinct_identities_sharing_a_group(monkeypatch):
     # each can be addressed precisely without hitting the other
     assert "beastchat-server@macmini" in srv_set
     assert "beastchat-server@macmini" not in app_set
+
+
+# --- ENGRAM_CHANNELS channel-join (MSG-5 bridge half) -----------------------
+
+class TestChannelJoin:
+    def test_channels_appended_to_listen_set(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ENGRAM_CHANNELS", "#devagents,#fleet")
+        from engram_mcp.identity import compute_identity
+        reader, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
+        assert "#devagents" in listen and "#fleet" in listen
+        # channels ride along; core addresses unchanged
+        assert "myproj" in listen and reader.startswith("myproj@")
+
+    def test_sigil_required_bare_names_dropped(self, monkeypatch, tmp_path):
+        """A bare name is a PROJECT address — never silently promoted."""
+        monkeypatch.setenv("ENGRAM_CHANNELS", "devagents, #ok, #, ,#dup,#dup")
+        from engram_mcp.identity import resolve_channels
+        assert resolve_channels() == ["#ok", "#dup"]
+
+    def test_unset_env_changes_nothing(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
+        from engram_mcp.identity import compute_identity
+        _, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
+        assert not any(a.startswith("#") for a in listen)
+
+    def test_channels_with_identity_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ENGRAM_CHANNELS", "#courseware")
+        monkeypatch.setenv("ENGRAM_INBOX_IDENTITY", "myproj-grok")
+        from engram_mcp.identity import compute_identity
+        reader, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
+        assert reader.startswith("myproj-grok@")
+        assert "#courseware" in listen and "myproj" in listen

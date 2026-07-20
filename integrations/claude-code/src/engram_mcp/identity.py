@@ -160,6 +160,30 @@ def is_admin_context(project_dir: str | None) -> bool:
     return derive_project_name(project_dir) == ADMIN_NAME
 
 
+def resolve_channels() -> list[str]:
+    """Coalition channels this session subscribes to, from ``ENGRAM_CHANNELS``.
+
+    Comma-separated, each entry MUST carry the ``#`` sigil (``"#devagents,#fleet"``).
+    Entries without the sigil are dropped — a bare name is a *project* address,
+    and silently promoting a typo into a channel subscription would collide
+    with the flat project namespace.
+
+    Env-only by design (docs/design/messaging-architecture.md §3.3–3.4): the
+    project folder carries zero addressing, and channel membership is a LAUNCH
+    concern injected by whatever spawns the session (launcher env, shell
+    export). Authoritative membership lives in the roster via presence
+    heartbeats — this env var is how a session *joins*; the roster is how
+    membership is *seen*.
+    """
+    raw = os.environ.get("ENGRAM_CHANNELS", "")
+    out: list[str] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if entry.startswith("#") and len(entry) > 1 and entry not in out:
+            out.append(entry)
+    return out
+
+
 def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     """Return ``(reader_identity, listen_set)`` for the current call.
 
@@ -168,6 +192,8 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
         - the role/project name (loose broadcast: "any Claude with that role")
         - ``machine:<host>`` (loose broadcast: "any Claude on that machine")
         - the fully-qualified reader_identity itself (precise targeting)
+        - any ``#channel`` subscriptions from ``ENGRAM_CHANNELS`` (appended
+          last; see resolve_channels)
 
     Admin and project sessions are symmetric — the only difference is that
     admin's loose-broadcast name is the literal string ``admin``.
@@ -188,13 +214,15 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     host = hostname()
     project = derive_project_name(project_dir)
     override = resolve_session_identity(project_dir) or ""
+    channels = resolve_channels()
     if override and override != project:
         reader = f"{override}@{host}"
         # precise identity first, then the project GROUP address (broadcasts to
-        # all sessions on the project still land), then machine, then self.
-        return (reader, [override, project, f"machine:{host}", reader])
+        # all sessions on the project still land), then machine, then self,
+        # then coalition channels.
+        return (reader, [override, project, f"machine:{host}", reader, *channels])
     reader = f"{project}@{host}"
-    return (reader, [project, f"machine:{host}", reader])
+    return (reader, [project, f"machine:{host}", reader, *channels])
 
 
 def reader_to_address(reader_identity: str) -> str:

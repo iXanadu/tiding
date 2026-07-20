@@ -9,7 +9,13 @@ from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import CONFIG_SOURCE, settings
-from engram_mcp.identity import compute_identity, reader_to_address, remember_project_dir
+from engram_mcp.identity import (
+    compute_identity,
+    derive_project_name,
+    reader_to_address,
+    remember_project_dir,
+    resolve_channels,
+)
 from engram_mcp.scoping import (
     AmbiguousIdentity,
     ensure_project_identity,
@@ -250,14 +256,17 @@ async def _heartbeat(project_dir: str | None) -> None:
         return
     _last_heartbeat = now
     try:
-        reader_identity, listen_set = compute_identity(project_dir or None)
+        reader_identity, _listen_set = compute_identity(project_dir or None)
         identity = reader_identity.split("@", 1)[0]
-        project = listen_set[1] if len(listen_set) == 4 else listen_set[0]
+        # Derive the project group directly — never peek at listen_set
+        # positions (its shape now varies with overrides AND channels).
+        project = derive_project_name(remember_project_dir(project_dir or None))
         await _client.presence_update(
             identity=identity,
             project=project,
             state="running",
             provider="claude",
+            channels=resolve_channels() or None,
             project_dir=project_dir or None,
         )
     except Exception:
