@@ -146,12 +146,39 @@ Set `ENGRAM_WARN_UNAUTHED=true` to log warnings for unauthenticated requests wit
 
 ## Quick Start
 
-### Prerequisites
+### Fastest: Docker (one command, nothing else installed)
+
+```bash
+git clone https://github.com/iXanadu/engram.git && cd engram
+docker compose up -d          # server + PostgreSQL/pgvector, all included
+curl http://localhost:8920/health   # {"status":"ok",...}
+```
+
+First boot downloads the embedding model (~270MB, cached in a volume) —
+allow a few minutes once; later boots are seconds. Both ports bind to
+`127.0.0.1` on your machine only. From here jump straight to
+[getting started](docs/getting-started.md) — store a memory, send a
+message, [build a huddle](docs/build-a-huddle.md).
+
+### Native (no Docker needed — development, Apple-Silicon GPU embeddings)
+
+```bash
+git clone https://github.com/iXanadu/engram.git && cd engram
+./scripts/bootstrap-db.sh    # installs PostgreSQL 17 + pgvector (brew), creates the DB
+./scripts/install.sh         # python env, deps, .env, boot service
+curl http://localhost:8920/health
+```
+
+Three commands on macOS; on Linux `bootstrap-db.sh` prints your distro's
+exact package commands, then finishes the setup itself. Details and manual
+steps below.
+
+#### Prerequisites (manual route)
 
 - Python 3.12+ (via pyenv)
-- PostgreSQL 17+ with [pgvector](https://github.com/pgvector/pgvector) and pg_trgm extensions
+- PostgreSQL 17+ with [pgvector](https://github.com/pgvector/pgvector) and pg_trgm extensions — `scripts/bootstrap-db.sh` handles this, or run just the database in Docker: `docker compose up -d postgres`
 
-### Setup
+#### Setup
 
 ```bash
 # Clone and enter
@@ -179,15 +206,6 @@ uvicorn server.main:app --port 8920   # loopback by default; see security postur
 
 The embedding model (nomic-ai/nomic-embed-text-v1.5, ~270MB) is downloaded automatically on first start and cached in `~/.cache/huggingface/`. No external services required — embeddings run in-process using MPS (Apple Silicon GPU) or CPU.
 
-### Docker (PostgreSQL only)
-
-If you prefer Docker for PostgreSQL:
-
-```bash
-docker compose up -d
-# Then run the server natively
-uvicorn server.main:app --port 8920   # loopback by default; see security posture before exposing
-```
 
 ## API Reference
 

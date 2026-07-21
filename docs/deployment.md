@@ -1,5 +1,16 @@
 # Deployment: where engram lives and how to run it as a service
 
+## Docker (the one-command path)
+
+`docker compose up -d` at the repo root runs the whole stack — server +
+PostgreSQL/pgvector, ports bound to `127.0.0.1` only, data and the embedding
+model cached in named volumes (`pgdata`, `hf-cache`). Upgrades:
+`git pull && docker compose up -d --build`. To run only the database (native
+server for dev / Apple-Silicon GPU embeddings): `docker compose up -d postgres`.
+
+The rest of this page covers the **native** install, where the service runs
+directly on the box.
+
 ## Where to install (short answer: anywhere)
 
 Engram has **no required install location**. `scripts/install.sh` derives
@@ -23,6 +34,7 @@ definition), and restart. Nothing else references the old path.
 
 ```bash
 cd <your-clone>
+./scripts/bootstrap-db.sh  # first time only: PostgreSQL 17 + pgvector + createdb
 ./scripts/install.sh    # pyenv env, deps, .env from example, service definition
 ./scripts/start.sh      # sudo under the hood (LaunchDaemon / systemd)
 ./scripts/stop.sh
