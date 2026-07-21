@@ -1,5 +1,7 @@
 """Tests for the MCP inbox tools."""
 
+import json
+
 import httpx
 import respx
 from unittest.mock import patch
@@ -547,3 +549,60 @@ async def test_memory_resolve_forwards_guidance(respx_mock):
         )
     assert "Resolved" in result
     assert "GUIDANCE_SENTINEL" in result
+
+
+# --- group-chat reply routing (channel-aware memory_reply) -------------------
+
+def _parent(to, msg_id="inbox/gc-parent"):
+    return {
+        "id": msg_id, "to": to, "from_": "owner1", "subject": "kickoff",
+        "body": "status?", "thread_id": None, "read_by": [], "archived": False,
+        "created_at": "2026-07-20T20:00:00Z", "status": "open",
+    }
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_reply_to_channel_mail_goes_to_channel_as_fyi(respx_mock):
+    """Group chat: reply to '#channel' mail routes to the CHANNEL (every
+    subscriber sees it) and defaults intent=fyi (no wake storm)."""
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [_parent("#devagents")]}))
+    send_route = respx_mock.post("/memory/send").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "id": "inbox/gc-reply"}))
+    respx_mock.post("/memory/inbox/inbox/gc-parent/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/gc-parent"}))
+    out = await memory_reply(message_id="inbox/gc-parent", body="on it")
+    payload = json.loads(send_route.calls.last.request.read())
+    assert payload["to"] == "#devagents"
+    assert payload["intent"] == "fyi"
+    assert payload["thread_id"] == "inbox/gc-parent"
+    assert "→ #devagents" in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_reply_to_channel_mail_intent_override(respx_mock):
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [_parent("#devagents")]}))
+    send_route = respx_mock.post("/memory/send").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "id": "inbox/gc-reply2"}))
+    respx_mock.post("/memory/inbox/inbox/gc-parent/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/gc-parent"}))
+    await memory_reply(message_id="inbox/gc-parent", body="need eyes NOW", intent="action")
+    payload = json.loads(send_route.calls.last.request.read())
+    assert payload["to"] == "#devagents"
+    assert payload["intent"] == "action"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_reply_to_dm_unchanged_routes_to_sender_no_intent(respx_mock):
+    """DM replies keep the existing contract: to the sender, waking default."""
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [_parent("engram", msg_id="inbox/dm-parent")]}))
+    send_route = respx_mock.post("/memory/send").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "id": "inbox/dm-reply"}))
+    respx_mock.post("/memory/inbox/inbox/dm-parent/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/dm-parent"}))
+    await memory_reply(message_id="inbox/dm-parent", body="ack")
+    payload = json.loads(send_route.calls.last.request.read())
+    assert payload["to"] == "owner1"
+    assert "intent" not in payload or payload["intent"] in (None, "")

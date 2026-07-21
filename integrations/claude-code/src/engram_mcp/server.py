@@ -787,15 +787,26 @@ async def memory_reply(
     message_id: str,
     body: str,
     subject: str = "",
+    intent: str = "",
     project_dir: str = "",
 ) -> str:
     """Reply to an inbox message and ack it in one call. Addressing and
     thread-linking are automatic. Response includes current guidance.
 
+    GROUP-CHAT SEMANTICS: if the parent arrived via a '#channel', the reply
+    goes back TO THE CHANNEL (every subscriber sees it — one shared
+    conversation), threaded, and defaults to intent='fyi' so a busy thread
+    doesn't wake every peer on every reply (the owner's surface reads the
+    timeline either way). Pass intent='action' explicitly when your reply
+    genuinely needs to wake the others. Direct/DM replies route to the
+    sender as always.
+
     Args:
         message_id: The id of the message being replied to
         body: The reply body
         subject: Optional subject for the reply
+        intent: Optional intent override (fyi|action|proceed|escalate).
+            Channel replies default to 'fyi'; DM replies default to waking.
         project_dir: Your working directory path (required for identity)
     """
     reader_identity, listen_set = compute_identity(project_dir or None)
@@ -817,7 +828,16 @@ async def memory_reply(
     raw_from = parent.get("from_")
     if not raw_from:
         return f"Cannot reply: parent message {message_id} has no 'from' address."
-    reply_to = reader_to_address(raw_from)
+    parent_to = parent.get("to") or ""
+    if parent_to.startswith("#"):
+        # Channel mail: reply to the CHANNEL so every subscriber sees the
+        # whole conversation (group chat), not just the original sender.
+        # Default fyi — a busy thread must not wake every peer per reply.
+        reply_to = parent_to
+        effective_intent = intent or "fyi"
+    else:
+        reply_to = reader_to_address(raw_from)
+        effective_intent = intent  # DM replies keep waking by default
     thread_id = parent.get("thread_id") or parent["id"]
 
     send_result = await _client.inbox_send(
@@ -826,6 +846,7 @@ async def memory_reply(
         subject=subject or f"re: {parent.get('subject', '')}",
         from_=reader_identity,
         thread_id=thread_id,
+        intent=effective_intent or None,
         project_dir=project_dir or None,
     )
     await _client.inbox_ack(
