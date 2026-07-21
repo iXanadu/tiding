@@ -6,13 +6,13 @@ from server import preflight as pf
 
 
 def test_host_allowed_exact_and_wildcard():
-    pats = ["localhost", "127.0.0.1", "macmini", "*.tailnet-demo.ts.net"]
+    pats = ["localhost", "127.0.0.1", "macmini", "*.example.net"]
     assert pf._host_allowed("macmini", pats)
     assert pf._host_allowed("macmini:8920", pats)            # port stripped
     assert pf._host_allowed("MacMini", pats)                 # case-insensitive
-    assert pf._host_allowed("box.tailnet-demo.ts.net", pats)     # subdomain wildcard
+    assert pf._host_allowed("box.example.net", pats)     # subdomain wildcard
     assert not pf._host_allowed("evil.com", pats)
-    assert not pf._host_allowed("192.0.2.9", pats)
+    assert not pf._host_allowed("198.51.100.9", pats)
 
 
 def test_wildcard_star_allows_all():
@@ -22,17 +22,17 @@ def test_wildcard_star_allows_all():
 def test_trusted_hosts_warns_when_bind_network_and_names_uncovered(monkeypatch):
     monkeypatch.setattr(pf.settings, "host", "0.0.0.0")
     monkeypatch.setattr(pf.settings, "trusted_hosts", "localhost,127.0.0.1")
-    monkeypatch.setattr(pf, "_local_reachable_names", lambda: ["boxname", "192.0.2.5"])
+    monkeypatch.setattr(pf, "_local_reachable_names", lambda: ["boxname", "203.0.113.5"])
     level, msg, fix = pf.check_trusted_hosts()
     assert level == pf.WARN
-    assert "boxname" in msg and "192.0.2.5" in msg
+    assert "boxname" in msg and "203.0.113.5" in msg
     assert "ENGRAM_TRUSTED_HOSTS=" in fix
 
 
 def test_trusted_hosts_pass_when_covered(monkeypatch):
     monkeypatch.setattr(pf.settings, "host", "0.0.0.0")
-    monkeypatch.setattr(pf.settings, "trusted_hosts", "localhost,boxname,192.0.2.5")
-    monkeypatch.setattr(pf, "_local_reachable_names", lambda: ["boxname", "192.0.2.5"])
+    monkeypatch.setattr(pf.settings, "trusted_hosts", "localhost,boxname,203.0.113.5")
+    monkeypatch.setattr(pf, "_local_reachable_names", lambda: ["boxname", "203.0.113.5"])
     assert pf.check_trusted_hosts()[0] == pf.PASS
 
 
