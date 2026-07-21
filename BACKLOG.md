@@ -16,16 +16,17 @@
 
 ## Next (committed, not started)
 
-- **DOC-7** Adoption docs pass: human-agent daily workflow guide; "where it
-  fits" positioning paragraph (fit, not fight — see `decision/positioning-*`
-  in memory).
+
+## Blocked-external
+
+- **DOCKER-1** Verify the full-stack compose path (build, health,
+  store/search roundtrip), then promote it from "experimental" in
+  README/deployment docs. Blocked: NO healthy Docker runtime exists on the
+  fleet (surveyed 2026-07-21 — Linux spokes have no Docker; macmini's
+  OrbStack hangs on daemon start). Needs a runtime repair or a fresh box
+  first; the stack definition itself is unproven, not suspect.
 
 ## Later / decide
-
-- **DOCKER-1** Verify the full-stack compose path on a box with a healthy
-  Docker runtime (build, health, store/search roundtrip), then promote it
-  from "experimental" in README/deployment docs. Local attempt was blocked
-  by runtime issues, not by the stack definition.
 
 - **LIVE-1** Productize the keep-going driver on roster+intent rails
   (advance-at-seam, never interrupt; escalate irreversible gates). Rail is

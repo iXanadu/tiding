@@ -120,6 +120,9 @@ project = foo
 
 ## Where to next
 
+- [daily-workflow.md](daily-workflow.md) — how a human + agents actually
+  live with a memory-first workflow (startup recall, milestone stores,
+  handoffs, the team loop).
 - [messaging.md](messaging.md) — addresses, intent, waking, lifecycle,
   presence.
 - [multi-provider.md](multi-provider.md) — adding Grok/Codex/anything with

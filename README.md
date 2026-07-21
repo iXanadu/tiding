@@ -69,6 +69,7 @@ curl -s -H "Content-Type: application/json" \
 **Security:** [Security model & trust boundaries](SECURITY.md)
 
 **Docs:** [Getting started + security posture](docs/getting-started.md) ·
+[Daily workflow (memory-first sessions)](docs/daily-workflow.md) ·
 [Deployment](docs/deployment.md) · [Messaging](docs/messaging.md) ·
 [Build a huddle (group chat)](docs/build-a-huddle.md) ·
 [Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md)
