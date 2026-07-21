@@ -20,6 +20,7 @@ dev = [
 [project.scripts]
 engram-mcp = "engram_mcp.server:main"
 engram-inbox-wait = "engram_mcp.inbox_wait:main"
+engram-doctor = "engram_mcp.doctor:main"
 
 [build-system]
 requires = ["setuptools>=75.0"]
