@@ -9,6 +9,13 @@
 
 ## Next (committed, not started)
 
+- **NS-3** Retire the `claude-code=fleet` alias — SECOND attempt, now
+  data-gated. NS-2's config/DB/grants sweep missed a straggler class:
+  application clients hardcoding the legacy namespace in their own code
+  (AB's hub, MEM-403). Alias restored as prod operator config;
+  NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
+  switched to `fleet` AND the log is quiet for a full grace week.
+
 - **HUD-1** Private multi-party threads (group-reply): a fan-out send
   (`to: [a,b,c]`) records its participant set; `memory_reply` on such a
   thread fans out to ALL participants (not just the sender), each reply

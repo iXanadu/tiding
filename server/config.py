@@ -52,6 +52,15 @@ class Settings(BaseSettings):
             if "=" in pair:
                 old, new = pair.split("=", 1)
                 if ns.strip().lower() == old.strip().lower():
+                    # Observability is the retirement gate (MEM-403 lesson:
+                    # the silent rewrite hid a hardcoding client, and retiring
+                    # the alias 403'd it). Grep logs for NAMESPACE-ALIAS-HIT;
+                    # retire an alias only after a quiet grace window.
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "NAMESPACE-ALIAS-HIT: %r -> %r (a client still sends "
+                        "the legacy name)", ns, new.strip().lower(),
+                    )
                     return new.strip().lower()
         return ns
 
