@@ -192,3 +192,65 @@ async def test_poll_fyi_intent_never_wakes(respx_mock):
     # the fyi is seen (won't re-wake later) even though it never emitted
     assert "inbox/1" in seen
     await c.close()
+
+
+# --- 2026-07-21 audit: fail LOUD on auth rejection, warn on plaintext ---
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_exits_on_401_instead_of_retrying(respx_mock, capsys, monkeypatch):
+    """An auth rejection is not transient — retry-forever means every wake is
+    silently missed. The watcher must die with EXIT_AUTH_FAILED."""
+    from engram_mcp import inbox_wait as iw
+
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(401, json={"detail": "Invalid API token."})
+    )
+    # include_existing so the seed poll is skipped and the loop hits the 401
+    rc = await _run(_Args(include_existing=True, follow=True, timeout=5.0))
+    assert rc == iw.EXIT_AUTH_FAILED
+    err = capsys.readouterr().err
+    assert "FATAL" in err and "~/.config/engram/identity" in err
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_exits_on_403(respx_mock, capsys):
+    from engram_mcp import inbox_wait as iw
+
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(403, json={"detail": "forbidden"})
+    )
+    rc = await _run(_Args(include_existing=True, follow=True, timeout=5.0))
+    assert rc == iw.EXIT_AUTH_FAILED
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_keeps_polling_on_transient_500(respx_mock, capsys):
+    """Non-auth server blips must NOT kill a long-lived watcher (unchanged)."""
+    calls = {"n": 0}
+
+    def _responder(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, json={"detail": "boom"})
+        return httpx.Response(200, json={"status": "ok", "messages": [_msg(1)]})
+
+    respx_mock.post("/memory/inbox").mock(side_effect=_responder)
+    rc = await _run(_Args(include_existing=True))
+    assert rc == 0  # survived the 500, woke on the mail after
+    assert "retrying" in capsys.readouterr().err
+
+
+def test_plaintext_warning_for_remote_http(capsys):
+    from engram_mcp.inbox_wait import _warn_plaintext_url
+
+    _warn_plaintext_url("http://macmini:8920")
+    assert "unencrypted" in capsys.readouterr().err
+
+
+def test_no_plaintext_warning_for_localhost_or_https(capsys):
+    from engram_mcp.inbox_wait import _warn_plaintext_url
+
+    _warn_plaintext_url("http://localhost:8920")
+    _warn_plaintext_url("http://127.0.0.1:8920")
+    _warn_plaintext_url("https://engram.example.com")
+    assert capsys.readouterr().err == ""

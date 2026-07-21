@@ -28,10 +28,47 @@ import asyncio
 import json
 import sys
 import time
+from urllib.parse import urlparse
+
+import httpx
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
 from engram_mcp.identity import compute_identity, reader_to_address
+
+# Exit code for auth failure — distinct from 0 (clean) so a Monitor-armed
+# session sees the watcher die with a reason instead of it silently
+# retrying forever while every wake is missed.
+EXIT_AUTH_FAILED = 2
+
+_AUTH_FAIL_MSG = (
+    "inbox-wait: FATAL — server rejected this watcher's credentials ({code}). "
+    "Exiting rather than silently missing every wake. Fix the token in "
+    "~/.config/engram/identity (the watcher does NOT inherit the MCP bridge "
+    "env), then re-arm the watcher."
+)
+
+
+def _auth_error_code(e: Exception) -> int | None:
+    """Return 401/403 when the exception is an auth rejection, else None."""
+    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+        return e.response.status_code
+    return None
+
+
+def _warn_plaintext_url(url: str) -> None:
+    """Warn when the token would travel plaintext beyond this box."""
+    parsed = urlparse(url)
+    if parsed.scheme == "http" and parsed.hostname not in (
+        "localhost", "127.0.0.1", "::1",
+    ):
+        print(
+            f"inbox-wait: WARNING — {url} is plain http to a non-local host; "
+            "the auth token travels unencrypted. Prefer https or a private "
+            "overlay network (e.g. Tailscale).",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _emit(msg: dict) -> None:
@@ -116,6 +153,7 @@ async def _run(args) -> int:
     if args.address:
         listen_set = [a.strip() for a in args.address.split(",") if a.strip()]
 
+    _warn_plaintext_url(settings.memory_api_url)
     client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
     try:
         # Default: only wake on mail that arrives AFTER the watcher starts — a
@@ -126,6 +164,9 @@ async def _run(args) -> int:
             try:
                 await _poll(client, listen_set, reader_identity, seen)
             except Exception as e:  # seeding failure is non-fatal — start clean
+                if _auth_error_code(e):
+                    print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)
+                    return EXIT_AUTH_FAILED
                 print(f"inbox-wait: seed poll failed ({e})", file=sys.stderr, flush=True)
 
         deadline = (time.monotonic() + args.timeout) if args.timeout else None
@@ -133,6 +174,14 @@ async def _run(args) -> int:
             try:
                 fresh = await _poll(client, listen_set, reader_identity, seen)
             except Exception as e:
+                # AUTH rejection is not transient: retry-forever here means the
+                # server refuses this watcher on every poll while the session
+                # believes it's covered — every wake silently missed (fail-open,
+                # 2026-07-21 audit). Die loudly; the Monitor exit wakes the
+                # session with the reason.
+                if _auth_error_code(e):
+                    print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)
+                    return EXIT_AUTH_FAILED
                 # transient server blip (e.g. macmini restart) must not kill a
                 # long-lived --follow watcher; log and keep polling.
                 print(f"inbox-wait: poll error ({e}); retrying", file=sys.stderr, flush=True)
