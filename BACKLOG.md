@@ -14,6 +14,14 @@
 
 ## Next (committed, not started)
 
+- **HUD-1** Private multi-party threads (group-reply): a fan-out send
+  (`to: [a,b,c]`) records its participant set; `memory_reply` on such a
+  thread fans out to ALL participants (not just the sender), each reply
+  under the replier's own verified stamp. Kills the AB-relay workaround
+  (owner-stamped relayed messages, single point of relay, poll latency).
+  Metadata-only — no schema change. Requested by agentbeast 2026-07-21;
+  design accepted (rejected alt: runtime channel subscribe — fights
+  launch-time membership + watcher re-arm).
 
 ## Blocked-external
 
