@@ -25,6 +25,11 @@
 
 ## Later / decide
 
+- **DOCKER-1** Verify the full-stack compose path on a box with a healthy
+  Docker runtime (build, health, store/search roundtrip), then promote it
+  from "experimental" in README/deployment docs. Local attempt was blocked
+  by runtime issues, not by the stack definition.
+
 - **LIVE-1** Productize the keep-going driver on roster+intent rails
   (advance-at-seam, never interrupt; escalate irreversible gates). Rail is
   live; driver judgment layer is external.

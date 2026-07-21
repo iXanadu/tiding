@@ -1,3 +1,17 @@
+# One-command engram stack: `docker compose up -d` → server + database.
+#   Health:   curl http://localhost:8920/health
+#   First boot downloads the embedding model (~270MB) into the hf-cache
+#   volume — allow a few minutes once; every later boot is seconds.
+#
+# Security posture: both published ports are bound to 127.0.0.1 on the HOST,
+# so nothing here is LAN-reachable. The server binds 0.0.0.0 only INSIDE the
+# container network (required for the port mapping to work) — that's why the
+# image sets the explicit ALLOW_INSECURE_BIND opt-out; the loopback port
+# binding is what enforces the boundary. Before exposing anything beyond
+# localhost, read docs/getting-started.md → security posture.
+#
+# Prefer running the server natively (dev, Apple-Silicon GPU embeddings)?
+# Start only the database:  docker compose up -d postgres
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -6,9 +20,31 @@ services:
       POSTGRES_USER: engram
       POSTGRES_PASSWORD: engram
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engram -d engram"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  engram:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENGRAM_DB_HOST: postgres
+      ENGRAM_DB_PORT: "5432"
+      ENGRAM_DB_NAME: engram
+      ENGRAM_DB_USER: engram
+      ENGRAM_DB_PASSWORD: engram
+    ports:
+      - "127.0.0.1:8920:8920"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
 
 volumes:
   pgdata:
+  hf-cache:

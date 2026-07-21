@@ -146,21 +146,7 @@ Set `ENGRAM_WARN_UNAUTHED=true` to log warnings for unauthenticated requests wit
 
 ## Quick Start
 
-### Fastest: Docker (one command, nothing else installed)
-
-```bash
-git clone https://github.com/iXanadu/engram.git && cd engram
-docker compose up -d          # server + PostgreSQL/pgvector, all included
-curl http://localhost:8920/health   # {"status":"ok",...}
-```
-
-First boot downloads the embedding model (~270MB, cached in a volume) —
-allow a few minutes once; later boots are seconds. Both ports bind to
-`127.0.0.1` on your machine only. From here jump straight to
-[getting started](docs/getting-started.md) — store a memory, send a
-message, [build a huddle](docs/build-a-huddle.md).
-
-### Native (no Docker needed — development, Apple-Silicon GPU embeddings)
+### Fastest: three commands, no Docker
 
 ```bash
 git clone https://github.com/iXanadu/engram.git && cd engram
@@ -170,8 +156,18 @@ curl http://localhost:8920/health
 ```
 
 Three commands on macOS; on Linux `bootstrap-db.sh` prints your distro's
-exact package commands, then finishes the setup itself. Details and manual
-steps below.
+exact package commands, then finishes the setup itself. This is the
+supported path — native PostgreSQL, and on Apple Silicon the embeddings use
+the GPU. Details and manual steps below.
+
+### Docker (experimental)
+
+A full containerized stack (server + PostgreSQL/pgvector) is defined in
+`docker-compose.yml` — `docker compose up -d`, ports bound to `127.0.0.1`,
+data and the embedding model in named volumes. It is **not yet
+CI-verified**; if you live in Docker and try it, an issue report either way
+is welcome. `docker compose up -d postgres` (database only, native server)
+is the well-trodden combination.
 
 #### Prerequisites (manual route)
 

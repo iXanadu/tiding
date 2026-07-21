@@ -1,15 +1,13 @@
 # Deployment: where engram lives and how to run it as a service
 
-## Docker (the one-command path)
+## Docker (experimental)
 
-`docker compose up -d` at the repo root runs the whole stack — server +
+`docker compose up -d` at the repo root defines the whole stack — server +
 PostgreSQL/pgvector, ports bound to `127.0.0.1` only, data and the embedding
-model cached in named volumes (`pgdata`, `hf-cache`). Upgrades:
-`git pull && docker compose up -d --build`. To run only the database (native
-server for dev / Apple-Silicon GPU embeddings): `docker compose up -d postgres`.
-
-The rest of this page covers the **native** install, where the service runs
-directly on the box.
+model cached in named volumes (`pgdata`, `hf-cache`); upgrade with
+`git pull && docker compose up -d --build`. **Not yet CI-verified** — the
+supported install is the native one below. `docker compose up -d postgres`
+(database only) is well-trodden.
 
 ## Where to install (short answer: anywhere)
 
