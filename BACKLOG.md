@@ -28,10 +28,8 @@
 
 ## Later / decide
 
-- **LIVE-1** Productize the keep-going driver on roster+intent rails
-  (advance-at-seam, never interrupt; escalate irreversible gates). Rail is
-  live; driver judgment layer is external.
-- **APP-1** Per-app inbox identity pattern for multi-app projects — blocked
-  on a live second-app validation round-trip.
-- **LIFE-2** Inbox lifecycle wave 2 (client-driven resolve/supersede
-  ergonomics) — build when inbox noise is a felt problem, not before.
+- **LIVE-1** *(handed off 2026-07-21)* Keep-going driver: engram's rail
+  (wake + roster + intent + lifecycle) is complete; the driver judgment
+  layer is AgentBeast's per the standing division of labor — formally
+  handed off via inbox (ack pending). Drops off this ledger once
+  agentbeast acknowledges ownership.
