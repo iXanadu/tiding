@@ -27,9 +27,15 @@ logger = logging.getLogger(__name__)
 
 class PrincipalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Always allow exempt paths without auth
+        # Always allow exempt paths without auth (/static: the dashboard's
+        # own vendored JS/CSS — public by nature, no data behind it)
         path = request.url.path
-        if path == "/health" or path.startswith("/dashboard") or path == "/bridge":
+        if (
+            path == "/health"
+            or path.startswith("/dashboard")
+            or path == "/bridge"
+            or path.startswith("/static/")
+        ):
             request.state.principal = None
             request.state.auth_source = "anonymous"
             return await call_next(request)

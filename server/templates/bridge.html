@@ -4,25 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>engram bridge</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        engram: {
-                            darker: '#0a0e17',
-                            dark: '#111827',
-                            surface: '#1a2332',
-                            border: '#2a3a4e',
-                            accent: '#60a5fa',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- Locally served, pinned assets — no CDN (2026-07-21 audit).
+         Rebuild with scripts/build-dashboard-assets.sh when classes change. -->
+    <link rel="stylesheet" href="/static/bridge.css">
+    <script defer src="/static/alpine-3.14.9.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
         body { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
@@ -210,7 +195,7 @@
                 tokenSaved: false,
 
                 authHeaders() {
-                    const token = localStorage.getItem('engram_token');
+                    const token = sessionStorage.getItem('engram_token');
                     const h = { 'Content-Type': 'application/json' };
                     if (token) h['Authorization'] = `Bearer ${token}`;
                     return h;
@@ -218,7 +203,7 @@
 
                 saveToken() {
                     if (this.tokenInput.trim()) {
-                        localStorage.setItem('engram_token', this.tokenInput.trim());
+                        sessionStorage.setItem('engram_token', this.tokenInput.trim());
                         this.tokenInput = '';
                         this.tokenSaved = true;
                         this.init();
@@ -226,13 +211,13 @@
                 },
 
                 clearToken() {
-                    localStorage.removeItem('engram_token');
+                    sessionStorage.removeItem('engram_token');
                     this.tokenSaved = false;
                     this.connected = false;
                 },
 
                 async init() {
-                    this.tokenSaved = !!localStorage.getItem('engram_token');
+                    this.tokenSaved = !!sessionStorage.getItem('engram_token');
                     try {
                         const resp = await fetch(`${API}/health`);
                         this.connected = resp.ok;

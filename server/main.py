@@ -151,6 +151,18 @@ app.include_router(identity.router)
 app.include_router(health.router)
 app.include_router(dashboard.router)
 
+# Pinned, locally-built dashboard assets (Alpine + compiled Tailwind) —
+# no CDN at runtime (2026-07-21 audit). Built by scripts/build-dashboard-assets.sh.
+from pathlib import Path  # noqa: E402
+
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+    name="static",
+)
+
 
 if __name__ == "__main__":
     # Prefer `python -m server` (see server/__main__.py) so guard-input equals
