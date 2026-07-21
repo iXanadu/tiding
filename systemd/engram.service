@@ -17,6 +17,9 @@ Wants=postgresql.service
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/opt/srv/engram
+# Find your box's real interpreter path with:
+#   ./scripts/resolve-venv-python.sh engram-3.12
+# (pyenv roots differ per box: ~/.pyenv vs the shared /usr/local/pyenv)
 ExecStart=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/python -m server
 Restart=always
 RestartSec=5

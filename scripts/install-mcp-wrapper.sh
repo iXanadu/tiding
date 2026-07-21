@@ -32,29 +32,17 @@ if [ ! -d "$MCP_PKG" ] || [ ! -f "$MCP_PKG/pyproject.toml" ]; then
     exit 1
 fi
 
-# --- Locate pyenv (same logic as install.sh) ---
+# --- Locate pyenv (shared resolver — knows every fleet root, not just ~/.pyenv) ---
 
-PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
-if [ ! -d "$PYENV_ROOT" ]; then
-    echo "ERROR: pyenv root not found at $PYENV_ROOT"
-    echo "Set PYENV_ROOT or install pyenv: https://github.com/pyenv/pyenv#installation"
+RESOLVE="$SCRIPT_DIR/resolve-venv-python.sh"
+PYENV_ROOT="$("$RESOLVE" --root)" || {
+    echo "Install pyenv: https://github.com/pyenv/pyenv#installation"
     exit 1
-fi
-
-PYENV_BIN="$(command -v pyenv 2>/dev/null || echo "$PYENV_ROOT/bin/pyenv")"
-if [ ! -x "$PYENV_BIN" ]; then
-    for candidate in "$PYENV_ROOT/bin/pyenv" /opt/homebrew/bin/pyenv /usr/local/bin/pyenv; do
-        if [ -x "$candidate" ]; then
-            PYENV_BIN="$candidate"
-            break
-        fi
-    done
-fi
-
-if [ ! -x "$PYENV_BIN" ]; then
-    echo "ERROR: Cannot find pyenv binary"
-    exit 1
-fi
+}
+# Export so `pyenv virtualenv` creates under THIS root — without it, a bare
+# shell on a /usr/local/pyenv box would silently default to ~/.pyenv.
+export PYENV_ROOT
+PYENV_BIN="$("$RESOLVE" --pyenv-bin)" || exit 1
 
 echo "pyenv:  $PYENV_BIN"
 
@@ -75,18 +63,16 @@ fi
 
 # --- Install (editable) ---
 
-VENV_PIP="$PYENV_ROOT/versions/$VENV_NAME/bin/pip"
-if [ ! -x "$VENV_PIP" ]; then
-    echo "ERROR: pip not found at $VENV_PIP"
-    exit 1
-fi
+# Resolve through the shared resolver: the venv may live under a different
+# pyenv root than the first-found one (e.g. /usr/local/pyenv on Linux).
+VENV_PIP="$("$RESOLVE" "$VENV_NAME" pip)" || exit 1
 
 echo "Installing engram-mcp (editable) into $VENV_NAME..."
 "$VENV_PIP" install -e "$MCP_PKG" --quiet
 
 # --- Verify ---
 
-VENV_PY="$PYENV_ROOT/versions/$VENV_NAME/bin/python"
+VENV_PY="$("$RESOLVE" "$VENV_NAME" python)" || exit 1
 if "$VENV_PY" -c "from engram_mcp.scoping import resolve_project_name" 2>/dev/null; then
     echo "Verify: engram_mcp imports cleanly"
 else
@@ -94,7 +80,31 @@ else
     exit 1
 fi
 
+# --- Stable command paths (fleet-uniform) ---
+# Symlink the console scripts to /usr/local/bin so .claude.json, launchd,
+# systemd, and skill docs reference ONE path on every box, regardless of
+# where pyenv lives (~/.pyenv on macOS, /usr/local/pyenv on shared Linux).
+# Best-effort: a failed symlink degrades to the venv path, never the install.
+STABLE_BIN_DIR="/usr/local/bin"
+VENV_BIN_DIR="$(dirname "$VENV_PY")"
+for cmd in engram-mcp engram-inbox-wait engram-doctor; do
+    src="$VENV_BIN_DIR/$cmd"
+    if [ ! -x "$src" ]; then
+        echo "WARNING: $cmd not found in venv — skipping symlink"
+        continue
+    fi
+    if [ -w "$STABLE_BIN_DIR" ]; then
+        ln -sf "$src" "$STABLE_BIN_DIR/$cmd" && echo "Symlink: $STABLE_BIN_DIR/$cmd -> $src"
+    elif sudo -n true 2>/dev/null || [ -t 0 ]; then
+        sudo ln -sf "$src" "$STABLE_BIN_DIR/$cmd" && echo "Symlink: $STABLE_BIN_DIR/$cmd -> $src" || \
+            echo "WARNING: could not symlink $STABLE_BIN_DIR/$cmd (continuing — venv path still works)"
+    else
+        echo "WARNING: $STABLE_BIN_DIR not writable and no sudo — skipping $cmd symlink"
+    fi
+done
+
 echo ""
 echo "=== Done ==="
+echo "Stable commands: /usr/local/bin/engram-{mcp,inbox-wait,doctor}"
 echo "New Claude Code sessions will pick up the updated wrapper automatically"
 echo "(the MCP bridge is spawned per-session; no restart needed)."

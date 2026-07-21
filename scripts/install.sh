@@ -25,33 +25,20 @@ echo "App directory: $APP_DIR"
 
 # --- Python environment ---
 
-# Find pyenv binary (works for both Homebrew and git installs)
-PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
-if [ ! -d "$PYENV_ROOT" ]; then
-    echo "ERROR: pyenv root not found at $PYENV_ROOT"
+# Locate pyenv via the shared resolver — it knows every fleet root
+# (~/.pyenv on macOS, /usr/local/pyenv on shared Linux), so this script
+# never assumes one box's layout.
+RESOLVE="$SCRIPT_DIR/resolve-venv-python.sh"
+PYENV_BIN="$("$RESOLVE" --pyenv-bin)" || {
     echo "Install pyenv: https://github.com/pyenv/pyenv#installation"
     exit 1
-fi
+}
+# Export the resolved root so `pyenv virtualenv` creates under THIS root —
+# without it, a bare shell on a /usr/local/pyenv box defaults to ~/.pyenv.
+PYENV_ROOT="$("$RESOLVE" --root)" || exit 1
+export PYENV_ROOT
 
-# Locate the pyenv binary — Homebrew puts it in /opt/homebrew/bin, git install in $PYENV_ROOT/bin
-PYENV_BIN="$(command -v pyenv 2>/dev/null || echo "$PYENV_ROOT/bin/pyenv")"
-if [ ! -x "$PYENV_BIN" ]; then
-    # command -v returns the shell function name, not a path — fall back to known locations
-    for candidate in "$PYENV_ROOT/bin/pyenv" /opt/homebrew/bin/pyenv /usr/local/bin/pyenv; do
-        if [ -x "$candidate" ]; then
-            PYENV_BIN="$candidate"
-            break
-        fi
-    done
-fi
-
-if [ ! -x "$PYENV_BIN" ]; then
-    echo "ERROR: Cannot find pyenv binary"
-    echo "Install pyenv: https://github.com/pyenv/pyenv#installation"
-    exit 1
-fi
-
-echo "Using pyenv: $PYENV_BIN"
+echo "Using pyenv: $PYENV_BIN (root: $PYENV_ROOT)"
 
 # Check if the virtualenv already exists
 if "$PYENV_BIN" versions --bare 2>/dev/null | grep -q "^${VENV_NAME}$"; then
@@ -71,9 +58,10 @@ fi
 # Set local .python-version
 echo "$VENV_NAME" > "$APP_DIR/.python-version"
 
-# Install dependencies
-VENV_PIP="$PYENV_ROOT/versions/$VENV_NAME/bin/pip"
-VENV_PYTHON="$PYENV_ROOT/versions/$VENV_NAME/bin/python"
+# Install dependencies (resolve through the shared resolver — the venv may
+# live under whichever pyenv root this box uses)
+VENV_PIP="$("$RESOLVE" "$VENV_NAME" pip)" || exit 1
+VENV_PYTHON="$("$RESOLVE" "$VENV_NAME" python)" || exit 1
 echo "Installing dependencies..."
 "$VENV_PIP" install -e "$APP_DIR" --quiet
 
@@ -121,20 +109,13 @@ echo "Running preflight self-check..."
 # docs/design/provider-credentials.md for what to add.
 
 # --- Claude Code MCP sub-package (engram-mcp) ---
+# Delegated to install-mcp-wrapper.sh (single owner of bridge install +
+# /usr/local/bin symlinks). Non-fatal: a bridge hiccup shouldn't sink the
+# server install.
 
-MCP_VENV="cc-memory-3.12"
-MCP_PKG="$APP_DIR/integrations/claude-code"
-
-if [ -d "$MCP_PKG" ]; then
-    MCP_PIP="$PYENV_ROOT/versions/$MCP_VENV/bin/pip"
-    if [ -x "$MCP_PIP" ]; then
-        echo "Installing engram-mcp into $MCP_VENV..."
-        "$MCP_PIP" install -e "$MCP_PKG" --quiet
-        echo "engram-mcp installed"
-    else
-        echo "WARNING: $MCP_VENV virtualenv not found — skipping engram-mcp install"
-        echo "Create it: pyenv virtualenv 3.12 $MCP_VENV"
-    fi
+if [ -d "$APP_DIR/integrations/claude-code" ]; then
+    "$SCRIPT_DIR/install-mcp-wrapper.sh" || \
+        echo "WARNING: engram-mcp install reported issues — run scripts/install-mcp-wrapper.sh manually"
 else
     echo "NOTE: No integrations/claude-code/ found — skipping MCP install"
 fi
@@ -144,7 +125,8 @@ fi
 # Launch via `python -m server` so the app binds ENGRAM_HOST itself and the
 # SEC-1 guard checks the address actually bound (uvicorn --host would decouple
 # the real bind from the guard — the "secure by default" bypass).
-PYBIN="$PYENV_ROOT/versions/$VENV_NAME/bin/python"
+PYBIN="$VENV_PYTHON"
+VENV_BIN_DIR="$(dirname "$PYBIN")"
 
 if [[ "$(uname)" == "Darwin" ]]; then
     # macOS: LaunchDaemon (starts at boot, no login required)
@@ -226,7 +208,7 @@ WorkingDirectory=${APP_DIR}
 ExecStart=${PYBIN} -m server
 Restart=always
 RestartSec=5
-Environment=PATH=${PYENV_ROOT}/versions/${VENV_NAME}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=${VENV_BIN_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 # Embed model is pinned + fully cached; skip the online HF metadata
 # revalidation at boot (avoids a startup race that crash-loops the service).
 # Flip OFF only for a deliberate embed-model change needing a re-download.

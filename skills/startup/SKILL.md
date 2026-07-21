@@ -56,8 +56,10 @@ Compare dates across results. If the most recent memories are newer than `startu
 So this session wakes on *any* inbound message for its whole lifetime — not just after you send one and wait — launch the inbox watcher as a background **Monitor** stream. Each new message becomes an injected notification; when one fires, read it (`memory_inbox`) and handle it.
 
 ```
-~/.pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait --follow --project-dir <repo-abs-path>
+/usr/local/bin/engram-inbox-wait --follow --project-dir <repo-abs-path>
 ```
+
+(That's the stable fleet-wide symlink installed by `scripts/install-mcp-wrapper.sh`. If it doesn't exist on this box yet, fall back to the venv path — `~/.pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait` on macOS, `/usr/local/pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait` on shared-pyenv Linux — or resolve it with `scripts/resolve-venv-python.sh cc-memory-3.12 engram-inbox-wait`.)
 
 - **Seat declared? Arm the watcher with it.** If this session was launched
   with `ENGRAM_INBOX_IDENTITY` (or declares a seat after a SEAT COLLISION

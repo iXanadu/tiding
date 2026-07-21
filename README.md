@@ -449,23 +449,30 @@ Pyscript client + Blueprint for HA voice assistants. See [integrations/homeassis
 
 ### Claude Code
 
-MCP server for Claude Code lives in [integrations/claude-code/](integrations/claude-code/). Install it in its own pyenv virtualenv:
+MCP server for Claude Code lives in [integrations/claude-code/](integrations/claude-code/). Install it with the wrapper installer — it creates the `cc-memory-3.12` virtualenv if needed, installs the package (editable), and symlinks the console scripts to stable paths:
 
 ```bash
-pyenv virtualenv 3.12 cc-memory-3.12
-cd integrations/claude-code
-PYENV_VERSION=cc-memory-3.12 pip install -e .
+./scripts/install-mcp-wrapper.sh
 ```
 
-Then register in `~/.claude.json`:
+This gives every box the same three commands regardless of where pyenv lives (`~/.pyenv` on macOS, `/usr/local/pyenv` on shared Linux installs):
+
+```
+/usr/local/bin/engram-mcp          # the MCP stdio server
+/usr/local/bin/engram-inbox-wait   # inbox auto-wake watcher
+/usr/local/bin/engram-doctor       # client-side self-check
+```
+
+(Need the raw venv path for something? `./scripts/resolve-venv-python.sh cc-memory-3.12 <binary>` prints it.)
+
+Then register in `~/.claude.json` using the stable path:
 
 ```json
 {
   "mcpServers": {
     "claude-memory": {
       "type": "stdio",
-      "command": "path/to/pyenv/versions/cc-memory-3.12/bin/python",
-      "args": ["-m", "engram_mcp.server"],
+      "command": "/usr/local/bin/engram-mcp",
       "env": {
         "memory_api_url": "http://localhost:8920",
         "memory_api_token": "engram_<your-token>"

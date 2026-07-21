@@ -13,8 +13,8 @@ APP_DIR="$(dirname "$SCRIPT_DIR")"
 # Preflight doctor: catch a self-refusing bind or a Host allowlist that won't
 # cover how clients reach this box (the Tailscale/remote-reach class) BEFORE
 # starting. A FAIL means the service would refuse to boot — stop and fix it.
-PF_PY="$(command -v python3 || echo python)"
-[ -x "$HOME/.pyenv/versions/engram-3.12/bin/python" ] && PF_PY="$HOME/.pyenv/versions/engram-3.12/bin/python"
+PF_PY="$("$SCRIPT_DIR/resolve-venv-python.sh" engram-3.12 python 2>/dev/null)" || \
+    PF_PY="$(command -v python3 || echo python)"
 if ! (cd "$APP_DIR" && "$PF_PY" -m server.preflight); then
     echo
     echo "Preflight found a blocking problem (above). Fix it, then re-run start.sh."

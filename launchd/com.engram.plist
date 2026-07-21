@@ -20,7 +20,9 @@
     <string>YOUR_USERNAME</string>
     <!-- `python -m server` binds settings.host (ENGRAM_HOST) so the SEC-1
          bind guard checks the address actually bound. Do NOT go back to
-         `uvicorn --host X` — that decouples the real bind from the guard. -->
+         `uvicorn --host X` — that decouples the real bind from the guard.
+         Find your box's real interpreter path with:
+           ./scripts/resolve-venv-python.sh engram-3.12 -->
     <key>ProgramArguments</key>
     <array>
         <string>/Users/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/python</string>
