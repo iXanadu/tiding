@@ -28,8 +28,3 @@
 
 ## Later / decide
 
-- **LIVE-1** *(handed off 2026-07-21)* Keep-going driver: engram's rail
-  (wake + roster + intent + lifecycle) is complete; the driver judgment
-  layer is AgentBeast's per the standing division of labor — formally
-  handed off via inbox (ack pending). Drops off this ledger once
-  agentbeast acknowledges ownership.
