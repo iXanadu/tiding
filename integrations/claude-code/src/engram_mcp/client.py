@@ -167,6 +167,7 @@ class MemoryClient:
         thread_id: str | None = None,
         project_dir: str | None = None,
         intent: str | None = None,
+        supersedes: str | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
         if from_:
@@ -175,6 +176,8 @@ class MemoryClient:
             payload["thread_id"] = thread_id
         if intent:
             payload["intent"] = intent
+        if supersedes:
+            payload["supersedes"] = supersedes
         return await self._request(
             "POST",
             "/memory/send",
@@ -236,6 +239,7 @@ class MemoryClient:
         limit: int = 20,
         project_dir: str | None = None,
         newest_first: bool = False,
+        include_resolved: bool = False,
     ) -> dict:
         return await self._request(
             "POST",
@@ -246,6 +250,7 @@ class MemoryClient:
                 "unread_only": unread_only,
                 "limit": limit,
                 "newest_first": newest_first,
+                "include_resolved": include_resolved,
             },
             headers=self._provenance_headers(project_dir),
         )

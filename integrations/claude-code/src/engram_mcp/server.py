@@ -814,6 +814,7 @@ async def memory_send(
     subject: str = "",
     thread_id: str = "",
     intent: str = "",
+    supersedes: str = "",
     project_dir: str = "",
 ) -> str:
     """Send an inbox message to another session, a #channel, or several
@@ -829,6 +830,9 @@ async def memory_send(
         intent: Optional message intent — one of fyi | action | proceed |
             escalate | authority-directive. 'fyi' will NOT wake a dormant
             recipient (informational); others wake. Omit for default (wakes).
+        supersedes: Optional id of YOUR earlier message this one replaces
+            (e.g. a corrected spec). The old message flips to 'superseded'
+            and drains from default views — latest wins, no stale double-read.
         project_dir: Your working directory path (required for identity)
     """
     if not to or not to.strip():
@@ -849,6 +853,7 @@ async def memory_send(
         thread_id=thread_id or None,
         project_dir=project_dir or None,
         intent=intent.strip() or None,
+        supersedes=supersedes.strip() or None,
     )
     corrected_from = result.get("corrected_from")
     ids = result.get("ids")
@@ -865,6 +870,7 @@ async def memory_send(
 async def memory_inbox(
     unread_only: bool = True,
     limit: int = 20,
+    include_resolved: bool = False,
     project_dir: str = "",
 ) -> str:
     """Read this session's inbox. Response includes current usage guidance
@@ -873,6 +879,9 @@ async def memory_inbox(
     Args:
         unread_only: When True (default), only show messages this session hasn't acked
         limit: Max messages to return
+        include_resolved: When True, also show resolved/superseded mail
+            (drained history) — for reviewing a finished thread, not for
+            routine reads
         project_dir: Your working directory path (required for identity)
     """
     reader_identity, listen_set = compute_identity(project_dir or None)
@@ -883,6 +892,7 @@ async def memory_inbox(
         unread_only=unread_only,
         limit=limit,
         project_dir=project_dir or None,
+        include_resolved=include_resolved,
     )
     if result.get("status") != "ok":
         return f"Inbox error: {result}"
