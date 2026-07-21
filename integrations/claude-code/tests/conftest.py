@@ -21,6 +21,11 @@ def _isolate_settings(monkeypatch):
     monkeypatch.setattr(config.settings, "memory_namespace", "fleet")
     monkeypatch.setattr(config.settings, "memory_read_namespaces", "")
     monkeypatch.setattr(config.settings, "memory_default_scope", "machine")
+    # Launch-env addressing must not leak into the suite: a session launched
+    # with ENGRAM_CHANNELS (e.g. "#devagents") appends the channel to every
+    # computed listen_set and breaks exact-set assertions. Tests that exercise
+    # channels set the var explicitly.
+    monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
 
 
 @pytest.fixture(autouse=True)
