@@ -7,11 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **REL-1** Public-release gate — **rewrite + sweep DONE 2026-07-21**
-  (history rewritten and force-pushed; hygiene patterns clean across every
-  blob in every commit; all clones re-pointed). Remaining: publish
-  checklist review + the visibility flip itself (operator's click).
-
 ## Next (committed, not started)
 
 - **HUD-1** Private multi-party threads (group-reply): a fan-out send
