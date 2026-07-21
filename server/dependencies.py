@@ -57,15 +57,43 @@ def require_admin(request: Request) -> dict:
     return principal
 
 
-def admin_or_open(request: Request) -> dict | None:
-    """Require admin when require_auth=true, pass through otherwise.
+def _loopback_bind() -> bool:
+    """True when the server is bound to a loopback-only address."""
+    return settings.host in ("127.0.0.1", "::1", "localhost")
 
-    Used for admin endpoints: same gating as existing ENGRAM_API_TOKEN pattern,
-    but upgraded to principal-aware when enforcement is on.
+
+def admin_or_open(request: Request) -> dict | None:
+    """Gate for /admin/* and principal CRUD.
+
+    - require_auth=true → admin principal required (as always).
+    - require_auth=false + loopback bind → open (operator's own box; the
+      documented local posture).
+    - require_auth=false + NON-loopback bind → the admin surface must not be
+      anonymous: accept an admin principal or the legacy ENGRAM_API_TOKEN
+      (its holder is the operator). Anonymous → 401; non-admin principal → 403.
+      Closes the anonymous-admin hole from the 2026-07-21 audit.
     """
     if settings.require_auth:
         return require_admin(request)
-    return get_current_principal(request)
+
+    principal = get_current_principal(request)
+    if _loopback_bind():
+        return principal
+
+    auth_source = getattr(request.state, "auth_source", "anonymous")
+    if auth_source == "legacy":
+        return principal
+    if principal is not None:
+        if principal.get("is_admin"):
+            return principal
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "Admin endpoints require a token on a non-loopback bind. "
+            "Use an admin principal token or ENGRAM_API_TOKEN."
+        ),
+    )
 
 
 def check_namespaces_access(

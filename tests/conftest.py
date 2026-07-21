@@ -67,6 +67,12 @@ async def services():
         f"Refusing to run destructive tests against {settings.db_name!r}. "
         f"Tests must target {TEST_DB_NAME!r}."
     )
+    # Pin the baseline auth posture regardless of the developer's .env
+    # (a dev ENGRAM_HOST=0.0.0.0 must not flip the anonymous-admin gate for
+    # every plain-client test). Gate tests patch host/tokens explicitly.
+    settings.host = "127.0.0.1"
+    settings.api_token = ""
+    settings.require_auth = False
     await init_pool()
     await init_client()
     yield

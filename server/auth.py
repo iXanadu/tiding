@@ -31,6 +31,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path == "/health" or path.startswith("/dashboard") or path == "/bridge":
             request.state.principal = None
+            request.state.auth_source = "anonymous"
             return await call_next(request)
 
         auth_header = request.headers.get("authorization", "")
@@ -51,6 +52,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         principal = await get_principal_by_token(token)
         if principal:
             request.state.principal = principal
+            request.state.auth_source = "principal"
             return await call_next(request)
 
         return self._reject(request, "Invalid or inactive token.")
@@ -68,6 +70,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
             if settings.warn_unauthed:
                 self._warn_unauthed(request, "no token provided")
             request.state.principal = None
+            request.state.auth_source = "anonymous"
             return await call_next(request)
 
         # Try principal lookup first
@@ -75,6 +78,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         principal = await get_principal_by_token(token)
         if principal:
             request.state.principal = principal
+            request.state.auth_source = "principal"
             return await call_next(request)
 
         # Fall back to legacy ENGRAM_API_TOKEN comparison
@@ -82,6 +86,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
             if settings.warn_unauthed:
                 self._warn_unauthed(request, "legacy API token (no principal)")
             request.state.principal = None
+            request.state.auth_source = "legacy"
             return await call_next(request)
 
         return self._reject(request, "Invalid API token.")

@@ -205,3 +205,108 @@ async def test_admin_endpoint_allowed_for_admin_when_enforced(enforced_client):
         assert resp.status_code == 200
     finally:
         await _cleanup_principal("perm-admin-ep")
+
+
+# --- Anonymous-admin gate: non-loopback bind with require_auth=false ---
+# (2026-07-21 audit: /admin/* + principal CRUD must not be anonymous when
+# the server is reachable from the network, even in enrichment mode.)
+
+def _unenforced_settings(mock_auth, mock_dep, *, host, api_token=""):
+    mock_auth.require_auth = False
+    mock_auth.api_token = api_token
+    mock_auth.warn_unauthed = False
+    mock_dep.require_auth = False
+    mock_dep.api_token = api_token
+    mock_dep.host = host
+
+
+@pytest_asyncio.fixture
+async def open_nonloopback_client(services):
+    """require_auth=false, bound 0.0.0.0, NO legacy api_token (fully open)."""
+    with patch("server.auth.settings") as ma, \
+         patch("server.dependencies.settings") as md:
+        _unenforced_settings(ma, md, host="0.0.0.0")
+        from server.main import app
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://localhost") as c:
+            yield c
+
+
+@pytest_asyncio.fixture
+async def legacy_nonloopback_client(services):
+    """require_auth=false, bound 0.0.0.0, legacy api_token configured."""
+    with patch("server.auth.settings") as ma, \
+         patch("server.dependencies.settings") as md:
+        _unenforced_settings(ma, md, host="0.0.0.0", api_token="legacy-secret")
+        from server.main import app
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://localhost") as c:
+            yield c
+
+
+@pytest.mark.asyncio
+async def test_admin_anonymous_401_on_nonloopback(open_nonloopback_client):
+    resp = await open_nonloopback_client.get("/admin/stats")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_principals_anonymous_401_on_nonloopback(open_nonloopback_client):
+    resp = await open_nonloopback_client.get("/admin/principals")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_memory_still_open_on_nonloopback(open_nonloopback_client):
+    """The gate covers the admin surface only — memory endpoints unchanged."""
+    resp = await open_nonloopback_client.post(
+        "/memory/get", json={"namespace": "test", "key": "anything"}
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_legacy_token_ok_on_nonloopback(legacy_nonloopback_client):
+    resp = await legacy_nonloopback_client.get(
+        "/admin/stats", headers={"Authorization": "Bearer legacy-secret"}
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_nonadmin_principal_403_on_nonloopback(open_nonloopback_client):
+    try:
+        _, raw_token = await ps.create_principal(
+            name="gate-nonadmin",
+            type="agent",
+            read_namespaces=["*"],
+        )
+        resp = await open_nonloopback_client.get(
+            "/admin/stats", headers={"Authorization": f"Bearer {raw_token}"}
+        )
+        assert resp.status_code == 403
+    finally:
+        await _cleanup_principal("gate-nonadmin")
+
+
+@pytest.mark.asyncio
+async def test_admin_admin_principal_ok_on_nonloopback(open_nonloopback_client):
+    try:
+        _, raw_token = await ps.create_principal(
+            name="gate-admin",
+            type="agent",
+            is_admin=True,
+        )
+        resp = await open_nonloopback_client.get(
+            "/admin/stats", headers={"Authorization": f"Bearer {raw_token}"}
+        )
+        assert resp.status_code == 200
+    finally:
+        await _cleanup_principal("gate-admin")
+
+
+@pytest.mark.asyncio
+async def test_admin_anonymous_still_open_on_loopback(client):
+    """Loopback bind keeps the documented local-open posture."""
+    resp = await client.get("/admin/stats")
+    assert resp.status_code == 200
