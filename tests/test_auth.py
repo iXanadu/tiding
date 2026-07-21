@@ -14,7 +14,7 @@ async def authed_client(services):
         mock_settings.require_auth = False
         from server.main import app
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://localhost") as c:
             yield c
 
 

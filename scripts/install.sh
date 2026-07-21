@@ -73,6 +73,7 @@ echo "$VENV_NAME" > "$APP_DIR/.python-version"
 
 # Install dependencies
 VENV_PIP="$PYENV_ROOT/versions/$VENV_NAME/bin/pip"
+VENV_PYTHON="$PYENV_ROOT/versions/$VENV_NAME/bin/python"
 echo "Installing dependencies..."
 "$VENV_PIP" install -e "$APP_DIR" --quiet
 
@@ -81,17 +82,32 @@ echo "Installing dependencies..."
 if [ ! -f "$APP_DIR/.env" ]; then
     if [ -f "$APP_DIR/.env.example" ]; then
         cp "$APP_DIR/.env.example" "$APP_DIR/.env"
-        echo "Created .env from .env.example — edit it with your DB credentials"
+        chmod 600 "$APP_DIR/.env"   # holds DB password / tokens — owner-only
+        echo "Created .env from .env.example (chmod 600) — edit it with your DB credentials"
     else
         echo "WARNING: No .env.example found. Create .env manually."
     fi
 else
+    chmod 600 "$APP_DIR/.env" 2>/dev/null || true
     echo ".env already exists"
 fi
 
 # --- Logs directory ---
 
 mkdir -p "$APP_DIR/logs"
+
+# --- Pre-warm the embedding model ---
+# The service sets HF_HUB_OFFLINE=1, and the model loads at startup. Without a
+# warm cache, first boot throws and KeepAlive/Restart crash-loops it forever.
+# Download it now (online), so the service starts clean on first launch.
+echo "Pre-warming embedding model (first run downloads ~270MB)..."
+EMBED_MODEL="${ENGRAM_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1.5}"
+"$VENV_PYTHON" - "$EMBED_MODEL" <<'PYWARM' || echo "WARNING: model pre-warm failed — first service start may crash-loop until the model is cached (run this box online once)."
+import sys
+from sentence_transformers import SentenceTransformer
+SentenceTransformer(sys.argv[1], trust_remote_code=True)
+print("  model cached")
+PYWARM
 
 # NOTE: engram's installer deliberately does NOT touch ~/.claude/CLAUDE.md or
 # any other provider-global agent config. Wiring engram into an agent's global
@@ -119,7 +135,10 @@ fi
 
 # --- Service installation ---
 
-UVICORN="$PYENV_ROOT/versions/$VENV_NAME/bin/uvicorn"
+# Launch via `python -m server` so the app binds ENGRAM_HOST itself and the
+# SEC-1 guard checks the address actually bound (uvicorn --host would decouple
+# the real bind from the guard — the "secure by default" bypass).
+PYBIN="$PYENV_ROOT/versions/$VENV_NAME/bin/python"
 
 if [[ "$(uname)" == "Darwin" ]]; then
     # macOS: LaunchDaemon (starts at boot, no login required)
@@ -137,12 +156,9 @@ if [[ "$(uname)" == "Darwin" ]]; then
     <string>${RUN_USER}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${UVICORN}</string>
-        <string>server.main:app</string>
-        <string>--host</string>
-        <string>0.0.0.0</string>
-        <string>--port</string>
-        <string>8920</string>
+        <string>${PYBIN}</string>
+        <string>-m</string>
+        <string>server</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${APP_DIR}</string>
@@ -201,7 +217,7 @@ Wants=postgresql.service
 Type=simple
 User=$(whoami)
 WorkingDirectory=${APP_DIR}
-ExecStart=${UVICORN} server.main:app --host 0.0.0.0 --port 8920
+ExecStart=${PYBIN} -m server
 Restart=always
 RestartSec=5
 Environment=PATH=${PYENV_ROOT}/versions/${VENV_NAME}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin

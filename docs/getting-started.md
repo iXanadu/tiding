@@ -28,7 +28,7 @@ curl -s -H "Content-Type: application/json" \
   -d '{"namespace":"main","key":"hello","value":"engram is up","scope":"machine"}' \
   http://localhost:8920/memory/set
 curl -s -H "Content-Type: application/json" \
-  -d '{"namespace":"main","query":"is engram up?"}' http://localhost:8920/memory/search
+  -d '{"namespace":"main","query":"is engram up?","scope":"machine"}' http://localhost:8920/memory/search
 
 # 3. Send a message from one identity, read it as another — the coordination "aha"
 curl -s -H "Content-Type: application/json" \

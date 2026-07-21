@@ -42,7 +42,7 @@ async def create_principal(
         if "unique" in str(e).lower() or "duplicate" in str(e).lower():
             raise HTTPException(status_code=409, detail=f"Principal '{req.name}' already exists.")
         logger.exception("create_principal failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
     return PrincipalCreateResponse(
         status="ok",
         principal=PrincipalResponse(**principal),

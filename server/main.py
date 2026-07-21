@@ -135,6 +135,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Anti-DNS-rebinding: reject forged Host headers before routing. CORS does not
+# stop rebinding (the malicious page becomes same-origin); a Host allowlist
+# does. Starlette's TrustedHostMiddleware runs outermost (added last).
+from starlette.middleware.trustedhost import TrustedHostMiddleware  # noqa: E402
+
+app.add_middleware(
+    TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts_list()
+)
 
 app.include_router(memory.router)
 app.include_router(admin.router)
@@ -145,6 +153,8 @@ app.include_router(dashboard.router)
 
 
 if __name__ == "__main__":
+    # Prefer `python -m server` (see server/__main__.py) so guard-input equals
+    # the real bind. This fallback keeps `python server/main.py` working.
     import uvicorn
 
     uvicorn.run(

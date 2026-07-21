@@ -17,7 +17,7 @@ Wants=postgresql.service
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/opt/srv/engram
-ExecStart=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/uvicorn server.main:app --host 0.0.0.0 --port 8920
+ExecStart=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/python -m server
 Restart=always
 RestartSec=5
 Environment=PATH=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin:/usr/local/bin:/usr/bin:/bin

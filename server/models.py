@@ -1,8 +1,20 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from server.config import settings
+
+# Input-size caps (anti-DoS: an oversized value forces a costly embedding on
+# every write; unbounded limits force full scans). Generous for real use.
+MAX_VALUE = 256_000       # ~256 KB of memory/message text
+MAX_KEY = 512
+MAX_TAGS = 4_000
+MAX_SUBJECT = 1_000
+MAX_ADDR = 256            # one address / identity / project name
+MAX_LIST = 64             # listen_set / channels / overlays element count
+MAX_SEARCH_LIMIT = 200
+MAX_INBOX_LIMIT = 500
+MAX_EXPIRY_DAYS = 36_500  # ~100 years
 
 
 def _canon_ns(v):
@@ -29,17 +41,17 @@ class _NamespacedRequest(BaseModel):
 
 class MemorySetRequest(_NamespacedRequest):
     namespace: str
-    key: str
-    value: str
+    key: str = Field(max_length=MAX_KEY)
+    value: str = Field(max_length=MAX_VALUE)
     scope: str = "user"
-    user_id: str = "default"
-    project: str | None = None
-    tags: str = ""
-    tags_search: str = ""
-    expiration_days: int = 0  # 0 = never expires (permanent default); set a positive TTL for ephemeral memories
+    user_id: str = Field(default="default", max_length=MAX_ADDR)
+    project: str | None = Field(default=None, max_length=MAX_ADDR)
+    tags: str = Field(default="", max_length=MAX_TAGS)
+    tags_search: str = Field(default="", max_length=MAX_TAGS)
+    expiration_days: int = Field(default=0, ge=0, le=MAX_EXPIRY_DAYS)  # 0 = never expires
     force_new: bool = False
-    listen_set: list[str] | None = None
-    reader_identity: str | None = None
+    listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
+    reader_identity: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -60,13 +72,13 @@ class MemoryGetRequest(_NamespacedRequest):
 class MemorySearchRequest(_NamespacedRequest):
     namespace: str | None = None
     namespaces: list[str] | None = None
-    query: str
+    query: str = Field(max_length=MAX_VALUE)
     scope: str = "user"
-    user_id: str = "default"
-    project: str | None = None
-    limit: int = 5
-    listen_set: list[str] | None = None
-    reader_identity: str | None = None
+    user_id: str = Field(default="default", max_length=MAX_ADDR)
+    project: str | None = Field(default=None, max_length=MAX_ADDR)
+    limit: int = Field(default=5, ge=1, le=MAX_SEARCH_LIMIT)
+    listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
+    reader_identity: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("query", mode="before")
     @classmethod
@@ -330,12 +342,19 @@ class InboxSendRequest(BaseModel):
     # A single address, or a list for ad-hoc multi-recipient fan-out
     # (each recipient gets their own message row / id).
     to: str | list[str]
-    body: str
-    subject: str = ""
-    from_: str | None = None  # sender identity — MCP bridge stamps this
-    thread_id: str | None = None
-    supersedes: str | None = None  # id of a prior message this one replaces
+    body: str = Field(max_length=MAX_VALUE)
+    subject: str = Field(default="", max_length=MAX_SUBJECT)
+    from_: str | None = Field(default=None, max_length=MAX_ADDR)  # sender identity — MCP bridge stamps this
+    thread_id: str | None = Field(default=None, max_length=MAX_ADDR)
+    supersedes: str | None = Field(default=None, max_length=MAX_ADDR)  # id of a prior message this one replaces
     intent: str | None = None  # fyi | action | proceed | escalate | authority-directive
+
+    @field_validator("to")
+    @classmethod
+    def to_bounded(cls, v):
+        if isinstance(v, list) and len(v) > MAX_LIST:
+            raise ValueError(f"too many recipients (max {MAX_LIST})")
+        return v
 
     model_config = {"populate_by_name": True}
 
@@ -414,11 +433,11 @@ class InboxSendResponse(BaseModel):
 
 
 class InboxListRequest(BaseModel):
-    listen_set: list[str]
-    reader_identity: str | None = None
+    listen_set: list[str] = Field(max_length=MAX_LIST)
+    reader_identity: str | None = Field(default=None, max_length=MAX_ADDR)
     unread_only: bool = True
     include_resolved: bool = False  # default view hides resolved/superseded
-    limit: int = 20
+    limit: int = Field(default=20, ge=1, le=MAX_INBOX_LIMIT)
     newest_first: bool = False  # watcher sets True so new mail never truncates out
 
 
@@ -463,12 +482,12 @@ class PresenceUpdateRequest(BaseModel):
     """Self-reported liveness heartbeat. The harness POSTs its own state
     transitions (running → awaiting-input → done); engram never scrapes or
     infers state — last_seen is the only server-side fallback signal."""
-    identity: str            # inbox identity, e.g. "projdelta-grok"
-    project: str             # bare project name (the roster grouping key)
+    identity: str = Field(max_length=MAX_ADDR)   # inbox identity, e.g. "proj-grok"
+    project: str = Field(max_length=MAX_ADDR)    # bare project name (roster grouping key)
     state: str               # running | awaiting-input | done
-    provider: str | None = None      # claude | grok | codex | ...
-    overlays: list[str] = []         # e.g. ["projdelta/builders"]
-    channels: list[str] = []         # e.g. ["#courseware"]
+    provider: str | None = Field(default=None, max_length=MAX_ADDR)  # claude | grok | codex | ...
+    overlays: list[str] = Field(default=[], max_length=MAX_LIST)     # e.g. ["proj/builders"]
+    channels: list[str] = Field(default=[], max_length=MAX_LIST)     # e.g. ["#courseware"]
     # Per-PROCESS random nonce (SEAT collision detection): two live sessions
     # heartbeating one identity with different nonces = the silent "two bodies,
     # one seat" misconfiguration (shared acks, mutual self-echo drop). None =

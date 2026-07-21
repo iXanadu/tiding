@@ -78,8 +78,10 @@ async def services():
 async def client(services):
     """Async HTTP client wired to the FastAPI app (with services initialized)."""
     from server.main import app
+    # base_url host must be in settings.trusted_hosts (TrustedHostMiddleware) —
+    # 'localhost' is allowed by default, like a real loopback client.
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://localhost") as c:
         yield c
 
 

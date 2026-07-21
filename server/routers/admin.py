@@ -70,7 +70,7 @@ async def list_memories_endpoint(
         )
     except Exception as e:
         logger.exception("list_memories failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.get("/machines")
@@ -104,7 +104,7 @@ async def update_memory_endpoint(
         raise
     except Exception as e:
         logger.exception("update_memory failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.get("/stats", response_model=MemoryStatsResponse)
@@ -119,7 +119,7 @@ async def stats_endpoint(
         return MemoryStatsResponse(status="ok", stats=stats)
     except Exception as e:
         logger.exception("get_stats failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
@@ -139,7 +139,7 @@ async def bulk_delete_endpoint(
         return BulkDeleteResponse(status="ok", deleted_count=deleted)
     except Exception as e:
         logger.exception("bulk_delete failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/cleanup", response_model=CleanupResponse)
@@ -154,4 +154,4 @@ async def cleanup_endpoint(
         return CleanupResponse(status="ok", deleted_count=deleted)
     except Exception as e:
         logger.exception("cleanup_expired failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")

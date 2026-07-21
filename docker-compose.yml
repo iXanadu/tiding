@@ -43,7 +43,7 @@ services:
     ports:
       - "127.0.0.1:8920:8920"
     volumes:
-      - hf-cache:/root/.cache/huggingface
+      - hf-cache:/home/engram/.cache/huggingface
 
 volumes:
   pgdata:

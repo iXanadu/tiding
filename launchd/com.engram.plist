@@ -18,14 +18,14 @@
     <string>com.engram</string>
     <key>UserName</key>
     <string>YOUR_USERNAME</string>
+    <!-- `python -m server` binds settings.host (ENGRAM_HOST) so the SEC-1
+         bind guard checks the address actually bound. Do NOT go back to
+         `uvicorn --host X` — that decouples the real bind from the guard. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/uvicorn</string>
-        <string>server.main:app</string>
-        <string>--host</string>
-        <string>0.0.0.0</string>
-        <string>--port</string>
-        <string>8920</string>
+        <string>/Users/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin/python</string>
+        <string>-m</string>
+        <string>server</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/opt/srv/engram</string>

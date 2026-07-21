@@ -244,8 +244,12 @@ async def bulk_delete(
 ) -> int:
     pool = await get_pool()
 
-    conditions = ["namespace = $1", "key LIKE $2"]
-    params: list = [namespace, key_prefix + "%"]
+    # Escape LIKE metacharacters so key_prefix is a literal prefix, not a
+    # pattern — otherwise key_prefix="%" (or "_") turns the "prefix" guard into
+    # a namespace-wide wipe.
+    escaped_prefix = key_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    conditions = ["namespace = $1", "key LIKE $2 ESCAPE '\\'"]
+    params: list = [namespace, escaped_prefix + "%"]
     idx = 3
 
     if scope is not None:

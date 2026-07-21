@@ -22,8 +22,16 @@ ENV ENGRAM_HOST=0.0.0.0 \
 
 EXPOSE 8920
 
+# Drop root: run as an unprivileged user; give it the HF cache dir.
+RUN useradd -u 10001 -m engram && mkdir -p /home/engram/.cache/huggingface \
+    && chown -R engram /home/engram/.cache
+ENV HF_HOME=/home/engram/.cache/huggingface
+USER engram
+
 # Healthcheck without curl: stdlib only.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=300s --retries=20 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if b'ok' in urllib.request.urlopen('http://127.0.0.1:8920/health', timeout=4).read() else 1)"
 
-CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8920"]
+# `python -m server` binds ENGRAM_HOST (0.0.0.0 here, with the explicit
+# ALLOW_INSECURE_BIND opt-out above) so guard-input == real bind.
+CMD ["python", "-m", "server"]

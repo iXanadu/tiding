@@ -50,6 +50,7 @@ ID_FILE="$ID_DIR/$NAME"
 mkdir -p "$ID_DIR"; chmod 700 "$CFG_DIR" "$ID_DIR"
 
 # --- 1. token ---------------------------------------------------------------
+MINTED=0
 if [ -f "$ID_FILE" ] && [ -z "$TOKEN" ]; then
   TOKEN=$(grep -E '^memory_api_token=' "$ID_FILE" | head -1 | cut -d= -f2 || true)
   [ -n "$TOKEN" ] && echo "• Reusing existing identity file: $ID_FILE"
@@ -61,17 +62,20 @@ if [ -z "$TOKEN" ] && [ -n "$ADMIN_TOKEN" ]; then
          \"read_namespaces\":[$(echo "$READ_NS" | sed 's/[^,]*/"&"/g')],
          \"write_namespaces\":[$(echo "$WRITE_NS" | sed 's/[^,]*/"&"/g')]}" \
     "$SERVER/admin/principals") || { echo "✗ principal mint failed"; exit 1; }
-  TOKEN=$(printf '%s' "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
+  TOKEN=$(printf '%s' "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('raw_token',''))")
   [ -n "$TOKEN" ] || { echo "✗ no token in mint response (principal may already exist — pass --token, or regenerate via POST /admin/principals/$NAME/token)"; exit 1; }
+  MINTED=1
 fi
 [ -n "$TOKEN" ] || { echo "✗ No token: pass --token, --admin-token (to mint), or pre-create $ID_FILE"; exit 1; }
 
 # --- 2. identity file -------------------------------------------------------
-if [ ! -f "$ID_FILE" ]; then
+# Write when the file is absent OR we just minted a token (a raw token is shown
+# only once — never discard it). Always tighten perms, even on a reused file.
+if [ ! -f "$ID_FILE" ] || [ "$MINTED" = "1" ]; then
   { echo "memory_api_token=$TOKEN"; echo "memory_api_url=$SERVER"; } > "$ID_FILE"
-  chmod 600 "$ID_FILE"
-  echo "• Wrote $ID_FILE (0600)"
+  echo "• Wrote $ID_FILE"
 fi
+chmod 600 "$ID_FILE"
 
 # --- 3. verify ---------------------------------------------------------------
 WHO=$(curl -sf -H "Authorization: Bearer $TOKEN" "$SERVER/whoami") \

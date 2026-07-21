@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     # allow_insecure_bind=true (trusted-network opt-out, e.g. Tailscale).
     host: str = "127.0.0.1"
     allow_insecure_bind: bool = False
+    # Host header allowlist (anti-DNS-rebinding). Comma-separated. Requests
+    # whose Host isn't listed get 400 before auth/routing — a hostile web page
+    # that rebinds its DNS to 127.0.0.1:8920 makes same-origin requests that
+    # CORS can't stop, but a Host it can't forge to a trusted value is blocked.
+    # Add your own hostname / Tailscale MagicDNS name when binding non-loopback.
+    trusted_hosts: str = "localhost,127.0.0.1,[::1],::1"
+
+    def trusted_hosts_list(self) -> list[str]:
+        return [h.strip() for h in self.trusted_hosts.split(",") if h.strip()]
 
     # NS-1 provider-agnostic namespaces. `primary_namespace` is where inbox +
     # presence rows live. `namespace_aliases` maps legacy names to canonical

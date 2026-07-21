@@ -45,6 +45,8 @@ from server.services.inbox_guidance import (
 )
 from server.services.memory_service import (
     INBOX_NAMESPACE,
+    INBOX_SCOPE,
+    PRESENCE_SCOPE,
     inbox_ack,
     inbox_archive,
     inbox_banner,
@@ -62,12 +64,29 @@ from server.services.memory_service import (
 
 logger = logging.getLogger(__name__)
 
+# Inbox and presence rows have their own lifecycle endpoints (send/ack/resolve/
+# archive; presence heartbeat). The generic set/forget path must NOT reach them
+# — otherwise a writer could overwrite a message body (wiping read_by /
+# from_principal) or delete mail outside its lifecycle.
+_RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE}
+
+
+def _reject_reserved_scope(scope: str | None) -> None:
+    if scope in _RESERVED_SCOPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"scope '{scope}' is managed by its own endpoints "
+                   f"(inbox: /memory/send, presence: /memory/presence) — "
+                   f"not writable via /memory/set or /memory/forget.",
+        )
+
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
 @router.post("/set", response_model=MemorySetResponse)
 async def set_memory(req: MemorySetRequest, request: Request):
     logger.debug(f"SET ns={req.namespace} key={req.key} user_id={req.user_id} scope={req.scope}")
+    _reject_reserved_scope(req.scope)
     principal = get_current_principal(request)
     check_namespace_access(principal, req.namespace, "write")
     metadata = {}
@@ -115,7 +134,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
         )
     except Exception as e:
         logger.exception("memory_set failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/get", response_model=MemoryGetResponse)
@@ -135,7 +154,7 @@ async def get_memory(req: MemoryGetRequest, request: Request):
         return MemoryGetResponse(status="not_found")
     except Exception as e:
         logger.exception("memory_get failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/search", response_model=MemorySearchResponse)
@@ -174,12 +193,13 @@ async def search_memory(req: MemorySearchRequest, request: Request):
         return MemorySearchResponse(status="ok", results=results, inbox_banner=banner)
     except Exception as e:
         logger.exception("memory_search failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/forget", response_model=MemoryForgetResponse)
 async def forget_memory(req: MemoryForgetRequest, request: Request):
     logger.debug(f"FORGET ns={req.namespace} key={req.key} scope={req.scope} user_id={req.user_id}")
+    _reject_reserved_scope(req.scope)
     check_namespace_access(get_current_principal(request), req.namespace, "write")
     try:
         deleted = await memory_forget(
@@ -193,7 +213,7 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
         return MemoryForgetResponse(status=status, key=req.key)
     except Exception as e:
         logger.exception("memory_forget failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 # --- Inbox endpoints ----------------------------------------------------
@@ -253,7 +273,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         )
     except Exception as e:
         logger.exception("inbox_send failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/inbox", response_model=InboxListResponse)
@@ -290,7 +310,7 @@ async def list_inbox(req: InboxListRequest, request: Request):
         )
     except Exception as e:
         logger.exception("inbox_list failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/inbox/{message_id:path}/ack", response_model=InboxAckResponse)
@@ -306,7 +326,7 @@ async def ack_inbox(message_id: str, req: InboxAckRequest, request: Request):
         raise
     except Exception as e:
         logger.exception("inbox_ack failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/inbox/{message_id:path}/archive", response_model=InboxAckResponse)
@@ -325,7 +345,7 @@ async def archive_inbox(message_id: str, req: InboxAckRequest, request: Request)
         raise
     except Exception as e:
         logger.exception("inbox_archive failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/inbox/{message_id:path}/resolve", response_model=InboxAckResponse)
@@ -348,7 +368,7 @@ async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Requ
         raise
     except Exception as e:
         logger.exception("inbox_resolve failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 # --- Inbox long-poll wait: the any-harness wake primitive -----------------
@@ -407,7 +427,7 @@ async def wait_inbox(req: InboxWaitRequest, request: Request):
             await asyncio.sleep(min(poll_every, max(0.05, req.timeout_seconds - waited)))
     except Exception as e:
         logger.exception("inbox_wait failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 # --- Presence / liveness roster (MSG-4) ----------------------------------
@@ -432,7 +452,7 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
         )
     except Exception as e:
         logger.exception("presence_update failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/roster", response_model=RosterResponse)
@@ -464,4 +484,4 @@ async def get_roster(req: RosterRequest, request: Request):
         )
     except Exception as e:
         logger.exception("roster_list failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
