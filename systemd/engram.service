@@ -30,5 +30,24 @@ Environment=PATH=/home/YOUR_USERNAME/.pyenv/versions/engram-3.12/bin:/usr/local/
 Environment=HF_HUB_OFFLINE=1
 Environment=TRANSFORMERS_OFFLINE=1
 
+# --- Hardening (2026-07-21 audit) ---
+# Logs go to the journal (rotation is journald's job — no logrotate needed).
+# Consider a dedicated non-login service user instead of your own account:
+#   sudo useradd -r -s /usr/sbin/nologin engram
+# then User=engram above and chown the app dir + a copied HF model cache.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/srv/engram/logs
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# (MemoryDenyWriteExecute deliberately NOT set — PyTorch JIT needs W+X pages.)
+
 [Install]
 WantedBy=multi-user.target

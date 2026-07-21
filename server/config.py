@@ -13,6 +13,10 @@ class Settings(BaseSettings):
 
     # Embeddings
     embed_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    # Pinned HF revision (2026-07-21 audit): without it, an online (re)fetch
+    # trusts whatever the hub serves for 'main' — with trust_remote_code that
+    # means arbitrary code. Empty string = unpinned (deliberate upgrades only).
+    embed_model_revision: str = "e9b6763023c676ca8431644204f50c2b100d9aab"
 
     # Server
     # SEC-1 secure-by-default: bind loopback unless the operator deliberately

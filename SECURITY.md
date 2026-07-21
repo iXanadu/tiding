@@ -61,15 +61,16 @@ not the right tool as-is.
 
 ## Authentication
 
-- `require_auth=false` (default): local trust. Anonymous callers are allowed;
-  `check_namespace_access` is a no-op. Admin endpoints (`/admin/*`, principal
-  CRUD) are reachable — acceptable *only* because the default posture is
-  loopback. **If you bind to a network, set `require_auth=true`.** (A future
-  hardening will gate admin/principal-CRUD behind a token even in this mode;
-  tracked in the backlog.)
+- `require_auth=false` (default): local trust. Anonymous callers are allowed
+  on memory endpoints; `check_namespace_access` is a no-op. Admin endpoints
+  (`/admin/*`, principal CRUD) are open **only on a loopback bind** — on a
+  non-loopback bind they require an admin principal token or the legacy
+  `ENGRAM_API_TOKEN` even in this mode (anonymous → 401, non-admin
+  principal → 403). **If you bind to a network, set `require_auth=true`.**
 - `require_auth=true`: every request needs a valid principal Bearer token;
   admin endpoints require an `is_admin` principal. Tokens are `engram_<random>`,
-  bcrypt-hashed at rest, shown once at creation.
+  bcrypt-hashed at rest, shown once at creation, resolved via an indexed
+  SHA-256 lookup (an unknown token costs one indexed miss, not a bcrypt scan).
 
 ## Secrets
 
@@ -77,7 +78,26 @@ not the right tool as-is.
   config — **never in a repo**. `.env` is chmod 600 by the installer.
 - The embedding model loads with `trust_remote_code=True` (required by
   nomic-embed); `ENGRAM_EMBED_MODEL` is operator-controlled, so treat a model
-  swap as running that repo's code — pin a model you trust.
+  swap as running that repo's code. The HF **revision is pinned** in config
+  (`embed_model_revision`) so an online (re)fetch can't silently pull new code
+  from the hub; override only for a deliberate upgrade.
+
+## Web dashboard
+
+- `/dashboard` and `/bridge` serve **only locally-vendored, pinned assets**
+  (compiled Tailwind, Alpine with SHA-256-verified fetch at build time) — no
+  CDN at runtime. A `default-src 'self'` CSP blocks any remote script/style
+  origin even if a CDN tag ever returns.
+- The admin token entered in the UI lives in `sessionStorage` (dies with the
+  tab), not `localStorage`.
+
+## Watcher (`engram-inbox-wait`)
+
+- An auth rejection (401/403) kills the watcher loudly (exit 2) instead of
+  retrying forever — a watcher that silently misses every wake is worse than
+  a dead one. Transient server errors still retry.
+- Plain `http://` to a non-local host warns at startup: the token would
+  travel unencrypted. Use https or a private overlay (Tailscale).
 
 ## Untrusted message content
 

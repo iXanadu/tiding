@@ -89,11 +89,16 @@ mkdir -p "$APP_DIR/logs"
 # warm cache, first boot throws and KeepAlive/Restart crash-loops it forever.
 # Download it now (online), so the service starts clean on first launch.
 echo "Pre-warming embedding model (first run downloads ~270MB)..."
-EMBED_MODEL="${ENGRAM_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1.5}"
-"$VENV_PYTHON" - "$EMBED_MODEL" <<'PYWARM' || echo "WARNING: model pre-warm failed — first service start may crash-loop until the model is cached (run this box online once)."
-import sys
+(cd "$APP_DIR" && "$VENV_PYTHON" - <<'PYWARM') || echo "WARNING: model pre-warm failed — first service start may crash-loop until the model is cached (run this box online once)."
+# Model + pinned revision come from server.config so the pre-warm can never
+# drift from what the service will actually load.
 from sentence_transformers import SentenceTransformer
-SentenceTransformer(sys.argv[1], trust_remote_code=True)
+from server.config import settings
+SentenceTransformer(
+    settings.embed_model,
+    trust_remote_code=True,
+    revision=settings.embed_model_revision or None,
+)
 print("  model cached")
 PYWARM
 
@@ -128,10 +133,14 @@ fi
 PYBIN="$VENV_PYTHON"
 VENV_BIN_DIR="$(dirname "$PYBIN")"
 
+# Service account: defaults to the installing user; set ENGRAM_SERVICE_USER
+# to run under a dedicated non-login account instead (2026-07-21 audit
+# recommendation — create it first and chown the app dir + model cache).
+RUN_USER="${ENGRAM_SERVICE_USER:-$(whoami)}"
+
 if [[ "$(uname)" == "Darwin" ]]; then
     # macOS: LaunchDaemon (starts at boot, no login required)
     PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
-    RUN_USER="$(whoami)"
 
     cat > /tmp/${LABEL}.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -183,6 +192,15 @@ PLIST
     rm /tmp/${LABEL}.plist
 
     echo "Installed LaunchDaemon: $PLIST_PATH"
+
+    # Log rotation: launchd appends to logs/engram.{log,err} forever without
+    # this. newsyslog: rotate at 10MB, keep 5, gzip (J flag).
+    sudo tee /etc/newsyslog.d/engram.conf > /dev/null <<NSL
+# logfilename                          [owner:group]      mode count size when flags
+${APP_DIR}/logs/engram.log             ${RUN_USER}:staff  644  5     10240 *    J
+${APP_DIR}/logs/engram.err             ${RUN_USER}:staff  644  5     10240 *    J
+NSL
+    echo "Installed log rotation: /etc/newsyslog.d/engram.conf"
     echo ""
     echo "=== Install Complete ==="
     echo ""
@@ -203,7 +221,7 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=$(whoami)
+User=${RUN_USER}
 WorkingDirectory=${APP_DIR}
 ExecStart=${PYBIN} -m server
 Restart=always
@@ -214,6 +232,21 @@ Environment=PATH=${VENV_BIN_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 # Flip OFF only for a deliberate embed-model change needing a re-download.
 Environment=HF_HUB_OFFLINE=1
 Environment=TRANSFORMERS_OFFLINE=1
+
+# --- Hardening (2026-07-21 audit); logs go to the journal (journald rotates) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=${APP_DIR}/logs
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# (MemoryDenyWriteExecute deliberately NOT set — PyTorch JIT needs W+X pages.)
 
 [Install]
 WantedBy=multi-user.target

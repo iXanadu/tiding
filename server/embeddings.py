@@ -11,7 +11,11 @@ _model: SentenceTransformer | None = None
 async def init_client() -> None:
     global _model
     _model = await asyncio.to_thread(
-        SentenceTransformer, settings.embed_model, trust_remote_code=True
+        lambda: SentenceTransformer(
+            settings.embed_model,
+            trust_remote_code=True,
+            revision=settings.embed_model_revision or None,
+        )
     )
 
 

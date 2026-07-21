@@ -10,21 +10,7 @@
 - **REL-1** Public-release gate: history rewrite push + verification sweep
   (`scripts/repo-hygiene-check.sh` clean on tree AND full history), publish
   checklist review. Repo stays private until this closes. **Blocks on
-  SEC-AUDIT and DOCS-SANITIZE below.**
-- **SEC-AUDIT** Remaining items from the 2026-07-21 security audit (the
-  blocking code fixes shipped; these are the follow-ups). All verified,
-  detail in `lesson/security-audit-2026-07-21`:
-  - Gate `/admin/*` + principal-CRUD behind a token even when
-    `require_auth=false` on a non-loopback bind (anonymous-admin hole).
-  - Vendor Alpine (pinned) + build Tailwind locally; add CSP; move the
-    dashboard admin token out of `localStorage` — kills the no-SRI CDN
-    supply-chain path to full admin.
-  - Watcher: exit/signal on 401/403 instead of retry-forever (fail-open =
-    silently missed wakes); non-localhost `http://` TLS warning.
-  - `get_principal_by_token` full-bcrypt-scan (auth-spray DoS) — indexed
-    lookup; bcrypt 72-byte pre-hash; `remove_alias` path-scoping.
-  - systemd hardening directives; log rotation; dedicated service user;
-    pin embed-model revision.
+  DOCS-SANITIZE below** (SEC-AUDIT cleared 2026-07-21).
 - **DOCS-SANITIZE** Three docs are unpublishable internal memos (real names,
   private projects, fleet hosts): `docs/webapp-integration-spec.md`,
   `docs/webapp-native-app-identity.md`, `docs/design/messaging-architecture.md`.
