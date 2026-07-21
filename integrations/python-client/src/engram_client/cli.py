@@ -5,7 +5,7 @@ admin API, append its token to ``~/.config/engram.keys``, and print the token
 once. See ``docs/webapp-integration-spec.md`` (§4).
 
 Admin token resolution order: ``--admin-token`` > ``ENGRAM_ADMIN_TOKEN`` env >
-``ENGRAM_TOKEN`` env > the ``ixanadu=`` entry in ``~/.config/engram.keys``.
+the ``ENGRAM_ADMIN_KEY_LABEL`` entry (default ``admin``) in ``~/.config/engram.keys``.
 Server URL: ``--url`` > ``ENGRAM_URL`` env > ``http://localhost:8920``.
 """
 
@@ -21,6 +21,11 @@ import httpx
 KEYS_PATH = Path(os.path.expanduser("~/.config/engram.keys"))
 
 
+def _admin_key_label() -> str:
+    """Which label in the keys file holds the admin token (owner-configurable)."""
+    return os.environ.get("ENGRAM_ADMIN_KEY_LABEL", "admin")
+
+
 def _resolve_admin_token(arg_token: str | None) -> str | None:
     if arg_token:
         return arg_token
@@ -33,7 +38,7 @@ def _resolve_admin_token(arg_token: str | None) -> str | None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             label, _, tok = line.partition("=")
-            if label.strip() == "ixanadu":
+            if label.strip() == _admin_key_label():
                 return tok.strip()
     return None
 
@@ -45,8 +50,11 @@ def _label_for(name: str) -> str:
 def _append_key(label: str, token: str) -> bool:
     """Append ``label=token`` to the keys file. Returns False if the label
     already exists (does not overwrite)."""
-    KEYS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    existing = KEYS_PATH.read_text() if KEYS_PATH.exists() else ""
+    KEYS_PATH.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if not KEYS_PATH.exists():
+        KEYS_PATH.touch(mode=0o600)
+    os.chmod(KEYS_PATH, 0o600)
+    existing = KEYS_PATH.read_text()
     for ln in existing.splitlines():
         if ln.strip().startswith(f"{label}="):
             return False
@@ -63,7 +71,7 @@ def cmd_principal_create(args: argparse.Namespace) -> int:
     if not admin:
         print(
             "error: no admin token. Use --admin-token, set ENGRAM_ADMIN_TOKEN, "
-            "or keep an 'ixanadu=' entry in ~/.config/engram.keys",
+            "or keep an admin-labelled entry in ~/.config/engram.keys",
             file=sys.stderr,
         )
         return 2

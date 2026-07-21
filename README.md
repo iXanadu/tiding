@@ -66,6 +66,8 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:8920/memory/inbox
 ```
 
+**Security:** [Security model & trust boundaries](SECURITY.md)
+
 **Docs:** [Getting started + security posture](docs/getting-started.md) ·
 [Deployment](docs/deployment.md) · [Messaging](docs/messaging.md) ·
 [Build a huddle (group chat)](docs/build-a-huddle.md) ·
