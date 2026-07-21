@@ -180,7 +180,7 @@ is the well-trodden combination.
 
 ```bash
 # Clone and enter
-git clone https://github.com/ixanadu/engram.git
+git clone https://github.com/iXanadu/engram.git
 cd engram
 
 # Python environment
@@ -602,12 +602,13 @@ engram/
 │   │   ├── memory_service.py        # Core CRUD + hybrid search + inbox logic
 │   │   ├── principal_service.py     # Identity + access control
 │   │   ├── admin_service.py         # List, stats, bulk delete, cleanup
-│   │   ├── cleanup_task.py          # Background expiration loop
+│   │   ├── cleanup_task.py          # Background loops (expiry, inbox auto-resolve)
 │   │   ├── identity.py              # Address resolution and validation
 │   │   └── inbox_guidance.py        # Usage hints for inbox operations
-│   └── templates/
-│       ├── dashboard.html           # Memory browser UI
-│       └── bridge.html              # Cross-namespace search UI
+│   ├── templates/
+│   │   ├── dashboard.html           # Memory browser UI
+│   │   └── bridge.html              # Cross-namespace search UI
+│   └── static/                      # Vendored, pinned dashboard assets (no CDN)
 ├── integrations/
 │   ├── homeassistant/               # HA Pyscript client + Blueprint
 │   ├── claude-code/                 # MCP server for Claude Code (engram-mcp)
@@ -616,7 +617,7 @@ engram/
 ├── launchd/com.engram.plist         # macOS LaunchDaemon template
 ├── systemd/engram.service           # Linux systemd unit template
 ├── tests/                           # pytest suite
-├── docs/                            # System prompts, guides
+├── docs/                            # Guides: getting started, workflow, messaging, deployment
 ├── docker-compose.yml               # PostgreSQL + pgvector
 ├── pyproject.toml                   # Package definition
 └── .env.example                     # Configuration template

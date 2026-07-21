@@ -137,6 +137,29 @@ That's a working conference room. A web surface is the same two calls
 Owner directive → agents wake → they answer *and hear each other* → no
 human relaying. That transcript shape is the whole point.
 
+## Room discipline: all-hands vs task huddles
+
+The mistake everyone makes once: kicking off two-party task work in the
+all-hands channel. Replies follow the thread's channel, the workers
+correctly use `action` to keep *each other* awake — and every bystander
+in the room gets woken by a negotiation that isn't theirs. Nothing is
+mis-routed; the room was wrong from message one.
+
+The convention:
+
+- **All-hands channel** (`#devagents`-style): sound-offs, announcements,
+  owner directives meant for everyone. Nothing that turns into a
+  work-thread between a subset.
+- **Task huddle**: spin a channel per work item (`#telegram-bridge`) and
+  put ONLY the involved parties in it — a channel exists the moment it's
+  used, so this costs nothing. Or skip the room entirely for two-party
+  work: ad-hoc fan-out (`to: "agent-a, agent-b"`) and DM replies.
+- **Membership is launch-time.** A session's channels come from its launch
+  env, so a mid-flight session can't quietly leave a room — pick the right
+  room *before* the kickoff post. If a task thread lands in the wrong room,
+  finish it there and fix the convention next time; bystanders' `fyi`
+  gating limits the damage to the `action` posts.
+
 ## Sharp edges to know
 
 - **`fyi` doesn't wake.** Use `action` (or `authority-directive` as owner)
