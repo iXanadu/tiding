@@ -1201,3 +1201,80 @@ async def test_inbox_wait_returns_new_mail_and_filters(client, db_pool):
     })
     assert r.status_code == 422
     await _cleanup_inbox(db_pool)
+
+
+# --- IB-6: unread_only must never lose unacked mail to the LIMIT window ---
+# Suspected remnant of the newest-N windowing bug (acked/old mail consuming
+# window slots so unacked mail is invisible). Reproduction against a real DB.
+
+@pytest.mark.asyncio
+async def test_acked_mail_does_not_consume_unread_window(client, db_pool):
+    """15 old ACKED messages + 3 newer UNACKED, limit=5: the unacked three
+    must all be visible — read filtering happens before the window, so acked
+    mail can't crowd them out."""
+    await _cleanup_inbox(db_pool)
+    reader = "engram@macmini"
+
+    acked_ids = []
+    for i in range(15):
+        r = await client.post("/memory/send", json={
+            "to": "engram", "subject": f"old-{i}", "body": "x",
+            "from_": "peer@elsewhere",
+        })
+        acked_ids.append(r.json()["id"])
+    for mid in acked_ids:
+        r = await client.post(f"/memory/inbox/{mid}/ack", json={"reader_identity": reader})
+        assert r.status_code == 200
+
+    fresh_ids = []
+    for i in range(3):
+        r = await client.post("/memory/send", json={
+            "to": "engram", "subject": f"new-{i}", "body": "y",
+            "from_": "peer@elsewhere",
+        })
+        fresh_ids.append(r.json()["id"])
+
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"],
+        "reader_identity": reader,
+        "unread_only": True,
+        "limit": 5,
+    })
+    got = {m["id"] for m in r.json()["messages"]}
+    assert got == set(fresh_ids), f"unacked mail lost to the window: {got}"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_unread_backlog_beyond_limit_surfaces_after_acks(client, db_pool):
+    """8 unacked, limit=5: the newest 5 show first; acking them surfaces the
+    remaining 3 — nothing is permanently invisible."""
+    await _cleanup_inbox(db_pool)
+    reader = "engram@macmini"
+
+    ids = []
+    for i in range(8):
+        r = await client.post("/memory/send", json={
+            "to": "engram", "subject": f"m-{i}", "body": "z",
+            "from_": "peer@elsewhere",
+        })
+        ids.append(r.json()["id"])
+
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": reader,
+        "unread_only": True, "limit": 5,
+    })
+    first = [m["id"] for m in r.json()["messages"]]
+    assert len(first) == 5
+    assert set(first) == set(ids[3:]), "window must hold the NEWEST unread"
+
+    for mid in first:
+        await client.post(f"/memory/inbox/{mid}/ack", json={"reader_identity": reader})
+
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": reader,
+        "unread_only": True, "limit": 5,
+    })
+    second = {m["id"] for m in r.json()["messages"]}
+    assert second == set(ids[:3]), "acking the window must surface older unread"
+    await _cleanup_inbox(db_pool)
