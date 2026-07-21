@@ -85,6 +85,13 @@ async def update_memory_endpoint(
     _caller=Depends(admin_or_open),
 ):
     logger.debug(f"UPDATE ns={req.namespace} key={req.key} scope={req.scope}")
+    # A non-admin principal that reaches this surface (enrichment mode) must
+    # hold write access to BOTH the source namespace and any move target —
+    # new_namespace previously escaped every write check (2026-07-21 audit).
+    from server.dependencies import check_namespace_access
+    check_namespace_access(_caller, req.namespace, "write", force=True)
+    if req.new_namespace and req.new_namespace != req.namespace:
+        check_namespace_access(_caller, req.new_namespace, "write", force=True)
     try:
         updated = await update_memory(
             namespace=req.namespace,

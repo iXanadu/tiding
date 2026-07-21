@@ -147,7 +147,9 @@ async def remove_alias(
     req: AliasCreate,
     _caller=Depends(admin_or_open),
 ):
-    removed = await ps.remove_alias(req.alias, req.source)
+    # Scope to the principal named in the path — without it, this endpoint
+    # could delete an alias belonging to a DIFFERENT principal (alias hijack).
+    removed = await ps.remove_alias(req.alias, req.source, principal_name=name)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Alias not found.")
     return {"status": "ok", "alias": req.alias, "source": req.source}

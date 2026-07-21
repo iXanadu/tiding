@@ -310,3 +310,55 @@ async def test_admin_anonymous_still_open_on_loopback(client):
     """Loopback bind keeps the documented local-open posture."""
     resp = await client.get("/admin/stats")
     assert resp.status_code == 200
+
+
+# --- PATCH /admin/memories: namespace write-checks for non-admin principals ---
+
+@pytest.mark.asyncio
+async def test_patch_memories_new_namespace_requires_write(client):
+    """A non-admin principal (enrichment mode) can't move memories into a
+    namespace it lacks write access to."""
+    try:
+        _, raw_token = await ps.create_principal(
+            name="patch-mover",
+            type="agent",
+            read_namespaces=["test"],
+            write_namespaces=["test"],
+        )
+        resp = await client.patch(
+            "/admin/memories",
+            json={
+                "namespace": "test",
+                "key": "any-key",
+                "scope": "machine",
+                "user_id": "any",
+                "new_namespace": "forbidden-ns",
+            },
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert resp.status_code == 403
+    finally:
+        await _cleanup_principal("patch-mover")
+
+
+@pytest.mark.asyncio
+async def test_patch_memories_source_namespace_requires_write(client):
+    try:
+        _, raw_token = await ps.create_principal(
+            name="patch-nosrc",
+            type="agent",
+            write_namespaces=["elsewhere"],
+        )
+        resp = await client.patch(
+            "/admin/memories",
+            json={
+                "namespace": "test",
+                "key": "any-key",
+                "scope": "machine",
+                "user_id": "any",
+            },
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert resp.status_code == 403
+    finally:
+        await _cleanup_principal("patch-nosrc")

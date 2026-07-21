@@ -283,3 +283,94 @@ async def test_alias_reassignment(db_pool):
     finally:
         await _cleanup_principal("test-reassign-a")
         await _cleanup_principal("test-reassign-b")
+
+
+# --- 2026-07-21 audit: indexed token lookup, 72-byte pre-hash, alias scoping ---
+
+@pytest.mark.asyncio
+async def test_token_lookup_populated_on_create(db_pool):
+    try:
+        _, raw_token = await ps.create_principal(name="tl-create", type="agent")
+        pool = await ps.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT token_lookup FROM principals WHERE name = 'tl-create'"
+            )
+        assert row["token_lookup"] == ps._token_lookup(raw_token)
+        # Indexed fast path resolves
+        found = await ps.get_principal_by_token(raw_token)
+        assert found and found["name"] == "tl-create"
+    finally:
+        await _cleanup_principal("tl-create")
+
+
+@pytest.mark.asyncio
+async def test_legacy_row_without_lookup_still_auths_and_backfills(db_pool):
+    """Rows created before token_lookup existed: scan path matches, then
+    backfills the lookup key so the next auth is indexed."""
+    try:
+        _, raw_token = await ps.create_principal(name="tl-legacy", type="agent")
+        pool = await ps.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE principals SET token_lookup = NULL WHERE name = 'tl-legacy'"
+            )
+        found = await ps.get_principal_by_token(raw_token)
+        assert found and found["name"] == "tl-legacy"
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT token_lookup FROM principals WHERE name = 'tl-legacy'"
+            )
+        assert row["token_lookup"] == ps._token_lookup(raw_token)
+    finally:
+        await _cleanup_principal("tl-legacy")
+
+
+@pytest.mark.asyncio
+async def test_token_rotation_updates_lookup(db_pool):
+    try:
+        await ps.create_principal(name="tl-rotate", type="agent")
+        updated, raw = await ps.update_principal("tl-rotate", token="rotated-test-credential")
+        assert raw == "rotated-test-credential"
+        found = await ps.get_principal_by_token("rotated-test-credential")
+        assert found and found["name"] == "tl-rotate"
+    finally:
+        await _cleanup_principal("tl-rotate")
+
+
+@pytest.mark.asyncio
+async def test_unknown_token_is_indexed_miss(db_pool):
+    assert await ps.get_principal_by_token("engram_no-such-token") is None
+
+
+@pytest.mark.asyncio
+async def test_long_password_not_silently_truncated(db_pool):
+    """bcrypt truncates at 72 bytes; the pre-hash must keep bytes beyond 72
+    significant."""
+    base = "x" * 72
+    hashed = await ps._hash_password(base + "AAAA")
+    assert await ps._check_password(base + "AAAA", hashed)
+    # Same first 72 bytes, different tail — must NOT verify
+    assert not await ps._check_password(base + "BBBB", hashed)
+
+
+@pytest.mark.asyncio
+async def test_remove_alias_scoped_to_principal(db_pool):
+    """Deleting through principal A's path must not remove B's alias."""
+    try:
+        await ps.create_principal(name="alias-owner", type="agent")
+        await ps.create_principal(name="alias-other", type="agent")
+        await ps.add_alias("alias-owner", "shared-nickname", "test-src")
+        # Wrong principal in the path → nothing deleted
+        assert not await ps.remove_alias(
+            "shared-nickname", "test-src", principal_name="alias-other"
+        )
+        assert await ps.list_aliases("alias-owner")
+        # Correct principal → deleted
+        assert await ps.remove_alias(
+            "shared-nickname", "test-src", principal_name="alias-owner"
+        )
+        assert not await ps.list_aliases("alias-owner")
+    finally:
+        await _cleanup_principal("alias-owner")
+        await _cleanup_principal("alias-other")

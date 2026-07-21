@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS principals (
     type                TEXT NOT NULL CHECK (type IN ('human', 'agent')),
     is_admin            BOOLEAN NOT NULL DEFAULT FALSE,
     token_hash          TEXT,
+    -- SHA-256 hex of the raw token: O(1) indexed lookup instead of a
+    -- full bcrypt scan per auth attempt (auth-spray DoS). bcrypt hash
+    -- stays the verifier; this only narrows the candidate row.
+    token_lookup        TEXT,
     password_hash       TEXT,
     read_namespaces     TEXT[] NOT NULL DEFAULT '{}',
     write_namespaces    TEXT[] NOT NULL DEFAULT '{}',
@@ -57,6 +61,9 @@ CREATE TABLE IF NOT EXISTS principals (
 CREATE INDEX IF NOT EXISTS idx_principals_type ON principals (type);
 CREATE INDEX IF NOT EXISTS idx_principals_active ON principals (id)
     WHERE active = TRUE;
+-- idx_principals_token_lookup lives in MIGRATE_SQL: on an existing DB this
+-- CREATE TABLE no-ops, so an index here would reference the column before
+-- the migration adds it.
 
 CREATE TABLE IF NOT EXISTS principal_aliases (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -188,6 +195,18 @@ BEGIN
     SET project = user_id,
         user_id = COALESCE(owner, 'unknown')
     WHERE scope = 'project' AND project IS NULL;
+
+    -- Add token_lookup column if missing (indexed token auth; existing
+    -- rows backfill lazily on their next successful scan-match). The index
+    -- is created unconditionally after — covers fresh AND upgraded DBs.
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'principals' AND column_name = 'token_lookup'
+    ) THEN
+        ALTER TABLE principals ADD COLUMN token_lookup TEXT;
+    END IF;
+    CREATE INDEX IF NOT EXISTS idx_principals_token_lookup
+        ON principals (token_lookup) WHERE token_lookup IS NOT NULL;
 
     -- Add the new 5-tuple unique constraint (NULLS NOT DISTINCT so NULL
     -- projects collide with each other — required for back-compat with

@@ -110,6 +110,8 @@ def check_namespace_access(
     principal: dict | None,
     namespace: str,
     mode: str,
+    *,
+    force: bool = False,
 ) -> None:
     """Check if principal has access to namespace. No-op when principal is None.
 
@@ -117,13 +119,16 @@ def check_namespace_access(
         principal: The authenticated principal dict, or None (anonymous).
         namespace: The namespace being accessed.
         mode: "read" or "write".
+        force: Enforce even when require_auth=false (used by admin surfaces
+            where a known non-admin principal must not exceed its grants
+            regardless of the server's enforcement mode).
 
     Raises:
         HTTPException(403) if the principal lacks access.
     """
     if principal is None:
         return
-    if not settings.require_auth:
+    if not settings.require_auth and not force:
         return
     if principal.get("is_admin"):
         return

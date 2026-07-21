@@ -1,6 +1,7 @@
 """Principal management service: CRUD, token/password hashing, alias resolution."""
 
 import asyncio
+import hashlib
 import secrets
 from uuid import UUID
 
@@ -11,8 +12,25 @@ from server.db import get_pool
 
 # --- Hashing helpers ---
 
+def _bcrypt_input(plaintext: str) -> bytes:
+    """bcrypt silently truncates input at 72 bytes — pre-hash anything longer
+    so the full secret participates. Inputs ≤72 bytes pass through unchanged,
+    which keeps every existing stored hash valid."""
+    raw = plaintext.encode()
+    if len(raw) > 72:
+        return hashlib.sha256(raw).hexdigest().encode()
+    return raw
+
+
+def _token_lookup(raw_token: str) -> str:
+    """Deterministic indexed lookup key for a token (SHA-256 hex). The token
+    itself is high-entropy, so the digest is not reversible/bruteforceable;
+    bcrypt remains the stored verifier."""
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
 def _hash_password_sync(plaintext: str) -> str:
-    return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_bcrypt_input(plaintext), bcrypt.gensalt()).decode()
 
 
 async def _hash_password(plaintext: str) -> str:
@@ -20,20 +38,23 @@ async def _hash_password(plaintext: str) -> str:
 
 
 def _check_password_sync(plaintext: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plaintext.encode(), hashed.encode())
+    return bcrypt.checkpw(_bcrypt_input(plaintext), hashed.encode())
 
 
 async def _check_password(plaintext: str, hashed: str) -> bool:
     return await asyncio.to_thread(_check_password_sync, plaintext, hashed)
 
 
+async def _hash_token(raw_token: str) -> str:
+    return await asyncio.to_thread(
+        lambda: bcrypt.hashpw(_bcrypt_input(raw_token), bcrypt.gensalt()).decode()
+    )
+
+
 async def generate_token() -> tuple[str, str]:
     """Return (raw_token, bcrypt_hash). The raw token is shown once at creation."""
     raw = "engram_" + secrets.token_urlsafe(32)
-    hashed = await asyncio.to_thread(
-        lambda: bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
-    )
-    return raw, hashed
+    return raw, await _hash_token(raw)
 
 
 # --- Row → dict helper ---
@@ -75,12 +96,11 @@ async def create_principal(
     raw_token = None
     if token:
         raw_token = token
-        token_hash = await asyncio.to_thread(
-            lambda: bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode()
-        )
+        token_hash = await _hash_token(token)
     elif type == "agent":
         raw_token, token_hash = await generate_token()
 
+    token_lookup = _token_lookup(raw_token) if raw_token else None
     password_hash = await _hash_password(password) if password else None
 
     rns = read_namespaces or []
@@ -89,12 +109,12 @@ async def create_principal(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO principals (name, type, is_admin, token_hash, password_hash,
-                                    read_namespaces, write_namespaces)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO principals (name, type, is_admin, token_hash, token_lookup,
+                                    password_hash, read_namespaces, write_namespaces)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
             """,
-            name, type, is_admin, token_hash, password_hash, rns, wns,
+            name, type, is_admin, token_hash, token_lookup, password_hash, rns, wns,
         )
     return _principal_dict(row), raw_token
 
@@ -114,17 +134,48 @@ async def get_principal_by_id(principal_id: UUID) -> dict | None:
 
 
 async def get_principal_by_token(raw_token: str) -> dict | None:
-    """Scan active principals and bcrypt-check the token. Fine at household scale."""
+    """Resolve a token to its principal.
+
+    Fast path: indexed token_lookup (SHA-256 of the raw token) narrows to one
+    row, then bcrypt verifies. An unknown token costs one indexed miss instead
+    of a bcrypt scan across every principal (auth-spray DoS from the
+    2026-07-21 audit).
+
+    Legacy path: rows created before token_lookup existed are scanned with
+    bcrypt and backfilled on first successful match.
+    """
     pool = await get_pool()
+    lookup = _token_lookup(raw_token)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM principals WHERE active = TRUE AND token_lookup = $1",
+            lookup,
+        )
+    if row:
+        match = await asyncio.to_thread(
+            bcrypt.checkpw, _bcrypt_input(raw_token), row["token_hash"].encode()
+        )
+        return _principal_dict(row) if match else None
+
+    # Legacy rows (no lookup key yet): bcrypt-scan, backfill on match.
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM principals WHERE active = TRUE AND token_hash IS NOT NULL"
+            """
+            SELECT * FROM principals
+            WHERE active = TRUE AND token_hash IS NOT NULL AND token_lookup IS NULL
+            """
         )
     for row in rows:
         match = await asyncio.to_thread(
-            bcrypt.checkpw, raw_token.encode(), row["token_hash"].encode()
+            bcrypt.checkpw, _bcrypt_input(raw_token), row["token_hash"].encode()
         )
         if match:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE principals SET token_lookup = $1 WHERE id = $2",
+                    lookup, row["id"],
+                )
             return _principal_dict(row)
     return None
 
@@ -181,9 +232,10 @@ async def update_principal(
     if token is not None:
         raw_token = token
         sets.append(f"token_hash = ${idx}")
-        params.append(await asyncio.to_thread(
-            lambda: bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode()
-        ))
+        params.append(await _hash_token(token))
+        idx += 1
+        sets.append(f"token_lookup = ${idx}")
+        params.append(_token_lookup(token))
         idx += 1
     if read_namespaces is not None:
         sets.append(f"read_namespaces = ${idx}")
@@ -247,18 +299,32 @@ async def add_alias(principal_name: str, alias: str, source: str) -> dict | None
     }
 
 
-async def remove_alias(alias: str, source: str | None = None) -> bool:
+async def remove_alias(
+    alias: str,
+    source: str | None = None,
+    principal_name: str | None = None,
+) -> bool:
+    """Remove an alias. When principal_name is given, only that principal's
+    alias is deletable — the API path names a principal, and deleting some
+    OTHER principal's alias through it is a hijack (2026-07-21 audit)."""
     pool = await get_pool()
+    clauses = ["alias = $1"]
+    params: list = [alias]
+    idx = 2
+    if source:
+        clauses.append(f"source = ${idx}")
+        params.append(source)
+        idx += 1
+    if principal_name:
+        clauses.append(
+            f"principal_id = (SELECT id FROM principals WHERE name = ${idx})"
+        )
+        params.append(principal_name)
+        idx += 1
     async with pool.acquire() as conn:
-        if source:
-            result = await conn.execute(
-                "DELETE FROM principal_aliases WHERE alias = $1 AND source = $2",
-                alias, source,
-            )
-        else:
-            result = await conn.execute(
-                "DELETE FROM principal_aliases WHERE alias = $1", alias
-            )
+        result = await conn.execute(
+            f"DELETE FROM principal_aliases WHERE {' AND '.join(clauses)}", *params
+        )
     # asyncpg returns "DELETE N"
     return not result.endswith("0")
 
