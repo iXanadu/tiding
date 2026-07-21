@@ -89,11 +89,11 @@ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/js
   http://localhost:8920/admin/principals
 # → raw token shown ONCE; store it in the provider's config (never the repo)
 
-# 2. Point the agent at the same server / namespace / project scoping
-#    (MCP bridge env block, or your client's settings):
+# 2. Point the agent at the same server (MCP bridge env block, or your
+#    client's settings). Do NOT set memory_namespace — the namespace is
+#    decided by the token, server-side (see design/provider-credentials.md):
 #      memory_api_url   = http://localhost:8920
 #      memory_api_token = <grok's token>
-#      memory_namespace = <your shared namespace>
 #      ENGRAM_INBOX_IDENTITY = <project>-grok        # if sharing a folder
 
 # 3. Verify identity end-to-end

@@ -323,10 +323,16 @@ Closes the wildcard-expansion gap consumer apps used to hit by calling `/admin/s
 
 Built on top of the memory table. Enables Claude Code sessions (or any agent) to leave messages for each other across sessions and machines.
 
-- `POST /memory/send` — Send a message to an address
-- `POST /memory/inbox` — List inbox messages for a set of listen addresses
+- `POST /memory/send` — Send a message to an address (supports `intent`, threading via `reply_to`, and `supersedes` to retire an earlier message)
+- `POST /memory/inbox` — List inbox messages for a set of listen addresses (open-only by default; `include_resolved` for history)
 - `POST /memory/inbox/{id}/ack` — Mark a message as read (per-reader)
-- `POST /memory/inbox/{id}/archive` — Archive a message (global hide)
+- `POST /memory/inbox/{id}/resolve` — Close a finished thread so it drains from the default view (kept, reversible; either party may resolve)
+- `POST /memory/inbox/{id}/archive` — Archive a message (global hide; for noise/mistakes — prefer resolve)
+- `POST /memory/inbox/wait` — Long-poll for new mail (what the watcher uses)
+- `POST /memory/presence` — Heartbeat: a session self-reports its liveness state (also detects seat collisions — two sessions on one inbox identity)
+- `POST /memory/roster` — Who's listening where: identities, providers, liveness, channel membership
+
+**Message lifecycle.** Every message has a status (`open` → `resolved`/`superseded`) and an `intent` (`fyi | action | proceed | escalate`). `fyi` never wakes a dormant peer; `action` does. Stale open messages (72h default) are annotated, never auto-deleted.
 
 **Addressing.** An address is a flat string; a session listens on a *set* of them (its `listen_set`) and is reachable on any:
 
@@ -394,7 +400,7 @@ All under `/admin/principals`. Require admin when `require_auth=true`.
 - `GET /dashboard` — Memory browser with search, filtering, stats, and edit modal.
 - `GET /bridge` — Standalone memory search UI with cross-namespace provenance badges.
 
-Both pages are auth-exempt at the middleware level, but API calls from them require tokens when `require_auth=true` (the bridge UI stores the token in localStorage).
+Both pages are auth-exempt at the middleware level, but API calls from them require tokens when `require_auth=true` (the token you enter lives in `sessionStorage` — it dies with the tab). All assets are locally served and pinned — no CDN — and the pages carry a `default-src 'self'` CSP.
 
 ## Configuration
 
@@ -408,16 +414,23 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_DB_USER` | `engram` | Database user |
 | `ENGRAM_DB_PASSWORD` | `engram` | Database password |
 | `ENGRAM_EMBED_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | HuggingFace embedding model |
+| `ENGRAM_EMBED_MODEL_REVISION` | _(pinned commit)_ | Pinned HF revision of the embed model (supply-chain guard for `trust_remote_code`). Empty = unpinned; override only for deliberate upgrades |
 | `ENGRAM_HOST` | `127.0.0.1` | Server bind address. Non-loopback **without auth refuses to start** (secure by default) |
 | `ENGRAM_ALLOW_INSECURE_BIND` | `false` | Explicit opt-out: allow a tokenless non-loopback bind on a **trusted private network only** (Tailscale/WireGuard) |
+| `ENGRAM_TRUSTED_HOSTS` | `localhost,127.0.0.1,[::1],::1` | Host-header allowlist (anti-DNS-rebinding). Add your hostname / Tailscale MagicDNS name when binding non-loopback |
 | `ENGRAM_PORT` | `8920` | Server port |
 | `ENGRAM_LOG_LEVEL` | `info` | Log level |
+| `ENGRAM_PRIMARY_NAMESPACE` | `fleet` | The canonical namespace this deployment treats as primary |
+| `ENGRAM_NAMESPACE_ALIASES` | `claude-code=fleet` | Legacy→canonical namespace rewrites (`old=new`, comma-separated) so renamed namespaces keep working through a transition |
 | `ENGRAM_API_TOKEN` | _(empty)_ | Legacy Bearer token (empty = no auth) |
 | `ENGRAM_REQUIRE_AUTH` | `false` | Enable principal-based authentication |
 | `ENGRAM_WARN_UNAUTHED` | `false` | Log warnings for unauthenticated requests |
 | `ENGRAM_CLEANUP_ENABLED` | `true` | Run background expiration cleanup. **Disabled in production** — engram is manual-curation; nothing is auto-deleted. See note below. |
 | `ENGRAM_CLEANUP_INTERVAL_HOURS` | `6` | Hours between cleanup runs |
 | `ENGRAM_CLEANUP_BATCH_SIZE` | `500` | Max expired records per cleanup run |
+| `ENGRAM_INBOX_AUTORESOLVE_ENABLED` | `true` | Auto-resolve inbox mail that is **already read** and stale, so the open pile doesn't grow without bound (reversible — resolve, not delete; unread mail is never touched) |
+| `ENGRAM_INBOX_AUTORESOLVE_INTERVAL_HOURS` | `6` | Hours between auto-resolve sweeps |
+| `ENGRAM_INBOX_AUTORESOLVE_AFTER_HOURS` | `72` | Read-message age before auto-resolve |
 | `ENGRAM_VECTOR_THRESHOLD` | `0.35` | Minimum cosine similarity |
 | `ENGRAM_TRIGRAM_WEIGHT` | `0.15` | Weight for trigram score in combined ranking |
 | `ENGRAM_TRIGRAM_THRESHOLD` | `0.1` | Minimum trigram similarity |
@@ -486,10 +499,11 @@ Then register in `~/.claude.json` using the stable path:
 > ```
 > memory_api_token=engram_<your-token>
 > memory_api_url=http://localhost:8920
-> memory_namespace=fleet
 > ```
 >
 > The bridge reads it from there when the `.claude.json` env block omits the token. (An inline env token still works and takes precedence — but a fragile config file is a poor home for a credential.)
+>
+> Do **not** set `memory_namespace` (or `memory_read_namespaces`) in any client config — the namespace an agent writes to is decided by **its token** and enforced server-side. A config that pins these can only ever be redundant or wrong. See [docs/design/provider-credentials.md](docs/design/provider-credentials.md).
 
 The MCP bridge resolves project identity from `.engram.cfg` in the repo root (walk-up search). Create one in each project:
 
@@ -498,7 +512,7 @@ The MCP bridge resolves project identity from `.engram.cfg` in the repo root (wa
 project = my-project-name
 ```
 
-**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, `memory_forget`, `memory_send`/`memory_inbox`/`memory_reply`/`memory_ack`/`memory_inbox_archive` (inter-agent inbox), `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
+**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, `memory_forget`; the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
 
 The bridge also installs the **`engram-inbox-wait`** console script — arm it at session start (under Claude Code's Monitor tool) so the session wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake watcher](#inbox-inter-agent-messaging).
 

@@ -71,18 +71,26 @@ Rules of thumb:
 - Tokens live in config outside the repo (`~/.config/…`, env). **Never
   commit a token.**
 
-## Identity: the three dimensions
+## Identity: the partition dimensions
 
-Every memory is scoped by three independent dimensions:
+Every memory is scoped by independent dimensions:
 
 - **namespace** — which *system* is writing (required, no default). One
   shared namespace for your cooperating agents is the norm; separate
   namespaces are for genuinely separate systems, not for separate providers
-  working the same projects.
+  working the same projects. The namespace is the **security boundary** —
+  access control happens here.
 - **scope** — visibility: `shared` (cross-project knowledge), `project`
   (this project's state), `machine` (host-local), `user` (personal).
-- **user_id** — identity within the namespace; for `scope=project` this is
-  the **project name**.
+- **user_id** — the *person or principal* that wrote the memory (for
+  `scope=machine` it's the hostname).
+- **project** — a separate column holding the project name when
+  `scope=project` (NULL otherwise). The project name comes from
+  `.engram.cfg`, never from a folder basename guess.
+
+(Older docs described a 3-dimension model where `user_id` doubled as the
+project name for `scope=project` — that was Phase 3. Phase 4 split `project`
+into its own column so the writer's identity survives as provenance.)
 
 ## `.engram.cfg`: the project's one config file
 

@@ -9,19 +9,17 @@
 
 - **REL-1** Public-release gate: history rewrite push + verification sweep
   (`scripts/repo-hygiene-check.sh` clean on tree AND full history), publish
-  checklist review. Repo stays private until this closes. **Blocks on
-  DOCS-SANITIZE below** (SEC-AUDIT cleared 2026-07-21).
-- **DOCS-SANITIZE** Three docs are unpublishable internal memos (real names,
-  private projects, fleet hosts): `docs/webapp-integration-spec.md`,
-  `docs/webapp-native-app-identity.md`, `docs/design/messaging-architecture.md`.
-  Sanitize or move to a private location before public. Also: README stale
-  (missing `memory_roster`/`memory_resolve` tools, `/memory/{resolve,wait,
-  presence,roster}` endpoints, several `ENGRAM_*` env vars); getting-started
-  teaches the pre-Phase-4 3-dimension model; provider-credentials-vs-README
-  contradiction on `memory_namespace`.
+  checklist review. Repo stays private until this closes. **Unblocked** —
+  SEC-AUDIT and DOCS-SANITIZE both cleared 2026-07-21; what remains is the
+  rewrite itself + the sweep (operator-gated: force-push of rewritten
+  history needs Rob's go).
 - **IB-6** `unread_only` inbox filter can miss unacked mail under small
   limits — reproduce against a real DB before patching (suspected remnant of
   the fixed newest-N windowing bug).
+- **IB-7** Two different sender sessions leaked trailing tool-call XML
+  fragments into message bodies (same defect class, same day). Sender-side
+  compose bug, but the transport could defensively strip/flag trailing
+  tool-XML at send time. Investigate frequency before building.
 
 ## Next (committed, not started)
 
