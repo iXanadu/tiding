@@ -65,12 +65,16 @@ pattern):
 
 ```
 myproject/
-  .engram.cfg            # project = myproject   ← the ONLY engram line a repo carries
-  AGENTS.md              # provider-neutral project instructions
-  CLAUDE.md -> AGENTS.md # symlink so Claude Code reads the same file
-  skills/                # provider-neutral startup/wrapup/init workflows
-  BACKLOG.md             # lean open-items ledger (see backlog-standard.md)
+  .engram.cfg                  # project = myproject  ← the ONLY engram line a repo carries
+  AGENTS.md                    # provider-neutral project instructions (canonical)
+  CLAUDE.md -> AGENTS.md       # symlink: Claude Code reads the same file
+  skills/                      # provider-neutral startup/wrapup/init workflows (canonical)
+  .claude/skills -> ../skills  # symlink: Claude's skill path resolves into it
+  BACKLOG.md                   # lean open-items ledger (see backlog-standard.md)
 ```
+
+One canonical artifact per concern; every provider-specific path is a symlink
+into it. Nothing is duplicated, so nothing can drift.
 
 Globally the same trick applies: keep one canonical agent-rules file (e.g.
 `~/.agents/AGENTS.md`) and symlink/import it from each provider's global
