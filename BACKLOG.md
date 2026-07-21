@@ -7,12 +7,10 @@
 
 ## Now (blocking or next up)
 
-- **REL-1** Public-release gate: history rewrite push + verification sweep
-  (`scripts/repo-hygiene-check.sh` clean on tree AND full history), publish
-  checklist review. Repo stays private until this closes. **Unblocked** —
-  SEC-AUDIT and DOCS-SANITIZE both cleared 2026-07-21; what remains is the
-  rewrite itself + the sweep (operator-gated: force-push of rewritten
-  history needs Rob's go).
+- **REL-1** Public-release gate — **rewrite + sweep DONE 2026-07-21**
+  (history rewritten and force-pushed; hygiene patterns clean across every
+  blob in every commit; all clones re-pointed). Remaining: publish
+  checklist review + the visibility flip itself (operator's click).
 
 ## Next (committed, not started)
 
