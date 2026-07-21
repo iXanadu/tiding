@@ -190,6 +190,7 @@ class MemoryClient:
         provider: str | None = None,
         overlays: list[str] | None = None,
         channels: list[str] | None = None,
+        session_nonce: str | None = None,
         project_dir: str | None = None,
     ) -> dict:
         """Self-reported liveness heartbeat (MSG-4)."""
@@ -203,6 +204,7 @@ class MemoryClient:
                 "provider": provider,
                 "overlays": overlays or [],
                 "channels": channels or [],
+                "session_nonce": session_nonce,
             },
             headers=self._provenance_headers(project_dir),
         )

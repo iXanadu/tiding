@@ -473,3 +473,43 @@ async def test_declare_identity_allows_admin(tmp_path):
     result = await memory_declare_identity(project_dir=str(tmp_path), name="admin")
     assert "Declared project identity: admin" in result
     assert "project = admin" in (tmp_path / ".engram.cfg").read_text()
+
+
+# --- seat-collision banner (nonce -> heartbeat -> STOP prompt) ---------------
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_heartbeat_sends_nonce_and_collision_sets_banner(respx_mock):
+    import engram_mcp.server as srv
+    respx_mock.post("/memory/presence").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "identity": "x", "state": "running",
+        "collision": {"live_sessions": 2, "providers": ["claude"]},
+    }))
+    respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"}))
+    srv._last_heartbeat = 0.0  # force a beat
+    old = srv._SEAT_COLLISION
+    try:
+        result = await memory_store(key="k", value="v")
+        # nonce rode the heartbeat
+        beat_payload = json.loads(
+            [c for c in respx_mock.calls if "/memory/presence" in str(c.request.url)][-1].request.read())
+        assert beat_payload["session_nonce"] == srv._SESSION_NONCE
+        # STOP banner prepended to the tool result
+        assert "SEAT COLLISION" in result
+        assert "ENGRAM_INBOX_IDENTITY=" in result
+    finally:
+        srv._SEAT_COLLISION = old
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_collision_clear_removes_banner(respx_mock):
+    import engram_mcp.server as srv
+    respx_mock.post("/memory/presence").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "identity": "x", "state": "running", "collision": None,
+    }))
+    respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"}))
+    srv._last_heartbeat = 0.0
+    srv._SEAT_COLLISION = {"live_sessions": 2, "providers": ["claude"]}  # was colliding
+    result = await memory_store(key="k", value="v")
+    assert "SEAT COLLISION" not in result  # cleared by the clean heartbeat

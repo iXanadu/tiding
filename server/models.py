@@ -469,6 +469,11 @@ class PresenceUpdateRequest(BaseModel):
     provider: str | None = None      # claude | grok | codex | ...
     overlays: list[str] = []         # e.g. ["projdelta/builders"]
     channels: list[str] = []         # e.g. ["#courseware"]
+    # Per-PROCESS random nonce (SEAT collision detection): two live sessions
+    # heartbeating one identity with different nonces = the silent "two bodies,
+    # one seat" misconfiguration (shared acks, mutual self-echo drop). None =
+    # legacy client; collision tracking skipped for that heartbeat.
+    session_nonce: str | None = None
 
     @field_validator("identity", "project", mode="before")
     @classmethod
@@ -495,6 +500,12 @@ class RosterEntry(BaseModel):
     last_seen: datetime
     age_seconds: float
     is_stale: bool  # last_seen older than the staleness threshold
+    # Seat-collision detection: number of distinct live sessions (fresh
+    # nonces) heartbeating this one identity, and whether that's a flagged
+    # collision (>1 on a non-exempt identity — see SEAT_EXEMPT_IDENTITIES).
+    live_sessions: int = 1
+    collision: bool = False
+    providers_seen: list[str] = []  # providers across live sessions (collision detail)
 
 
 class RosterRequest(BaseModel):
@@ -513,6 +524,12 @@ class PresenceUpdateResponse(BaseModel):
     status: str
     identity: str
     state: str
+    # Set when this identity has >1 live session (fresh nonces) and is not an
+    # exempt shared-role identity: {"live_sessions": n, "providers": [...]}.
+    # Clients surface this LOUDLY — the second seat must declare a
+    # discriminator (ENGRAM_INBOX_IDENTITY) or the sessions share ack-state
+    # and cannot message each other.
+    collision: dict | None = None
 
 
 class InboxAckRequest(BaseModel):

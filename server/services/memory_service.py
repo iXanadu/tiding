@@ -526,6 +526,28 @@ PRESENCE_SCOPE = "presence"
 PRESENCE_STALE_AFTER_SECONDS = 600  # 10 min without a heartbeat → stale
 
 
+# Seat-collision detection (grew out of ROST-1): a session nonce is fresh for
+# this many seconds. Window ≈ 2.5× the bridge heartbeat interval (120s) — a
+# bridge restart mid-session can look like a collision for at most this long.
+SEAT_COLLISION_WINDOW_SECONDS = 300
+# Identities where multiple simultaneous sessions are legitimate role-sharing
+# by design (per the two-axis doctrine): never flagged as collisions.
+SEAT_EXEMPT_IDENTITIES = {"admin"}
+
+
+def _fresh_sessions(md: dict, now: datetime) -> dict:
+    """Return the still-fresh entries of a presence row's nonce map."""
+    fresh = {}
+    for nonce, info in (md.get("sessions") or {}).items():
+        try:
+            seen = datetime.fromisoformat(info.get("last_seen"))
+        except (TypeError, ValueError):
+            continue
+        if (now - seen).total_seconds() < SEAT_COLLISION_WINDOW_SECONDS:
+            fresh[nonce] = info
+    return fresh
+
+
 async def presence_update(
     identity: str,
     project: str,
@@ -533,8 +555,14 @@ async def presence_update(
     provider: str | None = None,
     overlays: list[str] | None = None,
     channels: list[str] | None = None,
-) -> None:
+    session_nonce: str | None = None,
+) -> dict | None:
     """Upsert this identity's presence row (self-reported heartbeat).
+
+    Returns a collision dict ({"live_sessions": n, "providers": [...]}) when
+    more than one live session (distinct fresh nonces) is heartbeating this
+    identity and the identity is not an exempt shared role — the "two bodies,
+    one seat" misconfiguration. None otherwise.
 
     First insert embeds a small search text (column is NOT NULL); subsequent
     heartbeats update only value/metadata — no re-embedding on every beat.
@@ -542,18 +570,40 @@ async def presence_update(
     identity = identity.lower()
     project = project.lower()
     now = datetime.now(timezone.utc)
-    metadata = {
-        "kind": "presence",
-        "provider": provider,
-        "state": state,
-        "overlays": overlays or [],
-        "channels": channels or [],
-        "last_seen": now.isoformat(),
-    }
-    value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
     key = f"presence/{identity}"
     pool = await get_pool()
     async with pool.acquire() as conn:
+        prior = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND key = $4
+            """,
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
+        )
+        prior_md = {}
+        if prior and prior["metadata"]:
+            prior_md = prior["metadata"]
+            if isinstance(prior_md, str):
+                prior_md = json.loads(prior_md)
+        # Merge this beat into the pruned nonce map. Legacy clients (no nonce)
+        # don't participate in collision tracking but keep normal presence.
+        sessions = _fresh_sessions(prior_md, now)
+        if session_nonce:
+            sessions[session_nonce] = {
+                "last_seen": now.isoformat(),
+                "provider": provider,
+                "state": state,
+            }
+        metadata = {
+            "kind": "presence",
+            "provider": provider,
+            "state": state,
+            "overlays": overlays or [],
+            "channels": channels or [],
+            "last_seen": now.isoformat(),
+            "sessions": sessions,
+        }
+        value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
         # Heartbeat timestamp rides last_used_at (no updated_at column).
         updated = await conn.execute(
             """
@@ -579,6 +629,10 @@ async def presence_update(
                 PRESENCE_NAMESPACE, key, value, PRESENCE_SCOPE, project,
                 embedding, value, json.dumps(metadata),
             )
+    if len(sessions) > 1 and identity not in SEAT_EXEMPT_IDENTITIES:
+        providers = sorted({(i.get("provider") or "unknown") for i in sessions.values()})
+        return {"live_sessions": len(sessions), "providers": providers}
+    return None
 
 
 async def roster_list(
@@ -617,8 +671,11 @@ async def roster_list(
             continue
         last_seen = r["last_used_at"] or now
         age = (now - last_seen).total_seconds()
+        ident = r["key"].removeprefix("presence/")
+        fresh = _fresh_sessions(md, now)
+        live = max(len(fresh), 1)
         entries.append({
-            "identity": r["key"].removeprefix("presence/"),
+            "identity": ident,
             "project": r["user_id"],
             "state": state,
             "provider": md.get("provider"),
@@ -627,6 +684,9 @@ async def roster_list(
             "last_seen": last_seen,
             "age_seconds": round(age, 1),
             "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
+            "live_sessions": live,
+            "collision": live > 1 and ident not in SEAT_EXEMPT_IDENTITIES,
+            "providers_seen": sorted({(i.get("provider") or "unknown") for i in fresh.values()}) if fresh else [],
         })
     return entries
 

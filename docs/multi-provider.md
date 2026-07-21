@@ -106,6 +106,30 @@ listed. All four worked on the first live Grok onboarding — the only stumble
 was addressing (it guessed an address instead of asking the roster; the
 roster exists precisely so no agent has to guess).
 
+## A second session in the same folder (seats)
+
+Two sessions in one project folder — same provider or not — MUST take
+distinct seats, declared **at launch**:
+
+```bash
+ENGRAM_INBOX_IDENTITY=myproject-remediate claude   # seat 1
+ENGRAM_INBOX_IDENTITY=myproject-audit     grok     # seat 2
+```
+
+Both keep the shared `myproject` group address (broadcasts reach everyone);
+each gets its own DM address and independent read-state. Discriminate by
+**role** first (`-audit`, `-remediate`), by provider/model only when that is
+the real distinction. The watcher inherits the same env, so bridge and
+watcher always agree.
+
+**If you forget, engram tells you.** Every session heartbeats a per-process
+nonce; when the server sees two live sessions on one identity it flags a
+**seat collision** — a ⛔ STOP banner on the colliding sessions' memory
+calls and on the roster — because two sessions on one seat share ack-state
+and cannot message or wake each other. Deliberately shared roles (the
+`admin` identity) are exempt. Fix = relaunch one session with a seat, and
+arm its watcher with the same env.
+
 ## Collaboration topologies (both live-proven)
 
 **Peer mesh** — each agent owns a part, coordinating through threaded

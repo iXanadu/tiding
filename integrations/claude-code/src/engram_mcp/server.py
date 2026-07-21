@@ -2,6 +2,7 @@
 
 import subprocess
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,11 @@ from engram_mcp.scoping import (
 
 _PRINCIPAL_CACHE: dict | None = None
 _PRINCIPAL_FETCHED = False
+
+# Per-process nonce: lets the server distinguish two live sessions sharing
+# one inbox identity (seat-collision detection). Regenerated per bridge start.
+_SESSION_NONCE = uuid.uuid4().hex[:12]
+_SEAT_COLLISION: dict | None = None  # set/cleared by _heartbeat from server responses
 
 
 def _format_recency(created_at_raw) -> str:
@@ -179,9 +185,10 @@ def _append_guidance(body: str, result: dict) -> str:
     server-side without forcing an MCP/Claude restart.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
+    alert = _seat_collision_banner()
     if not guidance:
-        return body
-    return f"{body}\n\n---\n{guidance}"
+        return alert + body
+    return f"{alert}{body}\n\n---\n{guidance}"
 
 
 def _get_version() -> str:
@@ -261,16 +268,48 @@ async def _heartbeat(project_dir: str | None) -> None:
         # Derive the project group directly — never peek at listen_set
         # positions (its shape now varies with overrides AND channels).
         project = derive_project_name(remember_project_dir(project_dir or None))
-        await _client.presence_update(
+        resp = await _client.presence_update(
             identity=identity,
             project=project,
             state="running",
             provider="claude",
             channels=resolve_channels() or None,
+            session_nonce=_SESSION_NONCE,
             project_dir=project_dir or None,
         )
+        global _SEAT_COLLISION
+        _SEAT_COLLISION = resp.get("collision")  # dict when colliding, None clears
     except Exception:
         pass  # presence is best-effort; never fail the caller
+
+
+def _seat_collision_banner(project_dir: str | None = None) -> str:
+    """A loud STOP banner when this session shares its inbox identity with
+    another LIVE session (server-detected via per-process nonces). Empty
+    string when clear. Prepended to memory tool results so the collision is
+    impossible to miss at the moment it matters (SU-1 interrogate pattern)."""
+    if not _SEAT_COLLISION:
+        return ""
+    try:
+        reader_identity, _ = compute_identity(project_dir or None)
+        seat = reader_identity.split("@", 1)[0]
+    except Exception:
+        seat = "<this identity>"
+    n = _SEAT_COLLISION.get("live_sessions", 2)
+    provs = ", ".join(_SEAT_COLLISION.get("providers", [])) or "unknown"
+    return (
+        f"⛔ SEAT COLLISION — {n} live sessions share inbox identity '{seat}' "
+        f"(providers: {provs}).\n"
+        f"Two sessions on one seat SHARE ack-state and CANNOT message or wake "
+        f"each other (self-echo suppression treats them as one sender).\n"
+        f"FIX NOW: tell the user this session (or the other one) should be "
+        f"relaunched with a distinct seat, e.g.\n"
+        f"    ENGRAM_INBOX_IDENTITY={seat}-<role> <harness-command>\n"
+        f"and its watcher armed with the same env. Discriminate by ROLE "
+        f"(-audit, -remediate), or provider/model if that is the real cut.\n"
+        f"(If a bridge just restarted mid-session this clears itself within "
+        f"~5 minutes.)\n\n"
+    )
 
 
 @mcp.tool()
@@ -317,7 +356,7 @@ async def memory_store(
         listen_set=listen_set,
         reader_identity=reader_identity,
     )
-    banner_text = _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
     proj_suffix = f", project: {project}" if project else ""
     # Prefer the CANONICAL namespace the server says it wrote to (it
     # canonicalizes legacy aliases); fall back to config for older servers.
@@ -388,7 +427,7 @@ async def memory_search(
         project_dir=project_dir or None,
     )
 
-    banner_text = _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
 
     if result.get("status") != "ok" or not result.get("results"):
         if banner_text:
@@ -659,14 +698,29 @@ async def memory_roster(
             "sending to its project address will still queue mail."
         )
     lines = []
+    collisions = []
     for e in entries:
         stale = " ⚠️ STALE" if e.get("is_stale") else ""
         age = int(e.get("age_seconds") or 0)
+        clash = ""
+        if e.get("collision"):
+            n = e.get("live_sessions", 2)
+            provs = ", ".join(e.get("providers_seen") or []) or "?"
+            clash = f" ⛔ {n} LIVE SESSIONS on this ONE identity ({provs})"
+            collisions.append(e["identity"])
         lines.append(
             f"  {e['identity']:<28} [{e.get('provider') or '?'}] "
-            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}"
+            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}{clash}"
         )
     head = f"Live roster ({len(entries)}):\n" + "\n".join(lines)
+    if collisions:
+        head += (
+            f"\n\n⛔ SEAT COLLISION on: {', '.join(collisions)} — multiple live "
+            f"sessions share one inbox identity (shared acks; they cannot "
+            f"message each other). Relaunch one per identity with "
+            f"ENGRAM_INBOX_IDENTITY=<identity>-<role> and re-arm its watcher "
+            f"with the same env."
+        )
     return _append_guidance(head, result)
 
 

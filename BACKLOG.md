@@ -32,7 +32,3 @@
   on a live second-app validation round-trip.
 - **LIFE-2** Inbox lifecycle wave 2 (client-driven resolve/supersede
   ergonomics) — build when inbox noise is a felt problem, not before.
-- **ROST-1** Roster warning for identity-collision misconfig: flag when one
-  non-role identity heartbeats from two different providers simultaneously
-  ("you meant two roles but declared one"). Exclude pure-role addresses —
-  role-sharing is legitimate by design. Detail: `backlog/ROST-1` in memory.

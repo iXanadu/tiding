@@ -59,6 +59,13 @@ So this session wakes on *any* inbound message for its whole lifetime — not ju
 ~/.pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait --follow --project-dir <repo-abs-path>
 ```
 
+- **Seat declared? Arm the watcher with it.** If this session was launched
+  with `ENGRAM_INBOX_IDENTITY` (or declares a seat after a SEAT COLLISION
+  prompt), prefix the SAME env on the watcher command:
+  `ENGRAM_INBOX_IDENTITY=<seat> <abs>/engram-inbox-wait --follow ...` —
+  bridge and watcher must resolve one identity. (A bare launch needs no
+  prefix; both inherit the same environment.)
+
 - Run it under the **Monitor** tool (each stdout JSON line = one wake). It seeds on the current backlog and only emits mail that arrives *after* it starts, so it won't re-surface what you just read in step 4.
 - Auth comes from `~/.config/engram/identity` (a bare shell process doesn't inherit the bridge's `~/.claude.json` env — the token must be in that file).
 - Best-effort: if the `engram-inbox-wait` entrypoint isn't installed (older bridge) or Monitor is unavailable, skip and proceed — it's an enhancement, not a gate. Session-lifetime only: it dies with the session (the cron inbox-sweep is the backstop for "reply arrives tomorrow").

@@ -418,15 +418,18 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
     transitions (running → awaiting-input → done). Engram never scrapes."""
     check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
     try:
-        await presence_update(
+        collision = await presence_update(
             identity=req.identity,
             project=req.project,
             state=req.state,
             provider=req.provider,
             overlays=req.overlays,
             channels=req.channels,
+            session_nonce=req.session_nonce,
         )
-        return PresenceUpdateResponse(status="ok", identity=req.identity, state=req.state)
+        return PresenceUpdateResponse(
+            status="ok", identity=req.identity, state=req.state, collision=collision
+        )
     except Exception as e:
         logger.exception("presence_update failed")
         raise HTTPException(status_code=500, detail=str(e))
