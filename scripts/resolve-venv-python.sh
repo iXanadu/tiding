@@ -28,11 +28,24 @@ _roots() {
     echo "/opt/pyenv"
 }
 
+# A directory only counts as a pyenv root if it looks like one: it holds a
+# pyenv binary or a non-empty versions/. (Real case: a stale, half-removed
+# ~/.pyenv shadowing the box's real /usr/local/pyenv — webone, 2026-07-21.)
+_is_real_root() {
+    [ -x "$1/bin/pyenv" ] && return 0
+    [ -d "$1/versions" ] && [ -n "$(ls -A "$1/versions" 2>/dev/null)" ] && return 0
+    return 1
+}
+
 resolve_root() {
-    local root
+    local root first_existing=""
     while IFS= read -r root; do
-        [ -d "$root" ] && { echo "$root"; return 0; }
+        [ -d "$root" ] || continue
+        [ -n "$first_existing" ] || first_existing="$root"
+        _is_real_root "$root" && { echo "$root"; return 0; }
     done < <(_roots)
+    # Fallback: a fresh box may have an empty root before its first venv.
+    [ -n "$first_existing" ] && { echo "$first_existing"; return 0; }
     echo "ERROR: no pyenv root found (searched: \$PYENV_ROOT, ~/.pyenv, /usr/local/pyenv, /opt/pyenv)" >&2
     return 1
 }
