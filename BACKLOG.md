@@ -39,6 +39,12 @@
 
 ## Next (committed, not started)
 
+- **PATH-1** Stop hardcoding interpreter paths (they differ per box: `~/.pyenv`
+  on macOS vs the shared `/usr/local/pyenv` on Linux). Add `scripts/resolve-venv-python.sh`
+  (search known pyenv roots) + make install.sh use it instead of assuming
+  `~/.pyenv`; symlink the bridge console scripts to `/usr/local/bin/engram-{mcp,
+  inbox-wait,doctor}` so `.claude.json`/launchd/systemd reference one uniform
+  path fleet-wide. Bit us on webone (2026-07-21). Detail: memory design note.
 - **NS-2** Retire the legacy namespace alias once every long-lived session
   has restarted on the current bridge (grace period; verify no stragglers in
   the audit log first).
