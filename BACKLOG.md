@@ -13,10 +13,6 @@
   SEC-AUDIT and DOCS-SANITIZE both cleared 2026-07-21; what remains is the
   rewrite itself + the sweep (operator-gated: force-push of rewritten
   history needs Rob's go).
-- **IB-7** Two different sender sessions leaked trailing tool-call XML
-  fragments into message bodies (same defect class, same day). Sender-side
-  compose bug, but the transport could defensively strip/flag trailing
-  tool-XML at send time. Investigate frequency before building.
 
 ## Next (committed, not started)
 
