@@ -606,3 +606,47 @@ async def test_reply_to_dm_unchanged_routes_to_sender_no_intent(respx_mock):
     payload = json.loads(send_route.calls.last.request.read())
     assert payload["to"] == "owner1"
     assert "intent" not in payload or payload["intent"] in (None, "")
+
+
+# --- leaked tool-call markup stripping (huddle night-1 finding) --------------
+
+from engram_mcp.server import _strip_leaked_markup
+
+
+def test_leak_stripped_and_subject_salvaged():
+    """The exact live signature: body text, then </body><subject>...<project_dir>."""
+    raw = (
+        "Transport is clean; the sender (me) was sloppy. — projdelta</body>\n"
+        "<subject>Re: confirm cross-hearing</subject>\n"
+        "<project_dir>/Users/x/projects/projdelta</project_dir>\n"
+    )
+    clean, subj, warn = _strip_leaked_markup(raw, "")
+    assert clean.endswith("— projdelta")
+    assert "</body>" not in clean and "<subject>" not in clean
+    assert subj == "Re: confirm cross-hearing"  # salvaged
+    assert "Leaked tool-call markup" in warn
+
+
+def test_leak_with_trailing_invoke_fragment():
+    raw = (
+        "Present and listening.</body>\n<subject>Re: sound off</subject>\n"
+        "<project_dir>/Users/x/projects/projdelta</project_dir>\n</invoke>\n"
+        '<invoke name="mcp__claude-memory__memory_ack">\n'
+        '<parameter name="message_id">inbox/b67b83db-854c</parameter>'
+    )
+    clean, subj, warn = _strip_leaked_markup(raw, "existing subject")
+    assert clean.endswith("Present and listening.")
+    assert subj == "existing subject"  # caller's subject wins over salvage
+    assert warn
+
+
+def test_body_discussing_html_untouched():
+    """A body that merely MENTIONS </body> mid-text is not the signature."""
+    raw = "In HTML, </body> closes the document body. Then more prose follows."
+    clean, subj, warn = _strip_leaked_markup(raw, "html chat")
+    assert clean == raw and subj == "html chat" and warn == ""
+
+
+def test_clean_body_untouched():
+    clean, subj, warn = _strip_leaked_markup("perfectly normal message", "s")
+    assert clean == "perfectly normal message" and warn == ""

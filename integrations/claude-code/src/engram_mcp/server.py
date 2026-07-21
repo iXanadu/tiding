@@ -177,6 +177,46 @@ def _identity_error_message(e: AmbiguousIdentity) -> str:
     )
 
 
+import re as _re
+
+# Leaked tool-call markup at the TAIL of a message body: the sender's model
+# closed its body string and kept emitting parameter tags, which the harness
+# swallowed into the body value. Seen live twice from one session on the
+# huddle's first night (2026-07-21) — the second time inside the message
+# apologizing for the first. Signature is deliberately strict (trailing
+# structured tags only) so a body that merely *discusses* XML is untouched.
+_LEAK_RE = _re.compile(
+    r"</body>\s*"
+    r"(?:<subject>(?P<subject>.*?)</subject>\s*)?"
+    r"(?:<project_dir>.*?</project_dir>\s*)?"
+    r"(?:</invoke>.*)?\s*$",
+    _re.DOTALL,
+)
+
+
+def _strip_leaked_markup(body: str, subject: str) -> tuple[str, str, str]:
+    """Strip trailing leaked tool-call markup from an outbound message body.
+
+    Returns (clean_body, effective_subject, warning). The leaked <subject>
+    is salvaged into the send when the caller supplied none (it was plainly
+    the intended subject). warning is '' when nothing was stripped.
+    """
+    m = _LEAK_RE.search(body)
+    if not m or m.start() == 0:
+        return body, subject, ""
+    clean = body[: m.start()].rstrip()
+    salvaged = (m.group("subject") or "").strip()
+    effective_subject = subject or salvaged
+    warning = (
+        "\n⚠ Leaked tool-call markup was stripped from the tail of your message "
+        "body (</body>/<subject>/... fragments). The clean text was sent"
+        + (f" with salvaged subject '{effective_subject}'" if salvaged and not subject else "")
+        + ". Check your tool-call formation: body/subject/project_dir are "
+        "SEPARATE parameters, never inline tags."
+    )
+    return clean, effective_subject, warning
+
+
 def _append_guidance(body: str, result: dict) -> str:
     """Append server-provided usage guidance to a tool result string.
 
@@ -755,6 +795,7 @@ async def memory_send(
     targets: str | list[str] = to.strip()
     if "," in targets:
         targets = [t.strip() for t in targets.split(",") if t.strip()]
+    body, subject, leak_warning = _strip_leaked_markup(body, subject)
     reader_identity, _ = compute_identity(project_dir or None)
     await _heartbeat(project_dir or None)
     result = await _client.inbox_send(
@@ -774,7 +815,7 @@ async def memory_send(
         head = f"Sent inbox message {result['id']} → (from {reader_identity})\n⚠️  Address auto-corrected: '{corrected_from}' was rewritten. See guidance below."
     else:
         head = f"Sent inbox message {result['id']} → {to} (from {reader_identity})"
-    return _append_guidance(head, result)
+    return _append_guidance(head + leak_warning, result)
 
 
 @mcp.tool()
@@ -882,6 +923,7 @@ async def memory_reply(
     raw_from = parent.get("from_")
     if not raw_from:
         return f"Cannot reply: parent message {message_id} has no 'from' address."
+    body, subject, leak_warning = _strip_leaked_markup(body, subject)
     parent_to = parent.get("to") or ""
     if parent_to.startswith("#"):
         # Channel mail: reply to the CHANNEL so every subscriber sees the
@@ -909,7 +951,7 @@ async def memory_reply(
         project_dir=project_dir or None,
     )
     head = f"Replied to {message_id} → {reply_to} (thread {thread_id}); sent {send_result['id']}"
-    return _append_guidance(head, send_result)
+    return _append_guidance(head + leak_warning, send_result)
 
 
 @mcp.tool()
