@@ -36,15 +36,33 @@ import pytest as _pytest
 from server.config import canonical_namespace
 
 
-def test_alias_canonicalizes():
+@_pytest.fixture
+def legacy_alias():
+    """The alias MECHANISM outlives the retired claude-code=fleet default
+    (NS-2) — tests exercise it with an explicitly-set alias."""
+    from server.config import settings as _settings
+    prev = _settings.namespace_aliases
+    _settings.namespace_aliases = "claude-code=fleet"
+    yield
+    _settings.namespace_aliases = prev
+
+
+def test_alias_canonicalizes(legacy_alias):
     assert canonical_namespace("claude-code") == "fleet"
     assert canonical_namespace("fleet") == "fleet"
     assert canonical_namespace("grok") == "grok"
     assert canonical_namespace(None) is None
 
 
+def test_no_alias_by_default():
+    """NS-2: with the transition alias retired, names pass through untouched."""
+    from server.config import settings as _settings
+    assert _settings.namespace_aliases == "" or "claude-code" not in _settings.namespace_aliases
+    assert canonical_namespace("fleet") == "fleet"
+
+
 @_pytest.mark.asyncio
-async def test_legacy_namespace_client_lands_in_canonical(client, db_pool):
+async def test_legacy_namespace_client_lands_in_canonical(client, db_pool, legacy_alias):
     """An OLD client still sending namespace='claude-code' must read/write the
     canonical 'fleet' bucket — the rename is a relabel, never a break."""
     r = await client.post("/memory/set", json={

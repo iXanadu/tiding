@@ -20,9 +20,6 @@
 
 ## Next (committed, not started)
 
-- **NS-2** Retire the legacy namespace alias once every long-lived session
-  has restarted on the current bridge (grace period; verify no stragglers in
-  the audit log first).
 - **DOC-7** Adoption docs pass: human-agent daily workflow guide; "where it
   fits" positioning paragraph (fit, not fight — see `decision/positioning-*`
   in memory).

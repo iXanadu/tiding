@@ -39,8 +39,11 @@ class Settings(BaseSettings):
     # ones at the API boundary ("old=new,old2=new2") so clients sending an old
     # name keep working through a rename — a relabel, never a repartition.
     # Reversible: flip the alias direction and reverse the data UPDATE.
+    # Default empty (NS-2, 2026-07-21): the claude-code=fleet transition alias
+    # was retired after fleet verification (0 DB rows, 0 grants, all live
+    # client configs canonical). Set this only while a rename is in flight.
     primary_namespace: str = "fleet"
-    namespace_aliases: str = "claude-code=fleet"
+    namespace_aliases: str = ""
 
     def canonical_namespace(self, ns: str | None) -> str | None:
         if not ns:

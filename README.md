@@ -421,7 +421,7 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_PORT` | `8920` | Server port |
 | `ENGRAM_LOG_LEVEL` | `info` | Log level |
 | `ENGRAM_PRIMARY_NAMESPACE` | `fleet` | The canonical namespace this deployment treats as primary |
-| `ENGRAM_NAMESPACE_ALIASES` | `claude-code=fleet` | Legacy→canonical namespace rewrites (`old=new`, comma-separated) so renamed namespaces keep working through a transition |
+| `ENGRAM_NAMESPACE_ALIASES` | _(empty)_ | Legacy→canonical namespace rewrites (`old=new`, comma-separated) so renamed namespaces keep working through a transition. Set only while a rename is in flight |
 | `ENGRAM_API_TOKEN` | _(empty)_ | Legacy Bearer token (empty = no auth) |
 | `ENGRAM_REQUIRE_AUTH` | `false` | Enable principal-based authentication |
 | `ENGRAM_WARN_UNAUTHED` | `false` | Log warnings for unauthenticated requests |
