@@ -29,8 +29,7 @@ channels or role overlays it was launched with.
 unique and stable per participant (`foo`, `foo-grok`, `foo-codex`). A *role or
 group* is a **subscription**, not a name — extra listen_set entries like the
 `foo` project group or a `#courseware` channel. Two agents never share an
-identity; they share subscriptions. (See `design/messaging-architecture.md`
-for the full model.)
+identity; they share subscriptions.
 
 ## Sending
 

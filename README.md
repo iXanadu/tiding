@@ -71,8 +71,7 @@ curl -s -H "Content-Type: application/json" \
 **Docs:** [Getting started + security posture](docs/getting-started.md) ·
 [Deployment](docs/deployment.md) · [Messaging](docs/messaging.md) ·
 [Build a huddle (group chat)](docs/build-a-huddle.md) ·
-[Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md) ·
-[Architecture](docs/design/messaging-architecture.md)
+[Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md)
 
 > **Storage is PostgreSQL only** (pgvector + pg_trgm, via asyncpg) — **never SQLite.** Engram's archived ancestor `ha-semantic-memory` used SQLite; that project is deprecated and unrelated to engram's storage.
 >
@@ -524,7 +523,7 @@ if await engram.is_available():           # kill-switch-aware health probe; neve
     hits = await engram.search("quiz strategies")
 ```
 
-The full conventions — namespace-per-person, per-user token handling, expiry discipline, FastAPI wiring, and migration steps — are in **[docs/webapp-integration-spec.md](docs/webapp-integration-spec.md)**. The package also installs an `engram` CLI for provisioning principals:
+The conventions that matter for a multi-user app: **namespace = the person, not the app** (a user's memories live in *their* namespace; `user_id` is a partition key, not a security boundary), the app holds **per-user, non-admin tokens**, and every engram call path **degrades gracefully** (memory off ≠ app down). The package also installs an `engram` CLI for provisioning principals:
 
 ```bash
 engram principal create <name> --write <ns> --read <ns,...>   # mints a token, shown once

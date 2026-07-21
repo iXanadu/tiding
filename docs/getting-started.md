@@ -116,5 +116,3 @@ project = foo
   presence.
 - [multi-provider.md](multi-provider.md) — adding Grok/Codex/anything with
   a token.
-- [design/messaging-architecture.md](design/messaging-architecture.md) —
-  the full architecture and its reasoning.

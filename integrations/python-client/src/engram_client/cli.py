@@ -2,7 +2,7 @@
 
 Currently provides ``engram principal create`` to mint a principal over the
 admin API, append its token to ``~/.config/engram.keys``, and print the token
-once. See ``docs/webapp-integration-spec.md`` (§4).
+once.
 
 Admin token resolution order: ``--admin-token`` > ``ENGRAM_ADMIN_TOKEN`` env >
 the ``ENGRAM_ADMIN_KEY_LABEL`` entry (default ``admin``) in ``~/.config/engram.keys``.

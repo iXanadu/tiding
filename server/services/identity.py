@@ -20,7 +20,7 @@ RESERVED_PREFIXES = ("machine:", "topic:")
 # a named address distinct from any project, that agents from different
 # projects subscribe to at launch. The sigil keeps channels from colliding
 # with project names in the flat address space (mirrors the reserved
-# 'machine:' prefix). See docs/design/messaging-architecture.md §3.3.
+# 'machine:' prefix). See docs/messaging.md.
 ADDRESS_RE = re.compile(r"^#?[a-zA-Z0-9][a-zA-Z0-9_.\-:@]{0,127}$")
 
 
