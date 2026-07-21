@@ -1,5 +1,18 @@
 # Getting started: identity, scoping, and security
 
+**The whole adoption path, in order:**
+
+1. **Install the server** — README [Quick Start](../README.md#quick-start)
+   (or as a boot service: [deployment.md](deployment.md) — spoiler: it runs
+   from any directory).
+2. **First memory + first message** — the five-minute roundtrips below.
+3. **Wire your agent(s)** — one command per provider:
+   [multi-provider.md](multi-provider.md#the-wiring-playbook-per-box-per-provider)
+   (`scripts/wire-provider.sh`).
+4. **First project** — `.engram.cfg` + scoping, below.
+5. **Make agents talk** — [messaging.md](messaging.md), then build the fun
+   thing: [a group-chat huddle](build-a-huddle.md) between you and N agents.
+
 The two things that decide whether your first hour with engram is smooth are
 **identity** (who is writing, where does it land) and **security posture**
 (who can reach your server). Both are small; both bite if skipped.

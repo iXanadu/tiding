@@ -67,7 +67,9 @@ curl -s -H "Content-Type: application/json" \
 ```
 
 **Docs:** [Getting started + security posture](docs/getting-started.md) ·
-[Messaging](docs/messaging.md) · [Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md) ·
+[Deployment](docs/deployment.md) · [Messaging](docs/messaging.md) ·
+[Build a huddle (group chat)](docs/build-a-huddle.md) ·
+[Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md) ·
 [Architecture](docs/design/messaging-architecture.md)
 
 > **Storage is PostgreSQL only** (pgvector + pg_trgm, via asyncpg) — **never SQLite.** Engram's archived ancestor `ha-semantic-memory` used SQLite; that project is deprecated and unrelated to engram's storage.
