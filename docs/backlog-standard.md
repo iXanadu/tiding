@@ -12,14 +12,15 @@ no secrets, no personal information, no client identities, no network
 topology, no exploit detail, no operational diary. A repo should read like a
 project, not a war room.
 
-## The failure this prevents (learned the hard way)
+## The failure this prevents
 
 A tracked `BACKLOG.md` that keeps completed items becomes an **operational
-journal wearing a todo list's clothes**. Audited across one real fleet of 13
-projects, backlog files ran 55–86% completed-item history — and that history
-is exactly where the leaks lived: personal names and phone numbers, client
-relationships, internal hostnames and addresses, fixed-vulnerability
-writeups, candid strategy. None of it was needed to track *open* work.
+journal wearing a todo list's clothes**. Audit any mature multi-project
+workspace and the pattern repeats: backlog files that are mostly
+completed-item history — and that history is exactly where leaks live:
+personal names and contact details, client relationships, internal hostnames
+and addresses, fixed-vulnerability writeups, candid strategy. None of it is
+needed to track *open* work.
 
 The failure has two halves, and they need opposite tools:
 
