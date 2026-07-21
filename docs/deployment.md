@@ -28,6 +28,21 @@ only as reference — `install.sh` generates its own with correct paths.
 `./scripts/install.sh` again from the new location (it rewrites the service
 definition), and restart. Nothing else references the old path.
 
+## Preflight doctor — run it anytime
+
+```bash
+python -m server.preflight
+```
+
+A read-only self-check that catches what silently breaks a deployment: a
+self-refusing or insecure bind, a **Host allowlist that won't cover how clients
+actually reach this box** (the #1 gotcha — a remote client over Tailscale or
+LAN reaches you by hostname/IP, and the anti-rebinding guard rejects any Host
+not in `ENGRAM_TRUSTED_HOSTS` with HTTP 400), a missing database or embedding
+model, and world-readable secret files. Each finding prints an exact fix.
+`install.sh` runs it, and `start.sh` **gates** on it (a FAIL blocks start;
+override with `ENGRAM_SKIP_PREFLIGHT=1`). Exit code is non-zero on any FAIL.
+
 ## The service lifecycle
 
 ```bash

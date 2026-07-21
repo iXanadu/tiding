@@ -7,6 +7,21 @@
 set -e
 
 LABEL="com.engram"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Preflight doctor: catch a self-refusing bind or a Host allowlist that won't
+# cover how clients reach this box (the Tailscale/remote-reach class) BEFORE
+# starting. A FAIL means the service would refuse to boot — stop and fix it.
+PF_PY="$(command -v python3 || echo python)"
+[ -x "$HOME/.pyenv/versions/engram-3.12/bin/python" ] && PF_PY="$HOME/.pyenv/versions/engram-3.12/bin/python"
+if ! (cd "$APP_DIR" && "$PF_PY" -m server.preflight); then
+    echo
+    echo "Preflight found a blocking problem (above). Fix it, then re-run start.sh."
+    echo "(To start anyway: ENGRAM_SKIP_PREFLIGHT=1 ./scripts/start.sh)"
+    [ "${ENGRAM_SKIP_PREFLIGHT:-}" = "1" ] || exit 1
+fi
+echo
 
 if [[ "$(uname)" == "Darwin" ]]; then
     PLIST="/Library/LaunchDaemons/${LABEL}.plist"

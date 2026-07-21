@@ -109,6 +109,12 @@ SentenceTransformer(sys.argv[1], trust_remote_code=True)
 print("  model cached")
 PYWARM
 
+# --- Preflight doctor (non-fatal at install; start.sh gates on it) ---
+echo
+echo "Running preflight self-check..."
+(cd "$APP_DIR" && "$VENV_PYTHON" -m server.preflight) || \
+    echo "NOTE: preflight reported issues above — resolve them before/at start (start.sh will gate)."
+
 # NOTE: engram's installer deliberately does NOT touch ~/.claude/CLAUDE.md or
 # any other provider-global agent config. Wiring engram into an agent's global
 # instructions is the operator's call — see docs/getting-started.md and
