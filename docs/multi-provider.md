@@ -122,6 +122,23 @@ each gets its own DM address and independent read-state. Discriminate by
 the real distinction. The watcher inherits the same env, so bridge and
 watcher always agree.
 
+Set `ENGRAM_PROVIDER=<claude|grok|…>` alongside the seat. The bridge is one
+provider-neutral module that every harness spawns, so it cannot tell from the
+inside who launched it — unset means the roster reports `claude` (the
+historical default), and two providers become indistinguishable exactly when
+you most need to tell them apart.
+
+> **Never pin these in a provider's static MCP `env` block.** Launch-time
+> injection *is* the mechanism. Where a provider's config declares a static env
+> map for the engram server (Grok's `[mcp_servers.engram.env]`), **the config
+> block wins over the parent environment** — so a seat pinned there silently
+> defeats every per-launch override, with no error and no banner. Grok already
+> pins `ENGRAM_IDENTITY` (the *credential selector*) there, which is correct
+> and must stay; seats and channels must not join it. Claude Code has no such
+> block, so this asymmetry is Grok-specific. Verified by controlled probe
+> 2026-07-23: Grok inherits the full parent environment and merges the config
+> block **on top**.
+
 **If you forget, engram tells you.** Every session heartbeats a per-process
 nonce; when the server sees two live sessions on one identity it flags a
 **seat collision** — a ⛔ STOP banner on the colliding sessions' memory
@@ -129,6 +146,13 @@ calls and on the roster — because two sessions on one seat share ack-state
 and cannot message or wake each other. Deliberately shared roles (the
 `admin` identity) are exempt. Fix = relaunch one session with a seat, and
 arm its watcher with the same env.
+
+**Arm the watcher by inheritance, not by discipline.** Spawn it as a *child of
+the agent process* so it inherits that process's environment. Then there is no
+second place a seat is chosen and no separate step a future edit can drop. A
+bridge that is seated while its watcher is not is the worst state available:
+the roster shows the session correctly seated and it silently never wakes —
+a failure with no symptom.
 
 ## Collaboration topologies (both live-proven)
 
@@ -138,15 +162,30 @@ media generation → learner delivery) ran ~60 days as three independent
 "senior engineers," growing their APIs through engram threads, human
 approvals only at real gates.
 
-**Driver + worker** — one always-awake agent (in practice: Grok, which
-doesn't pause) keeps a builder moving. The worker stalls at a task boundary;
-the driver sees it in the roster (`awaiting-input`), sends `proceed`
-(routine) or `escalate`s to the human (irreversible/costly). The wake
-mechanics are validated: a spawned worker at a seam, woken by an independent
-sender's message, acted autonomously in ~26s. Two hard rules learned from
-that test: the **launcher must arm the inbox watcher** (workers don't
-self-arm), and drivers **advance stalled peers — mid-turn messages queue**
-rather than interrupt.
+**Driver + worker** — one agent keeps another moving. The worker stalls at a
+task boundary; the driver sees it in the roster (`awaiting-input`), sends
+`proceed` (routine) or `escalate`s to the human (irreversible/costly). The
+wake mechanics are validated: a spawned worker at a seam, woken by an
+independent sender's message, acted autonomously in ~26s. Two hard rules
+learned from that test: the **launcher must arm the inbox watcher** (workers
+don't self-arm), and drivers **advance stalled peers — mid-turn messages
+queue** rather than interrupt.
+
+**Either provider can take either seat.** Every agent session is dormant
+between turns — that is not a Claude trait, and no supported provider polls
+engram on its own. What wakes a dormant session is the same primitive
+everywhere: a **harness-level background process** whose stdout re-enters the
+session as a turn (Claude Code's Monitor tool, Grok's `monitor` tool), holding
+`engram-inbox-wait --follow` open for the session's lifetime. The engram MCP
+tools are turn-scoped and cannot do this — the watcher is deliberately a plain
+shell process for exactly that reason.
+
+> Corrected 2026-07-23. This page previously described Grok as "always-awake…
+> doesn't pause" and built the driver/worker split on it. That was wrong about
+> the mechanism, and it was steering topology decisions. Dormancy is universal;
+> the real variable is **whether a given session armed its watcher**, which is
+> equally true of every provider. Choose driver vs worker on the work, not the
+> vendor.
 
 ## The human in the mesh
 

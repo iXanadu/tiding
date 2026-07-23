@@ -242,3 +242,60 @@ class TestChannelJoin:
         reader, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
         assert reader.startswith("myproj-grok@")
         assert "#courseware" in listen and "myproj" in listen
+
+
+class TestResolveProvider:
+    """ENGRAM_PROVIDER — launch-injected, because the bridge is provider-neutral.
+
+    Regression guard for the 2026-07-23 hardcode: server.py passed a literal
+    ``provider="claude"`` to every presence heartbeat, so the roster and the
+    seat-collision ``providers_seen`` detail could not distinguish a Grok
+    session from a Claude one — including on a real cross-provider collision,
+    the exact case that field exists to disambiguate.
+    """
+
+    def test_reads_env(self, monkeypatch):
+        monkeypatch.setenv("ENGRAM_PROVIDER", "grok")
+        from engram_mcp.identity import resolve_provider
+        assert resolve_provider() == "grok"
+
+    def test_defaults_to_claude_for_back_compat(self, monkeypatch):
+        # Unset must reproduce the pre-fix hardcode exactly, so sessions
+        # launched by a launcher that predates provider support are unchanged.
+        monkeypatch.delenv("ENGRAM_PROVIDER", raising=False)
+        from engram_mcp.identity import resolve_provider
+        assert resolve_provider() == "claude"
+
+    def test_normalizes_case_and_whitespace(self, monkeypatch):
+        # The roster is read by humans and matched by agents; a provider that
+        # only compares equal after normalization is a provider nobody can filter on.
+        monkeypatch.setenv("ENGRAM_PROVIDER", "  GROK  ")
+        from engram_mcp.identity import resolve_provider
+        assert resolve_provider() == "grok"
+
+    def test_empty_falls_back_rather_than_reporting_blank(self, monkeypatch):
+        monkeypatch.setenv("ENGRAM_PROVIDER", "   ")
+        from engram_mcp.identity import resolve_provider
+        assert resolve_provider() == "claude"
+
+    def test_heartbeat_sends_resolved_provider_not_a_literal(self, monkeypatch):
+        """Assert the CALL SITE, not just the helper.
+
+        The lesson from the SEAT-1 exchange (2026-07-23): a fully-working
+        mechanism that nothing invokes is indistinguishable from a broken one,
+        and a suite that only tests the helper stays green through the outage.
+        """
+        import asyncio
+        import engram_mcp.server as srv
+
+        monkeypatch.setenv("ENGRAM_PROVIDER", "grok")
+        srv._last_heartbeat = 0.0
+        captured = {}
+
+        async def fake_presence_update(**kwargs):
+            captured.update(kwargs)
+            return {"collision": None}
+
+        monkeypatch.setattr(srv._client, "presence_update", fake_presence_update)
+        asyncio.run(srv._heartbeat("/tmp/whatever"))
+        assert captured.get("provider") == "grok"

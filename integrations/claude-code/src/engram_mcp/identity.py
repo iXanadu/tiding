@@ -184,6 +184,34 @@ def resolve_channels() -> list[str]:
     return out
 
 
+def resolve_provider() -> str:
+    """Which harness is driving this bridge, from ``ENGRAM_PROVIDER``.
+
+    The bridge is provider-neutral — Claude Code, Grok and Codex all spawn the
+    SAME ``engram_mcp.server`` module out of the same venv, so the process
+    cannot tell from the inside who launched it. The provider is therefore
+    injected at launch, exactly like the seat (``ENGRAM_INBOX_IDENTITY``) and
+    channel membership (``ENGRAM_CHANNELS``).
+
+    Defaults to ``claude`` when unset. That default is deliberate
+    back-compatibility, NOT a guess: this value was a hardcoded ``"claude"``
+    literal in the presence heartbeat until 2026-07-23, so every session that
+    predates launcher support keeps reporting exactly what it reported before.
+    An unset value means "nobody told us", and the honest rendering of that is
+    the historical default rather than a second unknown state for readers to
+    interpret.
+
+    Why it matters: the roster and the seat-collision detail both surface
+    provider, and ``providers_seen`` exists specifically so a reader can tell
+    two colliding sessions apart. While this was hardcoded, that field could
+    only ever say ``["claude"]`` — including on a genuine Claude+Grok
+    collision, the exact case it was built to disambiguate. A live reader was
+    misled by it (agentbeast-app, 2026-07-23) and reported the constant to the
+    owner as fact. A field that cannot vary is worse than a missing one.
+    """
+    return (os.environ.get("ENGRAM_PROVIDER") or "").strip().lower() or "claude"
+
+
 def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     """Return ``(reader_identity, listen_set)`` for the current call.
 

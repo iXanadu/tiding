@@ -16,6 +16,7 @@ from engram_mcp.identity import (
     reader_to_address,
     remember_project_dir,
     resolve_channels,
+    resolve_provider,
 )
 from engram_mcp.scoping import (
     AmbiguousIdentity,
@@ -312,7 +313,7 @@ async def _heartbeat(project_dir: str | None) -> None:
             identity=identity,
             project=project,
             state="running",
-            provider="claude",
+            provider=resolve_provider(),
             channels=resolve_channels() or None,
             session_nonce=_SESSION_NONCE,
             project_dir=project_dir or None,
