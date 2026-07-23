@@ -171,6 +171,25 @@ async def _run(args) -> int:
 
         deadline = (time.monotonic() + args.timeout) if args.timeout else None
         while True:
+            # SEAT-2: re-resolve identity every poll, so a seat taken mid-session
+            # by our sibling bridge reaches us WITHOUT a restart.
+            #
+            # Before this, a runtime re-seat left the session addressed at the
+            # new seat while this watcher still listened at the old one — and
+            # because project-addressed mail kept arriving, the failure was
+            # quiet rather than obvious. An explicit "now re-arm your watcher"
+            # instruction is discipline; this is inheritance.
+            #
+            # --address is an explicit operator override and always wins.
+            if not args.address:
+                new_identity, new_listen = compute_identity(args.project_dir or None)
+                if new_identity != reader_identity:
+                    print(
+                        f"inbox-wait: seat changed {reader_identity!r} -> "
+                        f"{new_identity!r}; now listening on {new_listen}",
+                        file=sys.stderr, flush=True,
+                    )
+                    reader_identity, listen_set = new_identity, new_listen
             try:
                 fresh = await _poll(client, listen_set, reader_identity, seen)
             except Exception as e:

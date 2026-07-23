@@ -154,6 +154,25 @@ bridge that is seated while its watcher is not is the worst state available:
 the roster shows the session correctly seated and it silently never wakes —
 a failure with no symptom.
 
+**Re-seating mid-session.** A session that learns it is co-working can take a
+seat at runtime with `memory_take_seat` — useful when nothing seated it at
+launch. That moves the *bridge* instantly, but the watcher is a separate
+process that resolved its identity at start, which would leave exactly the
+split state above.
+
+When the launcher injects `ENGRAM_SESSION_KEY` (a per-session value, stable
+across respawn, never pid-derived), the seat is also recorded to a file keyed
+on it, and **the watcher re-reads that file every poll** — so a re-seat
+propagates within one poll interval with no restart and no re-arm step. The
+split state becomes impossible rather than documented.
+
+Without a session key there is no file, both sides fall back to start-time
+resolution, and `memory_take_seat` says plainly that you must re-arm the
+watcher yourself. The seat file is read defensively: missing, unreadable or
+malformed all resolve to "no file" rather than an error, because a watcher
+listening on a *stale* seat still catches project-addressed mail, while a dead
+one catches nothing.
+
 ## Collaboration topologies (both live-proven)
 
 **Peer mesh** — each agent owns a part, coordinating through threaded

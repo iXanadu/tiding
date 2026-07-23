@@ -134,6 +134,13 @@ def resolve_session_identity(project_dir: str | None) -> str | None:
     """
     if _SESSION_SEAT:
         return _SESSION_SEAT
+    # SEAT-2: a seat taken by our SIBLING process this session (the bridge, if
+    # we are the watcher). Sits above the launch env for the same reason the
+    # in-process seat does — it is a later, better-informed decision — and is
+    # what lets a re-seat reach the watcher without restarting it.
+    from_file = read_seat_file()
+    if from_file:
+        return from_file
     env = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
     if env:
         return env
@@ -169,6 +176,102 @@ def resolve_session_identity(project_dir: str | None) -> str | None:
 _SESSION_SEAT: str | None = None
 
 
+# SEAT-2 — the seat FILE, which is what makes a runtime re-seat safe.
+#
+# A runtime seat moves the bridge instantly, but the watcher is a separate
+# process that resolved its identity at start. Telling the session "remember to
+# re-arm your watcher" is discipline, and discipline loses to inheritance.
+#
+# So the seat is also written to a file both processes can find from a value
+# they ALREADY share: ENGRAM_SESSION_KEY, injected at spawn into the whole
+# process tree. The watcher re-reads it every poll, so a re-seat propagates
+# with no restart and no re-arm step. The split state stops being possible
+# rather than being documented.
+#
+# Absent key → no file → both fall back to start-time env resolution, exactly
+# as before. Hand-launched sessions do not regress; they just don't get the
+# structural guarantee.
+SESSION_KEY_ENV = "ENGRAM_SESSION_KEY"
+
+
+def resolve_session_key() -> str | None:
+    """The launcher-injected per-session key, or None when unlaunched."""
+    return (os.environ.get(SESSION_KEY_ENV) or "").strip().lower() or None
+
+
+def seat_file_path(session_key: str | None = None) -> str | None:
+    """Where this session's seat is recorded, or None without a key.
+
+    Keyed on the session key rather than the project, because two sessions in
+    ONE project folder is the entire case this exists for — a project-keyed
+    path would collide exactly where it must not.
+    """
+    key = session_key or resolve_session_key()
+    if not key:
+        return None
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in key)[:128]
+    if not safe:
+        return None
+    return os.path.join(
+        os.path.expanduser("~/.local/state/engram/seats"), f"{safe}.seat"
+    )
+
+
+_SEAT_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
+
+
+def _is_valid_seat(value: str) -> bool:
+    """Is this a usable inbox address?
+
+    Seats are matched by EXACT STRING against listen_sets, so anything outside
+    a plain address charset produces an address nobody listens on — a silent
+    deafness rather than an error. Control characters are the dangerous case:
+    they carry no whitespace and are non-empty, so a length-and-strip check
+    waves them straight through (caught by test, not by review).
+    """
+    return bool(value) and len(value) <= 128 and set(value) <= _SEAT_ALLOWED
+
+
+def read_seat_file() -> str | None:
+    """The seat recorded for this session, or None.
+
+    Deliberately total: ANY problem — no key, missing file, unreadable,
+    malformed, empty — returns None rather than raising. This is called from
+    the watcher's poll loop, and a watcher that dies on a bad seat file is
+    strictly worse than one listening on a stale seat: the stale one still
+    catches project-addressed mail, the dead one catches nothing.
+    """
+    path = seat_file_path()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            value = fh.read(256).strip().lower()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return value if _is_valid_seat(value) else None
+
+
+def _write_seat_file(seat: str) -> str | None:
+    """Record the seat for peer processes. Best-effort; returns path or None.
+
+    Failure here must never fail take_seat: the bridge is correctly seated
+    either way, and the file is an optimisation that removes the re-arm step.
+    """
+    path = seat_file_path()
+    if not path:
+        return None
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = f"{path}.tmp{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(seat + "\n")
+        os.replace(tmp, path)  # atomic: a poller never sees a half-written seat
+        return path
+    except OSError:
+        return None
+
+
 def take_seat(name: str) -> str:
     """Set this session's inbox seat at runtime. Returns the normalized seat.
 
@@ -181,7 +284,13 @@ def take_seat(name: str) -> str:
     name = (name or "").strip().lower()
     if not name:
         raise ValueError("seat name is required")
+    if not _is_valid_seat(name):
+        raise ValueError(
+            "seat must be lowercase letters, digits, dot, underscore or hyphen "
+            "(it is matched as an exact inbox address)"
+        )
     _SESSION_SEAT = name
+    _write_seat_file(name)
     return name
 
 

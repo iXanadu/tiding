@@ -19,6 +19,7 @@ from engram_mcp.identity import (
     remember_project_dir,
     resolve_channels,
     resolve_provider,
+    seat_file_path,
     take_seat,
 )
 from engram_mcp.scoping import (
@@ -607,6 +608,7 @@ async def memory_take_seat(
 
     reader_identity, listen_set = compute_identity(project_dir or None)
     project = derive_project_name(remember_project_dir(project_dir or None))
+    seat_file = seat_file_path()
     watcher = (
         f"ENGRAM_INBOX_IDENTITY={seat} /usr/local/bin/engram-inbox-wait "
         f"--follow --project-dir {project_dir or '<this session cwd>'}"
@@ -618,15 +620,31 @@ async def memory_take_seat(
             f"launcher seated you deliberately, prefer its seat — relaunching "
             f"is cleaner than diverging from what spawned you.\n"
         )
+    if seat_file:
+        watcher_note = (
+            f"✅ YOUR WATCHER WILL PICK THIS UP BY ITSELF — no re-arm needed.\n"
+            f"   Your seat was recorded at {seat_file}, and the watcher\n"
+            f"   re-reads it every poll, so it re-seats within one poll interval\n"
+            f"   (~45s). Nothing for you to do.\n"
+        )
+    else:
+        watcher_note = (
+            f"⛔ NOW RE-ARM YOUR WATCHER, or you will not wake on DMs to this seat.\n"
+            f"   This session has no ENGRAM_SESSION_KEY (it wasn't started by a\n"
+            f"   launcher), so the watcher cannot discover the change on its own.\n"
+            f"   Stop your current inbox watcher, then start it with the SAME seat:\n\n"
+            f"    {watcher}\n\n"
+            f"   Until you do, you are ADDRESSED at the new seat but still\n"
+            f"   LISTENING at the old one. Project mail keeps arriving, so this\n"
+            f"   failure is silent — DMs to your new seat simply never wake you.\n"
+        )
     return (
         f"Seat taken: you are now addressed as '{reader_identity}'.\n"
         f"Listening on: {', '.join(listen_set)}\n"
         f"  • '{seat}' — your private address (DMs from peers land here)\n"
         f"  • '{project}' — the shared project group (broadcasts still reach you)\n"
         f"{warn}\n"
-        f"⛔ NOW RE-ARM YOUR WATCHER, or you will not wake on DMs to this seat.\n"
-        f"Stop your current inbox watcher, then start it with the SAME seat:\n\n"
-        f"    {watcher}\n\n"
+        f"{watcher_note}\n"
         f"Memory scoping is UNCHANGED — you and your co-worker still read and "
         f"write one shared project memory. Only addressing split.\n"
         f"Tell your peer your seat, or let it find you via memory_roster."

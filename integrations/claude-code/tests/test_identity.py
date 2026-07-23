@@ -370,3 +370,94 @@ class TestRuntimeSeat:
         reader, listen = compute_identity("/whatever")
         assert reader == "meidura@macmini"
         assert listen == ["meidura", "machine:macmini", "meidura@macmini"]
+
+
+class TestSeatFile:
+    """SEAT-2 — the seat file that makes a runtime re-seat safe.
+
+    A runtime seat moves the bridge instantly, but the watcher is a separate
+    process that resolved identity at start. "Remember to re-arm your watcher"
+    is discipline; a file both processes resolve from is inheritance.
+    """
+
+    def setup_method(self):
+        from engram_mcp.identity import clear_seat
+        clear_seat()
+
+    teardown_method = setup_method
+
+    def test_no_session_key_means_no_file(self, monkeypatch):
+        """Hand-launched sessions must not regress — they simply fall back."""
+        monkeypatch.delenv(identity.SESSION_KEY_ENV, raising=False)
+        assert identity.seat_file_path() is None
+        assert identity.read_seat_file() is None
+
+    def test_path_is_keyed_on_session_not_project(self, monkeypatch):
+        """Two sessions in ONE project folder is the whole case — a
+        project-keyed path would collide exactly where it must not."""
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-ab-meidura")
+        a = identity.seat_file_path()
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "grok-1f6a3406efd4")
+        b = identity.seat_file_path()
+        assert a != b and a and b
+
+    def test_take_seat_writes_it_and_a_peer_reads_it(self, monkeypatch, tmp_path):
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-testkey")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        identity.take_seat("meidura-audit")
+        assert identity.read_seat_file() == "meidura-audit"
+
+    def test_watcher_sees_a_reseat_without_restarting(self, monkeypatch, tmp_path):
+        """The point of SEAT-2: a peer process re-resolves the new seat with no
+        in-process state and no re-arm."""
+        _host(monkeypatch)
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-testkey2")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+
+        before, _ = compute_identity("/whatever")
+        assert before == "meidura@macmini"
+
+        identity.take_seat("meidura-audit")      # the "bridge" re-seats
+        identity.clear_seat()                    # simulate the separate watcher process
+        after, listen = compute_identity("/whatever")
+        assert after == "meidura-audit@macmini"
+        assert "meidura" in listen, "project group must survive the re-seat"
+
+    def test_malformed_file_returns_none_and_never_raises(self, monkeypatch, tmp_path):
+        """A watcher that dies on a bad seat file is worse than one on a stale
+        seat: the stale one still catches project-addressed mail."""
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-bad")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        path = identity.seat_file_path()
+        import os as _os
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        for junk in ["", "   ", "two words", "\x00\xff"]:
+            with open(path, "w", encoding="utf-8", errors="ignore") as fh:
+                fh.write(junk)
+            assert identity.read_seat_file() is None
+
+    def test_unreadable_file_returns_none(self, monkeypatch, tmp_path):
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-missing")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert identity.read_seat_file() is None  # never created
+
+    def test_seat_file_outranks_launch_env(self, monkeypatch, tmp_path):
+        """A seat recorded this session is newer information than the spawn's."""
+        _host(monkeypatch)
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-testkey3")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "meidura-claude")
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+        identity.take_seat("meidura-remediate")
+        identity.clear_seat()
+        reader, _ = compute_identity("/whatever")
+        assert reader == "meidura-remediate@macmini"
+
+    def test_whitespace_seat_is_rejected(self, monkeypatch):
+        import pytest
+        with pytest.raises(ValueError):
+            identity.take_seat("two words")
