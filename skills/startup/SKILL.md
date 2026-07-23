@@ -51,7 +51,34 @@ Compare dates across results. If the most recent memories are newer than `startu
 
 `memory_inbox` — messages from other Claude instances. Read and reply to anything relevant or actionable.
 
+## 4a-bis. Are you co-working? Take a seat BEFORE arming the watcher
+
+If the user says another agent is (or will be) working in this same folder —
+"you're co-working", "grok is on this too", "you two are pairing" — this
+session needs its own inbox seat. Without one, both sessions resolve to the
+same identity: they share read-state, and each one's mail looks like its own
+echo, so **they cannot wake each other at all**.
+
+1. `memory_roster` (project filter) — see who already holds a seat here.
+2. `memory_take_seat(name="<project>-<role>", project_dir=<repo-abs-path>)`.
+   Discriminate by **role** (`-audit`, `-build`, `-remediate`); use the
+   provider (`-grok`, `-claude`) only when that is the real distinction.
+   Don't take a seat a peer already holds.
+3. Then arm the watcher **with that seat** (step 4b) — the seat must be
+   decided first, because the watcher command carries it.
+
+Memory scoping does not change: co-workers still share one project memory.
+Only addressing splits. If the session was launched with
+`ENGRAM_INBOX_IDENTITY` already set, a launcher seated you — keep that seat
+and skip this step.
+
 ## 4b. Arm the Inbox Watcher (always-listen)
+
+**If you took a seat in 4a-bis, prefix the command below with
+`ENGRAM_INBOX_IDENTITY=<your seat>`** — bridge and watcher must resolve one
+identity. A seated bridge with an unseated watcher is the worst state
+available: the roster shows you correctly seated and you silently never wake
+on DMs.
 
 So this session wakes on *any* inbound message for its whole lifetime — not just after you send one and wait — launch the inbox watcher as a background **Monitor** stream. Each new message becomes an injected notification; when one fires, read it (`memory_inbox`) and handle it.
 

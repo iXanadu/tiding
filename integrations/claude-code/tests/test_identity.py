@@ -299,3 +299,74 @@ class TestResolveProvider:
         monkeypatch.setattr(srv._client, "presence_update", fake_presence_update)
         asyncio.run(srv._heartbeat("/tmp/whatever"))
         assert captured.get("provider") == "grok"
+
+
+class TestRuntimeSeat:
+    """Seats taken mid-session, for sessions no launcher seated.
+
+    Launch-time injection stays the strongest mechanism, but it only covers
+    sessions a launcher spawned. A session opened by hand cannot re-exec
+    itself, and .engram.cfg is per-FOLDER — useless for the one case that
+    matters, two sessions sharing one folder.
+    """
+
+    def setup_method(self):
+        from engram_mcp.identity import clear_seat
+        clear_seat()
+
+    teardown_method = setup_method
+
+    def test_runtime_seat_becomes_the_identity(self, monkeypatch):
+        _host(monkeypatch)
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+        identity.take_seat("meidura-audit")
+        reader, listen = compute_identity("/whatever")
+        assert reader == "meidura-audit@macmini"
+        assert listen == [
+            "meidura-audit", "meidura", "machine:macmini", "meidura-audit@macmini",
+        ]
+
+    def test_project_group_survives_so_broadcasts_still_land(self, monkeypatch):
+        """The point of a seat is a PRIVATE address in addition to the shared
+        one — not instead of it. Losing the group would make a seated session
+        unreachable by project-wide announcements."""
+        _host(monkeypatch)
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+        identity.take_seat("meidura-audit")
+        _, listen = compute_identity("/whatever")
+        assert "meidura" in listen
+
+    def test_runtime_outranks_launch_env(self, monkeypatch):
+        """A seat taken mid-flight is strictly newer information than whatever
+        the spawn assumed."""
+        _host(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "meidura-claude")
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+        identity.take_seat("meidura-remediate")
+        reader, _ = compute_identity("/whatever")
+        assert reader == "meidura-remediate@macmini"
+
+    def test_normalizes_at_the_boundary(self, monkeypatch):
+        """Seats are matched by exact string against listen_sets; one that only
+        compares equal after someone remembers to lowercase it is a seat that
+        silently receives no mail."""
+        assert identity.take_seat("  Meidura-AUDIT  ") == "meidura-audit"
+
+    def test_empty_seat_is_rejected(self):
+        import pytest
+        with pytest.raises(ValueError):
+            identity.take_seat("   ")
+
+    def test_unset_seat_changes_nothing(self, monkeypatch):
+        _host(monkeypatch)
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "meidura")
+        monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+        reader, listen = compute_identity("/whatever")
+        assert reader == "meidura@macmini"
+        assert listen == ["meidura", "machine:macmini", "meidura@macmini"]

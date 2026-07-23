@@ -121,13 +121,79 @@ def reset_session_pin() -> None:
 def resolve_session_identity(project_dir: str | None) -> str | None:
     """The session's declared inbox identity, or None to use the project name.
 
-    Env var wins over .engram.cfg so a session can override the file on the fly.
+    Precedence, most specific first:
+      1. a runtime seat taken this session (``take_seat``) — deliberate, and
+         later in time than anything decided at spawn
+      2. ``ENGRAM_INBOX_IDENTITY`` — launch-time injection by a launcher
+      3. ``inbox_identity`` in .engram.cfg — the durable per-FOLDER default
+
+    Runtime outranks launch on purpose: a session only takes a seat because
+    someone decided mid-flight that it is co-working, which is strictly newer
+    information than whatever its spawn assumed. The tool that sets it reports
+    when it overrides a launcher-set seat, so the override is never silent.
     """
+    if _SESSION_SEAT:
+        return _SESSION_SEAT
     env = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
     if env:
         return env
     declared = resolve_inbox_identity(project_dir)
     return declared.lower() if declared else None
+
+
+# Runtime seat, taken mid-session rather than injected at launch.
+#
+# Launch-time injection (ENGRAM_INBOX_IDENTITY) is the strongest mechanism and
+# stays the default: a launcher that seats every spawn cannot forget, and the
+# watcher inherits the same environ by process tree. But it only covers
+# sessions a launcher started. A session opened by hand in a terminal — the
+# common case when someone decides *after* starting that two agents should
+# co-work in one folder — has no launcher to inject anything, and cannot
+# re-exec itself. `.engram.cfg` is no help: it is per-FOLDER, and the whole
+# problem is two sessions sharing one folder.
+#
+# So the seat is also settable at runtime, per session. Module-global is the
+# correct scope: the bridge is one stdio subprocess per session (the same
+# lifetime assumption `_PRINCIPAL_CACHE`, `_SESSION_NONCE` and
+# `_SESSION_PROJECT_DIR` already rely on), so this cannot leak between
+# sessions.
+#
+# ⚠ THE COST, stated plainly: a runtime seat moves the BRIDGE immediately, but
+# the watcher is a separate process already running under the old environment.
+# Until it is re-armed, the session is addressed at its new seat while still
+# listening at the old one — it will not wake on DMs to the seat it just took.
+# Project-addressed mail still arrives (the project group stays in both
+# listen_sets), which is what makes this failure quiet rather than obvious.
+# `take_seat` therefore returns the exact re-arm command and callers MUST run
+# it; see server.memory_take_seat.
+_SESSION_SEAT: str | None = None
+
+
+def take_seat(name: str) -> str:
+    """Set this session's inbox seat at runtime. Returns the normalized seat.
+
+    Normalizing here rather than at the call site is deliberate: seats are
+    matched by exact string against listen_sets and participant lists, so a
+    seat that only compares equal after someone else remembers to lowercase it
+    is a seat that silently fails to receive mail.
+    """
+    global _SESSION_SEAT
+    name = (name or "").strip().lower()
+    if not name:
+        raise ValueError("seat name is required")
+    _SESSION_SEAT = name
+    return name
+
+
+def current_seat() -> str | None:
+    """The runtime seat this session has taken, if any."""
+    return _SESSION_SEAT
+
+
+def clear_seat() -> None:
+    """Drop the runtime seat. For tests / process reuse only."""
+    global _SESSION_SEAT
+    _SESSION_SEAT = None
 
 
 def hostname() -> str:

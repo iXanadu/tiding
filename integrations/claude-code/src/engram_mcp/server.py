@@ -1,5 +1,6 @@
 """MCP server providing persistent semantic memory for Claude Code."""
 
+import os
 import subprocess
 import time
 import uuid
@@ -11,12 +12,14 @@ from mcp.server.fastmcp import FastMCP
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import (
+    INBOX_IDENTITY_ENV,
     compute_identity,
     derive_project_name,
     reader_to_address,
     remember_project_dir,
     resolve_channels,
     resolve_provider,
+    take_seat,
 )
 from engram_mcp.scoping import (
     AmbiguousIdentity,
@@ -567,6 +570,67 @@ async def memory_forget(
     if result["status"] == "not_found":
         return f"No memory found with key '{key}'"
     return f"Deleted memory '{key}'"
+
+
+@mcp.tool()
+async def memory_take_seat(
+    name: str,
+    project_dir: str = "",
+) -> str:
+    """Take a distinct inbox seat for THIS session, mid-session.
+
+    Use when you learn you are CO-WORKING — another agent session is live in
+    this same project folder. Without distinct seats both sessions resolve to
+    one identity: they share read-state and, because each one's mail looks like
+    its own echo, they cannot wake each other at all.
+
+    You keep the project's group address, so project-wide broadcasts still
+    reach you. You additionally get a private address only you receive.
+
+    ⚠ YOU MUST RE-ARM YOUR INBOX WATCHER after calling this. Your watcher is a
+    separate process still running under your OLD identity; until it is
+    restarted you are addressed at the new seat but still listening at the old
+    one, and DMs to your new seat will not wake you. This response gives you
+    the exact command. Do it immediately — the failure is silent.
+
+    Args:
+        name: The seat to take, e.g. "meidura-audit". Discriminate by ROLE
+            where you can; provider ("-grok", "-claude") when that is the real
+            distinction. Get peers' seats from memory_roster, never guess.
+        project_dir: Your working directory path (required for identity).
+    """
+    try:
+        previous_env = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
+        seat = take_seat(name)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    reader_identity, listen_set = compute_identity(project_dir or None)
+    project = derive_project_name(remember_project_dir(project_dir or None))
+    watcher = (
+        f"ENGRAM_INBOX_IDENTITY={seat} /usr/local/bin/engram-inbox-wait "
+        f"--follow --project-dir {project_dir or '<this session cwd>'}"
+    )
+    warn = ""
+    if previous_env and previous_env != seat:
+        warn = (
+            f"\n⚠ This OVERRODE a launcher-set seat ('{previous_env}'). If a "
+            f"launcher seated you deliberately, prefer its seat — relaunching "
+            f"is cleaner than diverging from what spawned you.\n"
+        )
+    return (
+        f"Seat taken: you are now addressed as '{reader_identity}'.\n"
+        f"Listening on: {', '.join(listen_set)}\n"
+        f"  • '{seat}' — your private address (DMs from peers land here)\n"
+        f"  • '{project}' — the shared project group (broadcasts still reach you)\n"
+        f"{warn}\n"
+        f"⛔ NOW RE-ARM YOUR WATCHER, or you will not wake on DMs to this seat.\n"
+        f"Stop your current inbox watcher, then start it with the SAME seat:\n\n"
+        f"    {watcher}\n\n"
+        f"Memory scoping is UNCHANGED — you and your co-worker still read and "
+        f"write one shared project memory. Only addressing split.\n"
+        f"Tell your peer your seat, or let it find you via memory_roster."
+    )
 
 
 @mcp.tool()
