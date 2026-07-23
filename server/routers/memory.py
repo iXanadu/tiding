@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -218,6 +219,41 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
 
 # --- Inbox endpoints ----------------------------------------------------
 
+def _loose_address(address: str | None) -> str | None:
+    """Reduce a reader identity to the address peers actually send to.
+
+    Sessions are addressed loosely (``engram``) but label their outbound mail
+    with the fully-qualified form (``engram@macmini``). A participant list must
+    hold the loose form or a reply would be sent to an address nobody listens
+    on. ``machine:<host>`` identities have no loose form and pass through.
+    """
+    if not address:
+        return None
+    address = address.strip().lower()
+    if not address or address.startswith("machine:"):
+        return address or None
+    return address.split("@", 1)[0] or None
+
+
+def _participant_set(recipients: list[str], sender: str | None) -> list[str]:
+    """Everyone in a fan-out conversation: the recipients plus the sender.
+
+    The sender is included because a group thread is only a group if replies
+    reach the person who convened it — otherwise the convener is the one party
+    who cannot hear the conversation they started.
+
+    Order-preserving and de-duplicated: the list is shown to humans and
+    iterated when fanning replies, so a stable, non-repeating order keeps a
+    reply from being delivered twice to an address named two ways.
+    """
+    out: list[str] = []
+    for addr in [*recipients, sender]:
+        loose = _loose_address(addr)
+        if loose and loose not in out:
+            out.append(loose)
+    return out
+
+
 @router.post("/send", response_model=InboxSendResponse)
 async def send_inbox(req: InboxSendRequest, request: Request):
     """Send an inbox message to a project, machine, #channel, or a list of
@@ -231,6 +267,35 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         ]
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # HUD-1 — private multi-party threads. A fan-out is a GROUP, so record who
+    # is in it and give every copy ONE thread id. Both are load-bearing:
+    #
+    #  * participants let `memory_reply` fan a reply back to the whole group
+    #    instead of only the sender. Without it a 3-way send is really N
+    #    parallel DMs with the sender as a human relay — the workaround this
+    #    replaces.
+    #  * a shared thread id makes those copies one conversation. Previously
+    #    each fan-out row carried the caller's (often absent) thread_id, and
+    #    reply fell back to the PARENT'S OWN id — which differs per recipient,
+    #    so each participant's replies landed in a separate thread.
+    #
+    # Membership is fixed at SEND time, chosen from the live roster. That is
+    # what makes ad-hoc huddles possible at all: `#channel` membership is
+    # launch-time (a session's ENGRAM_CHANNELS is set before it starts), so a
+    # room can never be formed around sessions that are already running. A
+    # participant set needs no subscription — every session already listens on
+    # its own address — so the group can be assembled after the fact.
+    #
+    # Deliberately only for genuine fan-out (>1 recipient): a 1:1 DM has no
+    # group, and single-recipient sends stay byte-identical to before.
+    is_fanout = len(corrected) > 1
+    participants: list[str] | None = None
+    thread_id = req.thread_id
+    if is_fanout:
+        participants = _participant_set(
+            [t for t, _ in corrected], sender=req.from_
+        )
+        thread_id = thread_id or f"inbox/{uuid.uuid4()}"
     try:
         ids: list[str] = []
         for to, _orig in corrected:
@@ -239,7 +304,8 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 body=req.body,
                 subject=req.subject,
                 from_=req.from_,
-                thread_id=req.thread_id,
+                thread_id=thread_id,
+                participants=participants,
                 supersedes=req.supersedes if not ids else None,  # supersede once
                 intent=req.intent,
                 # Server-derived, unspoofable: taken from the authenticated principal

@@ -1278,3 +1278,90 @@ async def test_unread_backlog_beyond_limit_surfaces_after_acks(client, db_pool):
     second = {m["id"] for m in r.json()["messages"]}
     assert second == set(ids[:3]), "acking the window must surface older unread"
     await _cleanup_inbox(db_pool)
+
+
+# --- HUD-1: private multi-party threads -----------------------------------
+#
+# Why this exists: '#channel' membership comes from a session's launch env, so
+# a room cannot be formed around sessions that are already running — which is
+# why one broad channel ends up holding every session on the box. A fan-out
+# records its own membership at SEND time, needs no subscription, and so lets
+# a hand-picked huddle be convened after the fact.
+
+@pytest.mark.asyncio
+async def test_fanout_records_participants_and_one_shared_thread(client, db_pool):
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": ["alpha", "beta"],
+        "from_": "owner1@macmini",
+        "body": "huddle up",
+    })
+    assert r.status_code == 200, r.text
+
+    threads = set()
+    for who in ("alpha", "beta"):
+        resp = await client.post("/memory/inbox", json={
+            "listen_set": [who], "reader_identity": f"{who}@m", "unread_only": True,
+        })
+        msg = resp.json()["messages"][0]
+        # Every member sees the same membership, including the convener —
+        # otherwise the person who started the huddle cannot hear it.
+        assert msg["participants"] == ["alpha", "beta", "owner1"], msg["participants"]
+        threads.add(msg["thread_id"])
+
+    # One conversation, not N. Before this, each copy carried the caller's
+    # (usually absent) thread_id and reply fell back to the parent's own id —
+    # so every participant's replies landed in a different thread.
+    assert len(threads) == 1 and None not in threads
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_sender_loose_form_is_used_not_fully_qualified(client, db_pool):
+    """Participants must hold addresses peers actually listen on. A session is
+    addressed as 'owner1' but labels its mail 'owner1@macmini'; storing the
+    qualified form would send replies to an address nobody listens on."""
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": ["alpha", "beta"], "from_": "owner1@macmini", "body": "x",
+    })
+    assert r.status_code == 200
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["alpha"], "reader_identity": "alpha@m", "unread_only": True,
+    })
+    assert "owner1@macmini" not in resp.json()["messages"][0]["participants"]
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_single_recipient_send_is_unchanged(client, db_pool):
+    """Regression guard: a 1:1 DM has no group. Recording participants here
+    would turn every ordinary reply into a fan-out."""
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": "alpha", "from_": "owner1@macmini", "body": "just you",
+    })
+    assert r.status_code == 200
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["alpha"], "reader_identity": "alpha@m", "unread_only": True,
+    })
+    msg = resp.json()["messages"][0]
+    assert msg["participants"] == []
+    assert msg["thread_id"] is None
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_explicit_thread_id_is_respected(client, db_pool):
+    """A reply into an existing group must not mint a new thread."""
+    await _cleanup_inbox(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": ["alpha", "beta"], "from_": "gamma",
+        "thread_id": "inbox/existing-thread", "body": "continuing",
+    })
+    assert r.status_code == 200
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["alpha"], "reader_identity": "alpha@m", "unread_only": True,
+    })
+    assert resp.json()["messages"][0]["thread_id"] == "inbox/existing-thread"
+    await _cleanup_inbox(db_pool)

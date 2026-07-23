@@ -744,3 +744,107 @@ async def test_memory_inbox_forwards_include_resolved(respx_mock):
         )
     sent = json.loads(route.calls.last.request.content)
     assert sent["include_resolved"] is True
+
+
+# --- HUD-1: private multi-party threads (group-reply fan-out) ----------------
+#
+# The problem these solve: `#channel` membership is fixed at LAUNCH
+# (ENGRAM_CHANNELS is read from the session's spawn env), so a room can never
+# be formed around sessions that are already running — and the one channel
+# everybody happens to share degrades into "every session on the box". A
+# participant set is fixed at SEND time instead, needs no subscription, and so
+# lets an owner convene a huddle of hand-picked live agents after the fact.
+
+# Self-exclusion is the whole mechanism here, so these tests must run as a
+# REAL seat rather than the suite's default `admin`: project_dir resolves
+# through .engram.cfg to 'engram', and the host is pinned so the identity is
+# exactly 'engram@macmini'.
+_AS_ENGRAM = "/Users/ixanadu/projects/engram"
+
+
+async def _reply_as_engram(**kw):
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        return await memory_reply(project_dir=_AS_ENGRAM, **kw)
+
+
+def _group_parent(participants, to="engram", from_="owner1", msg_id="inbox/hud-parent"):
+    return {
+        "id": msg_id, "to": to, "from_": from_, "subject": "huddle",
+        "body": "sound off", "thread_id": "inbox/hud-thread",
+        "participants": participants,
+        "read_by": [], "archived": False,
+        "created_at": "2026-07-23T12:00:00Z", "status": "open",
+    }
+
+
+def _wire(respx_mock, parent, reply_id="inbox/hud-reply"):
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [parent]}))
+    respx_mock.post(f"/memory/inbox/{parent['id']}/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": parent["id"]}))
+    return respx_mock.post("/memory/send").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "id": reply_id}))
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_group_reply_fans_out_to_every_participant_but_self(respx_mock):
+    """The core of HUD-1: everyone hears every reply, with no human relaying."""
+    send = _wire(respx_mock, _group_parent(["engram", "meidura-grok", "owner1"]))
+    out = await _reply_as_engram(message_id="inbox/hud-parent", body="engram here")
+    payload = json.loads(send.calls.last.request.read())
+    assert payload["to"] == ["meidura-grok", "owner1"], "self must be excluded"
+    assert payload["thread_id"] == "inbox/hud-thread"
+    assert "group of 2" in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_group_reply_keeps_waking_default_unlike_channel_reply(respx_mock):
+    """A channel is broad so its replies default quiet; a participant set was
+    chosen deliberately and is small, so its replies wake."""
+    send = _wire(respx_mock, _group_parent(["engram", "meidura-grok", "owner1"]))
+    await _reply_as_engram(message_id="inbox/hud-parent", body="ack")
+    payload = json.loads(send.calls.last.request.read())
+    assert "intent" not in payload or payload.get("intent") is None
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_group_reply_excludes_self_by_fully_qualified_form_too(respx_mock):
+    """Sessions are listed loosely but labelled `name@host`; both are 'me'.
+    Missing this would make every session send each reply to itself, which the
+    watcher's self-echo filter then silently drops — invisible, not harmless."""
+    send = _wire(respx_mock, _group_parent(["engram@macmini", "meidura-grok"]))
+    await _reply_as_engram(message_id="inbox/hud-parent", body="hi")
+    payload = json.loads(send.calls.last.request.read())
+    assert "engram@macmini" not in payload["to"]
+    assert payload["to"] == ["meidura-grok"]
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_channel_still_wins_over_participants(respx_mock):
+    """Channel mail routes to the room even if a participant set rode along —
+    otherwise a reply would silently leave the room it was posted in."""
+    send = _wire(respx_mock, _group_parent(["engram", "x"], to="#devagents"))
+    await _reply_as_engram(message_id="inbox/hud-parent", body="in the room")
+    payload = json.loads(send.calls.last.request.read())
+    assert payload["to"] == "#devagents"
+    assert payload["intent"] == "fyi"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_ordinary_dm_is_completely_unchanged(respx_mock):
+    """Regression guard: no participants => the pre-HUD-1 contract, exactly."""
+    parent = _group_parent([], msg_id="inbox/plain-dm")
+    send = _wire(respx_mock, parent)
+    await _reply_as_engram(message_id="inbox/plain-dm", body="just us")
+    payload = json.loads(send.calls.last.request.read())
+    assert payload["to"] == "owner1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_lone_participant_falls_back_to_sender(respx_mock):
+    """Degenerate set (only us listed): still land somewhere real rather than
+    sending an empty recipient list."""
+    send = _wire(respx_mock, _group_parent(["engram"]))
+    await _reply_as_engram(message_id="inbox/hud-parent", body="alone")
+    payload = json.loads(send.calls.last.request.read())
+    assert payload["to"] == "owner1"

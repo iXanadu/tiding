@@ -825,6 +825,12 @@ async def memory_send(
         to: Recipient address. Accepts a project name ('projgamma'), a
             precise identity, a cross-project channel ('#courseware'), or a
             comma-separated list ('alpha, beta') for ad-hoc fan-out.
+            A list creates a PRIVATE MULTI-PARTY THREAD: the recipients plus
+            you become its fixed participants, and every reply fans out to
+            all of them. Use this to convene a huddle of hand-picked agents
+            that are ALREADY RUNNING — unlike a '#channel', it needs no
+            subscription, so membership is not limited to what was decided at
+            launch. Get live addresses from memory_roster; do not guess.
         body: Message body
         subject: Short subject line
         thread_id: Optional thread id to group a back-and-forth
@@ -950,6 +956,13 @@ async def memory_reply(
     genuinely needs to wake the others. Direct/DM replies route to the
     sender as always.
 
+    PRIVATE MULTI-PARTY THREADS: if the parent was a fan-out send (its
+    'participants' list is non-empty), the reply goes to EVERY participant
+    except you — so a hand-picked group hears each other without anyone
+    relaying. Membership was fixed when the thread was created, so you do not
+    need to know who else is in it. These replies keep the waking default:
+    the group is small and was convened deliberately.
+
     Args:
         message_id: The id of the message being replied to
         body: The reply body
@@ -979,12 +992,31 @@ async def memory_reply(
         return f"Cannot reply: parent message {message_id} has no 'from' address."
     body, subject, leak_warning = _strip_leaked_markup(body, subject)
     parent_to = parent.get("to") or ""
+    participants = [p for p in (parent.get("participants") or []) if p]
     if parent_to.startswith("#"):
         # Channel mail: reply to the CHANNEL so every subscriber sees the
         # whole conversation (group chat), not just the original sender.
         # Default fyi — a busy thread must not wake every peer per reply.
         reply_to = parent_to
         effective_intent = intent or "fyi"
+    elif participants:
+        # HUD-1 — private multi-party thread. Fan the reply to the whole
+        # hand-picked group, minus ourselves, so every member hears every
+        # reply. Without this a group send is N parallel DMs and the convener
+        # has to relay by hand: slow, and every relayed line arrives under the
+        # relayer's stamp rather than its author's.
+        #
+        # Unlike a #channel reply this keeps the waking default. A channel is
+        # broad and unbounded, so quiet replies are the courteous default;
+        # a participant set was chosen deliberately and is small, and the
+        # reason to convene one is that these specific peers need to act.
+        me = {reader_identity.strip().lower(), reader_to_address(reader_identity).strip().lower()}
+        reply_to = [p for p in participants if p.strip().lower() not in me]
+        effective_intent = intent
+        if not reply_to:
+            # Degenerate: we are the only listed participant. Fall back to the
+            # sender so the reply still lands somewhere real.
+            reply_to = reader_to_address(raw_from)
     else:
         reply_to = reader_to_address(raw_from)
         effective_intent = intent  # DM replies keep waking by default
@@ -1004,7 +1036,10 @@ async def memory_reply(
         reader_identity=reader_identity,
         project_dir=project_dir or None,
     )
-    head = f"Replied to {message_id} → {reply_to} (thread {thread_id}); sent {send_result['id']}"
+    shown = ", ".join(reply_to) if isinstance(reply_to, list) else reply_to
+    if isinstance(reply_to, list):
+        shown = f"{shown} (group of {len(reply_to)})"
+    head = f"Replied to {message_id} → {shown} (thread {thread_id}); sent {send_result['id']}"
     return _append_guidance(head + leak_warning, send_result)
 
 

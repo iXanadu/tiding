@@ -16,15 +16,6 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
-- **HUD-1** Private multi-party threads (group-reply): a fan-out send
-  (`to: [a,b,c]`) records its participant set; `memory_reply` on such a
-  thread fans out to ALL participants (not just the sender), each reply
-  under the replier's own verified stamp. Kills the AB-relay workaround
-  (owner-stamped relayed messages, single point of relay, poll latency).
-  Metadata-only — no schema change. Requested by agentbeast 2026-07-21;
-  design accepted (rejected alt: runtime channel subscribe — fights
-  launch-time membership + watcher re-arm).
-
 ## Blocked-external
 
 - **DOCKER-1** Verify the full-stack compose path (build, health,

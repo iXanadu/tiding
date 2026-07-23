@@ -408,6 +408,11 @@ class InboxMessage(BaseModel):
     subject: str
     body: str
     thread_id: str | None = None
+    # HUD-1 — membership of a private multi-party thread, fixed at send time.
+    # Empty on ordinary 1:1 mail. Non-empty means a reply should fan out to
+    # everyone here (minus the replier), which is what makes a hand-picked
+    # group behave as a conversation instead of N parallel DMs.
+    participants: list[str] = []
     read_by: list[str]
     archived: bool
     created_at: datetime

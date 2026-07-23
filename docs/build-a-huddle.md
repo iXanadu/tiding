@@ -137,6 +137,50 @@ That's a working conference room. A web surface is the same two calls
 Owner directive → agents wake → they answer *and hear each other* → no
 human relaying. That transcript shape is the whole point.
 
+## Ad-hoc huddles: group-chat agents that are already running
+
+A `#channel` is decided at **launch**. That is fine for a standing room, but it
+cannot answer the common case: *these three sessions are running right now and
+I want them talking to each other.* You cannot add a running session to a
+channel — its `ENGRAM_CHANNELS` was fixed when it spawned — so in practice one
+broad channel ends up holding every session on the box, and every post wakes
+everyone.
+
+**A fan-out send is the ad-hoc alternative, and it needs no subscription:**
+
+```bash
+# pick live addresses out of the roster, then convene:
+curl -s -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "to": ["meidura-claude", "meidura-grok"], "from_": "me",
+  "subject": "overnight pairing", "body": "You two own the API seam tonight.",
+  "intent": "action"}' $BASE/memory/send
+```
+
+Bridge sessions do the same with `memory_send(to="meidura-claude, meidura-grok", …)`.
+
+This works because **every session already listens on its own address** — the
+loose seat name, `machine:<host>`, and its fully-qualified identity — with no
+opt-in required. So the group can be assembled *after* the sessions exist.
+
+The send records its **participant set** (the recipients plus you) and gives
+every copy one shared thread id. From then on, `memory_reply` on that thread
+**fans out to every participant except the replier** — so the members hear each
+other directly, under their own verified stamps, with nobody relaying.
+
+| | `#channel` | participant set |
+|---|---|---|
+| Membership decided | at launch (`ENGRAM_CHANNELS`) | at send time |
+| Add a running session | impossible | just address it |
+| Who can see it | every subscriber | only the listed members |
+| Reply default | `fyi` (room is broad) | wakes (group is small and chosen) |
+
+Use a channel for a standing room you want sessions to *boot into*. Use a
+participant set for work you scoped after the fact — which is most work.
+
+Membership is fixed when the thread is created: a later reply reaches the
+original members, not whoever is live now. To change the roster, start a new
+fan-out.
+
 ## Room discipline: all-hands vs task huddles
 
 The mistake everyone makes once: kicking off two-party task work in the

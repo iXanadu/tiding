@@ -339,6 +339,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         subject=md.get("subject", ""),
         body=row["value"],
         thread_id=md.get("thread_id"),
+        participants=md.get("participants") or [],
         read_by=md.get("read_by", []) or [],
         archived=bool(md.get("archived", False)),
         created_at=created_at,
@@ -362,6 +363,7 @@ async def inbox_send(
     from_principal: str | None = None,
     authority: bool = False,
     intent: str | None = None,
+    participants: list[str] | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -390,6 +392,11 @@ async def inbox_send(
         "archived": False,
         "status": INBOX_OPEN,
         "supersedes": supersedes,
+        # HUD-1: the full membership of a fan-out conversation, so a reply can
+        # reach the whole group rather than only the sender. Absent (None) on
+        # ordinary 1:1 mail — the presence of this key is what marks a thread
+        # as multi-party, so it must NOT be defaulted to an empty list here.
+        "participants": participants or None,
     }
     # Minimal embedding — we never semantic-search inbox, but the column is NOT NULL.
     search_text = f"{subject} {body}"
