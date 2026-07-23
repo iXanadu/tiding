@@ -9,6 +9,26 @@
 
 ## Next (committed, not started)
 
+- **SEAT-2** Make the runtime-reseat split state impossible instead of
+  documented. Today `memory_take_seat` moves the bridge instantly while
+  the watcher keeps polling under its launch identity — the session is
+  addressed at the new seat but listening at the old one. Project mail
+  still arrives, so it fails quietly. Fix: watcher re-resolves its seat
+  each poll from a per-session file keyed on `ENGRAM_SESSION_KEY` (to be
+  emitted at spawn by the launcher; derived from the session handle so it
+  survives a respawn, never the pid). Falls back to today's start-time env
+  resolution when the key is absent, so hand-launched sessions do not
+  regress. The watcher must treat the file as advisory — never crash or go
+  silent on a missing/malformed one, since a stale seat still catches
+  project-addressed mail. Blocked on the launcher shipping the key.
+
+- **DOC-8** Reference the shell-wrapper approach for seating
+  hand-launched sessions once it exists (sets `ENGRAM_INBOX_IDENTITY` from
+  folder + provider when unset, so a bare terminal session inherits a seat
+  through the same process tree as a launcher-spawned one). Makes the
+  strong path universal and demotes runtime seats to a convenience.
+  Wrapper lives in the operator's shell config, not this repo.
+
 - **NS-3** Retire the `claude-code=fleet` alias — SECOND attempt, now
   data-gated. NS-2's config/DB/grants sweep missed a straggler class:
   application clients hardcoding the legacy namespace in their own code
