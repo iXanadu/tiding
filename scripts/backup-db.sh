@@ -141,6 +141,40 @@ mv "$TMP" "$OUT"
 chmod 600 "$OUT"
 trap - EXIT
 
+# --- manifest: ground truth that travels WITH the dump ---------------------
+# A restorer is told to "compare row counts against live" — but in the disaster
+# this exists for, THERE IS NO LIVE DATABASE to compare against. Without a
+# reference captured at dump time, a restore that silently loses half its rows
+# verifies as "thousands, not zero" and passes.
+#
+# So record the counts here, beside the dump, where they ride into the same
+# snapshot. Best-effort: a manifest failure must never invalidate a good dump.
+MANIFEST="${OUT%.dump}.manifest"
+if command -v psql >/dev/null; then
+  {
+    echo "# engram backup manifest — counts captured from the SOURCE at dump time."
+    echo "# A restore that does not match these numbers is incomplete, even if it is non-empty."
+    echo "dump_file=$(basename "$OUT")"
+    echo "captured_utc=$STAMP"
+    echo "source_db=${DB_NAME}@${DB_HOST}:${DB_PORT}"
+    for pair in \
+      "memories_total|select count(*) from memories" \
+      "memories_inbox|select count(*) from memories where key like 'inbox/%'" \
+      "memories_embedded|select count(*) from memories where embedding is not null" \
+      "principals|select count(*) from principals" \
+      "principal_aliases|select count(*) from principal_aliases"; do
+      k="${pair%%|*}"; q="${pair#*|}"
+      v=$(psql --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
+               --dbname="$DB_NAME" --no-psqlrc -tAq -c "$q" 2>/dev/null | tr -d ' ')
+      echo "${k}=${v:-unknown}"
+    done
+  } > "$MANIFEST" 2>/dev/null && chmod 600 "$MANIFEST" \
+    && log "manifest written: $(basename "$MANIFEST")" \
+    || log "WARNING: manifest could not be written (dump itself is still good)"
+else
+  log "WARNING: psql not found — no manifest written, restore cannot self-verify"
+fi
+
 SIZE=$(du -h "$OUT" | cut -f1 | tr -d ' ')
 log "ok — $SIZE, $TOC_LINES archive entries, verified readable"
 

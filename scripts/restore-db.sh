@@ -150,14 +150,44 @@ echo "    ├─ inbox rows    : $R_INBOX" >&2
 echo "    └─ knowledge rows: $(( ${R_MEM:-0} - ${R_INBOX:-0} ))" >&2
 echo "    principals       : $R_PRIN" >&2
 
+# --- compare against the manifest, not against "live" ----------------------
+# In a real disaster the live database is GONE, so "compare to live" is advice
+# you cannot follow. The manifest captured at dump time is the only reference
+# that survives with the backup — prefer it, and fall back to live only when
+# it is absent (older dumps predate manifests).
+MANIFEST="${DUMP%.dump}.manifest"
+VERDICT_FAIL=0
+if [[ -r "$MANIFEST" ]]; then
+  m_get () { sed -n "s/^$1=//p" "$MANIFEST" | head -1; }
+  E_MEM=$(m_get memories_total); E_PRIN=$(m_get principals); E_EMB=$(m_get memories_embedded)
+  R_EMB=$(count "$TARGET" "select count(*) from memories where embedding is not null;")
+  echo "" >&2
+  echo "  VERIFIED AGAINST MANIFEST (captured $(m_get captured_utc))" >&2
+  chk () { # name expected actual
+    if [[ "$2" == "unknown" || -z "$2" ]]; then echo "    $1: no reference in manifest" >&2
+    elif [[ "$2" == "$3" ]]; then echo "    $1: $3 == $2  MATCH" >&2
+    else echo "    $1: $3 != $2  ✗ MISMATCH" >&2; VERDICT_FAIL=1; fi
+  }
+  chk "memories  " "$E_MEM"  "$R_MEM"
+  chk "principals" "$E_PRIN" "$R_PRIN"
+  # Embeddings are what make semantic search work; rows without them restore
+  # "successfully" into a memory system that cannot actually recall anything.
+  chk "embeddings" "$E_EMB"  "$R_EMB"
+else
+  echo "    (no manifest beside this dump — cannot self-verify)" >&2
+fi
+
 if [[ "$MODE" == "rehearse" ]]; then
   L_MEM=$(count "$DB_NAME" "select count(*) from memories;")
-  echo "    live DB for comparison: $L_MEM memories" >&2
+  echo "    live DB, for reference: $L_MEM memories (expect drift — writes continue after a dump)" >&2
   echo "" >&2
   log "dropping rehearsal database '$TARGET'"
   "${PSQL[@]}" --dbname=postgres -c "DROP DATABASE IF EXISTS \"$TARGET\";" >/dev/null
   if [[ "$R_MEM" == "ERR" || "${R_MEM:-0}" -eq 0 ]]; then
     die "REHEARSAL FAILED — restored database has no memories. This backup would NOT have saved you."
+  fi
+  if [[ $VERDICT_FAIL -eq 1 ]]; then
+    die "REHEARSAL FAILED — restored counts do not match the manifest. The dump is INCOMPLETE, not merely non-empty."
   fi
   log "REHEARSAL PASSED — '$DUMP' is a working, restorable backup."
 fi

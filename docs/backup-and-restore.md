@@ -42,6 +42,13 @@ scripts/backup-db.sh --out-dir DIR --keep 14
   launchd/cron where homebrew is not on the path.
 - Keeps `--keep` generations locally so a bad dump can never overwrite the last
   good one. Offsite retention is FleetBackup's concern.
+- Writes a **manifest** beside each dump recording row counts *from the source
+  at dump time*. This is the reference a restorer needs and would otherwise not
+  have: in a real disaster the live database is gone, so "compare against live"
+  is advice you cannot follow. `restore-db.sh` prefers the manifest and FAILS
+  the rehearsal on a mismatch — an incomplete restore that is merely non-empty
+  would otherwise pass. Embedding counts are included, because rows restored
+  without embeddings give you a memory system that cannot recall anything.
 
 ## Restoring
 
