@@ -18,16 +18,6 @@
   Coordinating with fleetbackup-claude in huddle Oyf_5Ijf. Until this
   lands, the fleet's memory has local-only protection.
 
-- **SEC-6** `/admin/bulk-delete` silently ignores unknown request fields.
-  A caller's assumed safety flag (`confirm:false`) was accepted and the
-  delete ran for real, returning the deleted count where a preview was
-  expected — this destroyed 1733 rows on 2026-07-23. Fix: `extra="forbid"`
-  on destructive request models so an unknown field 422s; add a real
-  dry-run that reports matches WITHOUT deleting; require an explicit
-  acknowledgement when `key_prefix` is broad enough to match a whole scope.
-  An endpoint that accepts an unknown safety flag is worse than one with
-  none, because it rewards the caller's assumption.
-
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
   recovery and anything written since the last dump is unrecoverable.

@@ -207,11 +207,31 @@ class MemoryStatsResponse(BaseModel):
 
 
 class BulkDeleteRequest(_NamespacedRequest):
+    # SEC-6 — extra="forbid" is the single most important line in this model.
+    #
+    # On 2026-07-23 a caller sent {"key_prefix": "inbox/", "confirm": false}
+    # believing `confirm:false` meant "dry run". No such field existed. Pydantic
+    # silently ignored it, the delete ran for real, and 1733 rows — every inbox
+    # message on the fleet — were destroyed with no backup to restore from.
+    #
+    # An endpoint that ACCEPTS an unknown safety flag is worse than one with no
+    # safety flag at all: it returns success and actively confirms the caller's
+    # false belief. A 422 would have cost nothing and prevented all of it.
+    model_config = {"extra": "forbid"}
+
     namespace: str
     key_prefix: str
     scope: str | None = None
     user_id: str | None = None
     older_than_days: int | None = None
+    # Real dry-run. Defaults to TRUE: the safe mode is what you get when you
+    # don't think about it, and destroying data requires saying so explicitly.
+    # This inverts the old default, and that is deliberate — see the router.
+    dry_run: bool = True
+    # Required when the predicate is broad enough to match a whole class of
+    # keys. Names what you intend to destroy, so a wide blast radius has to be
+    # stated rather than stumbled into.
+    i_understand_this_deletes: str | None = None
 
     @field_validator("key_prefix", mode="before")
     @classmethod
@@ -224,6 +244,13 @@ class BulkDeleteRequest(_NamespacedRequest):
 class BulkDeleteResponse(BaseModel):
     status: str
     deleted_count: int
+    # What a dry run reports. `matched_count` is what WOULD be deleted; on a
+    # real delete it equals deleted_count. Distinguishing the two is the point:
+    # the incident happened because a match count was read as a preview.
+    matched_count: int | None = None
+    dry_run: bool = False
+    sample_keys: list[str] = []
+    guidance: str | None = None
 
 
 class CleanupResponse(BaseModel):

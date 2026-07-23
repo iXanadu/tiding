@@ -379,7 +379,11 @@ Require admin principal when `require_auth=true`. Open otherwise.
 - `GET /admin/machines` — List unique machine identifiers from metadata.
 - `GET /admin/stats` — Namespace counts with optional scope breakdown.
 - `PATCH /admin/memories` — Update a memory's namespace, scope, user_id, key, or tags.
-- `POST /admin/bulk-delete` — Delete memories by key prefix with safety guard.
+- `POST /admin/bulk-delete` — Delete memories by key prefix. **Dry-run by
+  default**: omitting `dry_run` previews what would be deleted and destroys
+  nothing. Unknown fields are rejected (422) rather than ignored, and a
+  prefix broad enough to match a whole class of keys must be named
+  explicitly via `i_understand_this_deletes`.
 - `POST /admin/cleanup` — Manually trigger expiration cleanup.
 
 ### Principal Management

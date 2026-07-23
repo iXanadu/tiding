@@ -245,6 +245,10 @@ async def test_bulk_delete_by_prefix(client):
         resp = await client.post("/admin/bulk-delete", json={
             "namespace": NS,
             "key_prefix": "bd-session/",
+            # SEC-6: deleting is now opt-in, and a prefix ending at a separator
+            # is "broad" so it must also be named.
+            "dry_run": False,
+            "i_understand_this_deletes": f"{NS}:bd-session/",
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -281,6 +285,8 @@ async def test_bulk_delete_older_than(client, db_pool):
             "namespace": NS,
             "key_prefix": "bd-",
             "older_than_days": 30,
+            "dry_run": False,
+            "i_understand_this_deletes": f"{NS}:bd-",
         })
         data = resp.json()
         assert data["status"] == "ok"
@@ -305,6 +311,119 @@ async def test_bulk_delete_empty_prefix(client):
         "key_prefix": "",
     })
     assert resp.status_code == 422
+
+
+# --- SEC-6: the guards that would have prevented the 2026-07-23 data loss ----
+#
+# A caller sent {"key_prefix": "inbox/", "confirm": false} believing it was a
+# dry run. No such field existed, pydantic ignored it, the delete ran, and 1733
+# rows were destroyed with no backup. Each test below blocks one link in that
+# chain.
+
+@pytest.mark.asyncio
+async def test_unknown_field_is_rejected_not_ignored(client):
+    """The exact call that caused the incident must now 422.
+
+    An endpoint that ACCEPTS an unknown safety flag is worse than one with no
+    safety flag: it returns success and confirms the caller's false belief.
+    """
+    resp = await client.post("/admin/bulk-delete", json={
+        "namespace": NS,
+        "key_prefix": "sec6-",
+        "confirm": False,          # <- never existed; was silently ignored
+    })
+    assert resp.status_code == 422
+    assert "confirm" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_default_is_dry_run_and_deletes_nothing(client):
+    """Omitting dry_run must PREVIEW, not destroy. Safe is the default."""
+    keys = ["sec6-a", "sec6-b"]
+    await _seed(client, keys)
+    try:
+        resp = await client.post("/admin/bulk-delete", json={
+            "namespace": NS, "key_prefix": "sec6-",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is True
+        assert data["deleted_count"] == 0
+        assert data["matched_count"] == 2
+        assert sorted(data["sample_keys"]) == ["sec6-a", "sec6-b"]
+        # and the rows are still there
+        resp = await client.get("/admin/memories", params={"namespace": NS, "key_prefix": "sec6-"})
+        assert resp.json()["total"] == 2
+    finally:
+        await _cleanup(client, keys)
+
+
+@pytest.mark.asyncio
+async def test_broad_prefix_refused_without_acknowledgement(client):
+    """A prefix naming a CLASS of keys must be stated, not stumbled into."""
+    keys = ["sec6-a"]
+    await _seed(client, keys)
+    try:
+        resp = await client.post("/admin/bulk-delete", json={
+            "namespace": NS, "key_prefix": "sec6-", "dry_run": False,
+        })
+        assert resp.status_code == 422
+        assert "i_understand_this_deletes" in resp.text
+        resp = await client.get("/admin/memories", params={"namespace": NS, "key_prefix": "sec6-"})
+        assert resp.json()["total"] == 1, "refusal must not have deleted anything"
+    finally:
+        await _cleanup(client, keys)
+
+
+@pytest.mark.asyncio
+async def test_wrong_acknowledgement_is_refused(client):
+    keys = ["sec6-a"]
+    await _seed(client, keys)
+    try:
+        resp = await client.post("/admin/bulk-delete", json={
+            "namespace": NS, "key_prefix": "sec6-", "dry_run": False,
+            "i_understand_this_deletes": "yes",
+        })
+        assert resp.status_code == 422
+    finally:
+        await _cleanup(client, keys)
+
+
+@pytest.mark.asyncio
+async def test_exact_key_needs_no_acknowledgement(client):
+    """Narrow, specific deletes stay ergonomic — the gate targets blast radius,
+    not deletion itself. Otherwise people route around it."""
+    keys = ["sec6-a-specific-key-name"]
+    await _seed(client, keys)
+    resp = await client.post("/admin/bulk-delete", json={
+        "namespace": NS, "key_prefix": "sec6-a-specific-key-name", "dry_run": False,
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dry_run_and_delete_share_one_predicate(client):
+    """The preview must count exactly what the delete removes.
+
+    A preview built from a different predicate than the delete is a preview
+    that can lie — which is precisely how a match count got read as a preview
+    and 1733 rows went away.
+    """
+    keys = ["sec6-x", "sec6-y", "sec6-z"]
+    await _seed(client, keys)
+    try:
+        preview = await client.post("/admin/bulk-delete", json={
+            "namespace": NS, "key_prefix": "sec6-",
+        })
+        matched = preview.json()["matched_count"]
+        real = await client.post("/admin/bulk-delete", json={
+            "namespace": NS, "key_prefix": "sec6-", "dry_run": False,
+            "i_understand_this_deletes": f"{NS}:sec6-",
+        })
+        assert real.json()["deleted_count"] == matched == 3
+    finally:
+        await _cleanup(client, keys)
 
 
 # --- /admin/cleanup ---

@@ -241,7 +241,18 @@ async def bulk_delete(
     scope: str | None = None,
     user_id: str | None = None,
     older_than_days: int | None = None,
-) -> int:
+    dry_run: bool = False,
+) -> tuple[int, list[str]]:
+    """Delete rows matching a key prefix. Returns (count, sample_keys).
+
+    With ``dry_run=True`` NOTHING is deleted: the same predicate is used for a
+    SELECT so the caller sees exactly what a real run would remove, plus a
+    sample of the keys. The dry run and the delete share one WHERE clause on
+    purpose — a preview built from a different predicate than the delete is a
+    preview that can lie, which is the failure mode this whole feature exists
+    to prevent (2026-07-23: 1733 rows destroyed by a call the caller believed
+    was a preview).
+    """
     pool = await get_pool()
 
     # Escape LIKE metacharacters so key_prefix is a literal prefix, not a
@@ -269,10 +280,23 @@ async def bulk_delete(
     where = " AND ".join(conditions)
 
     async with pool.acquire() as conn:
+        if dry_run:
+            rows = await conn.fetch(
+                f"SELECT key FROM memories WHERE {where} ORDER BY key LIMIT 10", *params
+            )
+            matched = await conn.fetchval(
+                f"SELECT count(*) FROM memories WHERE {where}", *params
+            )
+            return int(matched or 0), [r["key"] for r in rows]
+
+        sample = await conn.fetch(
+            f"SELECT key FROM memories WHERE {where} ORDER BY key LIMIT 10", *params
+        )
+        sample_keys = [r["key"] for r in sample]
         result = await conn.execute(f"DELETE FROM memories WHERE {where}", *params)
 
     # result is like "DELETE 5"
-    return int(result.split()[-1])
+    return int(result.split()[-1]), sample_keys
 
 
 async def cleanup_expired(batch_size: int = 500) -> int:

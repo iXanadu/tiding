@@ -129,21 +129,105 @@ async def stats_endpoint(
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
+# A prefix is "broad" when it does not identify a specific record — it names a
+# CLASS. `inbox/` matches every message ever sent; `inbox/<uuid>` matches one.
+# The 2026-07-23 incident was exactly this distinction going unnoticed, so the
+# rule is deliberately crude and errs toward asking: a prefix that is empty,
+# very short, or ends at a path separator gets the extra gate.
+_BROAD_MIN_LEN = 12
+
+
+def _is_broad(req) -> bool:
+    p = (req.key_prefix or "").strip()
+    if len(p) < _BROAD_MIN_LEN:
+        return True
+    if p.endswith(("/", ":", "-", "_")):
+        return True
+    return False
+
+
+def _blast_label(req) -> str:
+    """The exact string a caller must echo back to run a broad delete.
+
+    Deliberately built from the request itself so it cannot be guessed from the
+    docs alone — you have to have read the refusal for THIS call, which means
+    you have seen the match count it carried.
+    """
+    return f"{req.namespace}:{req.key_prefix}"
+
+
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
 async def bulk_delete_endpoint(
     req: BulkDeleteRequest,
     _caller=Depends(admin_or_open),
 ):
-    logger.debug(f"BULK DELETE ns={req.namespace} prefix={req.key_prefix}")
+    logger.debug(
+        f"BULK DELETE ns={req.namespace} prefix={req.key_prefix} dry_run={req.dry_run}"
+    )
     try:
-        deleted = await bulk_delete(
+        matched, sample = await bulk_delete(
+            namespace=req.namespace,
+            key_prefix=req.key_prefix,
+            scope=req.scope,
+            user_id=req.user_id,
+            older_than_days=req.older_than_days,
+            dry_run=True,
+        )
+
+        if req.dry_run:
+            return BulkDeleteResponse(
+                status="ok",
+                deleted_count=0,
+                matched_count=matched,
+                dry_run=True,
+                sample_keys=sample,
+                guidance=(
+                    f"DRY RUN — nothing was deleted. {matched} row(s) MATCH this "
+                    f"predicate and WOULD be destroyed.\n"
+                    f"Re-send with \"dry_run\": false to actually delete."
+                    + (
+                        f"\nThis prefix is broad: you must also send "
+                        f'"i_understand_this_deletes": "{_blast_label(req)}".'
+                        if _is_broad(req) else ""
+                    )
+                ),
+            )
+
+        # A broad predicate must be named, not stumbled into. Checked AFTER the
+        # match count so the refusal can tell the caller what they nearly did.
+        if _is_broad(req):
+            expected = _blast_label(req)
+            if (req.i_understand_this_deletes or "").strip() != expected:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"REFUSED: this predicate matches {matched} row(s) — a whole "
+                        f"class of keys, not a specific one. To proceed, re-send with "
+                        f'"i_understand_this_deletes": "{expected}". '
+                        f"Prefer deleting exact keys one at a time."
+                    ),
+                )
+
+        deleted, sample = await bulk_delete(
             namespace=req.namespace,
             key_prefix=req.key_prefix,
             scope=req.scope,
             user_id=req.user_id,
             older_than_days=req.older_than_days,
         )
-        return BulkDeleteResponse(status="ok", deleted_count=deleted)
+        logger.warning(
+            f"BULK DELETE EXECUTED ns={req.namespace} prefix={req.key_prefix} "
+            f"deleted={deleted}"
+        )
+        return BulkDeleteResponse(
+            status="ok",
+            deleted_count=deleted,
+            matched_count=deleted,
+            dry_run=False,
+            sample_keys=sample,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("bulk_delete failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
