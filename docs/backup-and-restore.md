@@ -84,12 +84,17 @@ race the restore.
 ```
 $ scripts/restore-db.sh --rehearse
 
-  RESTORED CONTENTS of engram_restore_rehearsal_84716
+  RESTORED CONTENTS of rehearsal_engram_84716
     memories (total) : 3099
     ├─ inbox rows    : 14
     └─ knowledge rows: 3085
     principals       : 7
-    live DB for comparison: 3099 memories
+    live DB, for reference: 3099 memories
+
+  VERIFIED AGAINST MANIFEST (captured 20260723T170219Z)
+    memories  : 3099 == 3099  MATCH
+    principals: 7 == 7  MATCH
+    embeddings: 3099 == 3099  MATCH
 
 restore-db: REHEARSAL PASSED
 ```

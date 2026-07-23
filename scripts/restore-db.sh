@@ -95,7 +95,10 @@ fi
 pg_restore --list "$DUMP" >/dev/null 2>&1 || die "'$DUMP' is not a readable pg_dump archive"
 
 case "$MODE" in
-  rehearse) TARGET="engram_restore_rehearsal_$$" ;;
+  # NOT prefixed "engram_" — the repo-hygiene credential scanner matches
+  # /\bengram_[A-Za-z0-9_-]{16,}/, which is the real token shape. A scratch
+  # DB name that trips the secret scanner trains people to ignore it.
+  rehearse) TARGET="rehearsal_engram_$$" ;;
   into)
     [[ -n "$TARGET" ]] || die "--into requires a database name"
     [[ "$TARGET" != "$DB_NAME" ]] || die "--into must NOT name the live database ('$DB_NAME'); use --production"
