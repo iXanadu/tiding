@@ -14,6 +14,14 @@
 
 ## Next (committed, not started)
 
+- **DATA-1** Decide the fate of two sensitive local archives sitting
+  untracked at `~/projects/` top level (deliberately outside every git
+  repo, inside FleetBackup's source set): the 2026-07-23 inbox recovery
+  export, and the older pre-rewrite history bundle. Both contain verbatim
+  private conversation and neither is managed by any retention policy —
+  they persist until someone decides. Owner's call: keep, relocate to a
+  vault, or delete. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
+
 - **DOC-8** Reference the shell-wrapper approach for seating
   hand-launched sessions once it exists (sets `ENGRAM_INBOX_IDENTITY` from
   folder + provider when unset, so a bare terminal session inherits a seat
