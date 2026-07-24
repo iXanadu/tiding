@@ -122,10 +122,17 @@ async def alias_seat(req: SeatAliasRequest, request: Request):
 
 @router.post("/seats", response_model=SeatListResponse)
 async def list_seats(req: SeatListRequest, request: Request):
-    """Who holds which address. The registry's read side."""
+    """Who holds which address. The registry's read side.
+
+    Pass ``session_key`` for a launcher's direct lookup — "what address did the
+    session I spawned actually get?" — so a launcher reads the granted seat
+    instead of reconstructing it and silently missing when an ordinal was
+    granted. Each entry also carries ``aliases``, so anything keyed on a
+    session's addresses should key on the seat AND its aliases.
+    """
     check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
     try:
-        seats = await seat_list(req.project)
+        seats = await seat_list(req.project, req.session_key)
     except Exception:
         logger.exception("seat_list failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")

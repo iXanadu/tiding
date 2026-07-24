@@ -60,6 +60,22 @@ computed the same name, shared ack-state, and **could not wake each other**.
   reclaimed after a grace period — but **never** while undelivered mail is
   addressed to it.
 
+**Launchers: read the granted seat, don't reconstruct it.** A launcher never
+calls `/session/claim` — the bridge inside the session does — so it cannot see
+the grant. Ask instead:
+
+```bash
+curl -s ... -d '{"session_key":"claude-ab-projgamma"}' \
+  http://localhost:8920/session/seats
+# → {"seats":[{"seat":"projgamma-claude-2","aliases":["projgamma-auditor"], ...}]}
+```
+
+Anything keyed on a session's address (a UI badge map, a router) must key on
+the **seat and its aliases**, both read from here. Recomputing
+`<project>-<provider>` locally is a guess that misses silently the moment an
+ordinal is granted — and a tail like `-2` is only an ordinal by coincidence;
+`-auditor` is a role. Absent beats confidently wrong.
+
 The MCP bridge does all of this automatically. Design and rationale:
 [docs/design/session-registry.md](design/session-registry.md).
 

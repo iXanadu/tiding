@@ -714,6 +714,11 @@ class SeatEntry(BaseModel):
 
 class SeatListRequest(BaseModel):
     project: str | None = None
+    # Direct lookup for a LAUNCHER: "what seat does the session I spawned
+    # actually hold?" A launcher never calls /session/claim — the bridge
+    # inside the session does — so the granted seat has to be readable by the
+    # one join a launcher owns: the session key it generated.
+    session_key: str | None = Field(default=None, max_length=MAX_ADDR)
 
 
 class SeatListResponse(BaseModel):

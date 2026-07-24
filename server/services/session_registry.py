@@ -392,8 +392,23 @@ async def seat_alias(session_key: str, project: str, alias: str) -> dict:
     return {"seat": mine["key"].removeprefix("seat/"), "aliases": aliases}
 
 
-async def seat_list(project: str | None = None) -> list[dict]:
-    """Allocated seats, freshest first. The registry's read side."""
+async def seat_list(
+    project: str | None = None,
+    session_key: str | None = None,
+) -> list[dict]:
+    """Allocated seats, freshest first. The registry's read side.
+
+    ``session_key`` answers "what address does the session I spawned actually
+    hold?" — the LAUNCHER's question. A launcher never calls /session/claim
+    (the bridge inside the session does), so the claim response cannot reach
+    it; the key it generated is the only join it has, and it is the one thing
+    it is certain of.
+
+    That matters because a launcher that reconstructs the seat locally is
+    guessing: the server may grant an ordinal when a peer already holds the
+    preferred address, and the guess then misses SILENTLY. Reading the granted
+    seat is the difference between knowing and inferring.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -401,10 +416,12 @@ async def seat_list(project: str | None = None) -> list[dict]:
             SELECT key, project, metadata, last_used_at FROM memories
             WHERE namespace = $1 AND scope = $2
               AND ($3::text IS NULL OR project = $3)
+              AND ($4::text IS NULL OR metadata->>'session_key' = $4)
             ORDER BY last_used_at DESC
             """,
             SEAT_NAMESPACE, SEAT_SCOPE,
             project.strip().lower() if project else None,
+            session_key.strip().lower() if session_key else None,
         )
     now = datetime.now(timezone.utc)
     out = []

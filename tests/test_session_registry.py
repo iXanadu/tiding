@@ -248,3 +248,45 @@ async def test_seats_endpoint_reports_liveness(client, db_pool):
     assert entry["reclaimable"] is False
     assert entry["session_key"] == "visible"
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_launcher_can_read_back_the_granted_seat(client, db_pool):
+    """A launcher never calls /session/claim — the bridge inside the session
+    does — so the granted seat must be readable by the one join a launcher
+    owns: the session key it generated.
+
+    Without this a launcher reconstructs the seat locally and misses SILENTLY
+    whenever an ordinal was granted (AgentBeast's provider-badge map keys on
+    exactly such a reconstruction, and an unbadged row reads as a broken
+    client). Requested by agentbeast 2026-07-24, inside the deploy window.
+    """
+    await _clear(db_pool)
+    # Two sessions want the same preferred seat; the second is granted -2.
+    await _claim(client, "launcher-key-a", preferred_seat=f"{PROJ}-claude")
+    second = (await _claim(
+        client, "launcher-key-b", preferred_seat=f"{PROJ}-claude"
+    )).json()
+    assert second["seat"] == f"{PROJ}-claude-2"
+
+    r = await client.post("/session/seats", json={"session_key": "launcher-key-b"})
+    entries = r.json()["seats"]
+    assert len(entries) == 1, "session_key must be a direct lookup, not a scan"
+    assert entries[0]["seat"] == f"{PROJ}-claude-2"
+    assert entries[0]["session_key"] == "launcher-key-b"
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_readback_exposes_aliases_too(client, db_pool):
+    """Anything keyed on a session's addresses must key on the seat AND its
+    role aliases — a role tail is not an ordinal, and guessing which is which
+    is how you get a confidently wrong answer."""
+    await _clear(db_pool)
+    await _claim(client, "aliased")
+    await client.post("/session/alias", json={
+        "session_key": "aliased", "project": PROJ, "alias": "auditor",
+    })
+    r = await client.post("/session/seats", json={"session_key": "aliased"})
+    assert f"{PROJ}-auditor" in r.json()["seats"][0]["aliases"]
+    await _clear(db_pool)
