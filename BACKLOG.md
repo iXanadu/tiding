@@ -7,14 +7,13 @@
 
 ## Now (blocking or next up)
 
-- **SEAT-3** Run the live acceptance test for the session registry. Server is
-  DEPLOYED (prod at 0d41cf6, allocation proven live via probe: two claims for
-  one preferred seat returned `-claude` and `-claude-2`). What is NOT yet
-  observed end to end: two real sessions claiming in one folder, the roster
-  showing two distinct seats, a DM waking each independently, and AB's hub
-  enumerating both by GRANTED seat so AB-app renders two rows. The last link
-  (hub enumeration keyed on the granted seat, not a recomputed one) is AB's
-  and is the gating item. Design:
+- **SEAT-3** Close out the session registry. Server DEPLOYED (prod 0d41cf6);
+  first live exercise PASSED — two Claude sessions in one folder claimed
+  distinct seats (`agentbeast-claude` + `agentbeast-claude-2`) at startup with
+  no human step, verified in engram's own registry, and AB's hub enumerates
+  both by granted seat. Left to close: (a) the wake half — confirm a DM to
+  `-2` wakes only that session; (b) AB-app's picker screenshot as the visual
+  confirmation. Both in flight. Design:
   [docs/design/session-registry.md](docs/design/session-registry.md).
 
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
