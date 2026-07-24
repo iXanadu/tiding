@@ -22,10 +22,41 @@
   session dies. Mark entries past grace `presumed-dead` and let the cleanup
   task drop rows past a retention horizon.
 
+- **MEM-1** `POST /memory/set` gives no signal that a write overwrote an
+  existing value — the response is byte-identical for a create and for a
+  clobber (blind `ON CONFLICT DO UPDATE`; `MemorySetResponse` carries no
+  created/updated field). Two sessions writing one key silently destroy each
+  other's value with both seeing "Stored". Same shape as the hardened
+  bulk-delete: a destructive outcome with no signal. Return created vs
+  updated. Small, independent of any handoff design, and worth doing on its
+  own merits.
+
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
   recovery and anything written since the last dump is unrecoverable.
   Decide whether the operational cost is worth closing that window.
+
+## Needs decision
+
+- **MEM-2** Key-prefix enumeration — a deterministic "list every key under
+  `wip/`" that returns ALL matches in key order with no embedding involved.
+  `memory_get` is exact-match, `memory_search` is semantic, and there is
+  nothing in between; measured live, handoff notes score 0.51 while an
+  unrelated five-month-old note scores 0.45, so "read all the open handoffs"
+  is not reliably expressible and a missing one is indistinguishable from
+  none. Would honor namespace read perms exactly as search does. Requested by
+  AgentBeast 2026-07-24; engram's own `/startup` wants it too (it reads exact
+  keys and is blind to sibling `wip/*` by construction). **Gated on the
+  owner's multi-session handoff design** — needed if handoffs get distinct
+  keys per session, unnecessary if one overwritten `wip/current` stays.
+
+- **MEM-3** A lifecycle verb for memories — resolve/supersede, copying the
+  inbox's existing pattern rather than inventing one (same table, same
+  metadata status field; a row with no status reads as live, so it is
+  back-compatible). Today memories have only create and delete, so the sole
+  way to stop stale handoffs accumulating is `memory_forget`, which destroys
+  the history. "Delete is the only lifecycle verb" is a shape worth removing
+  after the 2026-07-23 incident. Same gate as MEM-2.
 
 ## Next (committed, not started)
 
