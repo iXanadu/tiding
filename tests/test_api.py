@@ -495,3 +495,33 @@ async def test_conditional_write_is_positively_confirmed(client):
         "a client must be able to confirm the guard ran, not infer it"
     )
     await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_a_misspelled_if_match_fails_closed(client):
+    """A typo'd guard field must report UNGUARDED, not silently pass.
+
+    `if_matched` (note the 'ed') is an unknown field, so pydantic drops it and
+    the write is unconditional. The signal must say so — because the caller's
+    one-line check (`if_match_applied is True`) is then False and it declines
+    to merge. Loud-but-broken beats silent-and-wrong.
+
+    This is why the signal is derived from what the server ACTUALLY DID rather
+    than from what the request appeared to ask for: it reports the truth for
+    every reason the guard might not have run — old server, typo, or omission
+    — without needing to enumerate them. Traced by agentbeast 2026-07-24;
+    pinned here so it stays true.
+    """
+    base = {"namespace": "test", "key": "mem4/typo", "scope": "machine",
+            "user_id": "probe"}
+    first = await client.post("/memory/set", json={**base, "value": "v1"})
+    assert first.status_code == 200
+
+    typo = await client.post("/memory/set", json={
+        **base, "value": "v2", "if_matched": first.json()["version"],
+    })
+    assert typo.status_code == 200, "unknown fields are ignored, not rejected"
+    assert typo.json()["if_match_applied"] is False, (
+        "a typo'd guard field must report that no guard ran"
+    )
+    await client.post("/memory/forget", json=base)
