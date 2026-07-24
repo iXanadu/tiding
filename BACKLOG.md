@@ -29,6 +29,17 @@
 
 ## Needs decision
 
+- **SEC-7** Decide whether `/memory/set` should reject unknown fields
+  (`extra="forbid"`, as `/admin/bulk-delete` already does). The write path now
+  carries a safety flag (`if_match`), and a MISSPELLED one (`if_matched`) is
+  silently ignored today — the write proceeds unguarded while the caller
+  believes it is protected, which is the shape that cost 1733 rows. The
+  server-version case is already covered by `if_match_applied`; this is the
+  typo case. **The tradeoff is why it needs a decision:** engram is public,
+  and forbidding extras is a breaking change — any adopter's client sending a
+  stray field starts getting 422 on upgrade. Stricter contract vs. a silent
+  upgrade break for unknown consumers.
+
 - **MEM-2** Key-prefix enumeration — a deterministic "list every key under
   `wip/`" that returns ALL matches in key order with no embedding involved.
   `memory_get` is exact-match, `memory_search` is semantic, and there is
