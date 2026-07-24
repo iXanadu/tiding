@@ -1,5 +1,7 @@
 """Integration tests for the HTTP API endpoints."""
 
+import asyncio
+
 import pytest
 
 
@@ -368,3 +370,103 @@ async def test_distinct_keys_do_not_report_an_overwrite(client):
     assert b.json()["created"] is True
     for k in ("mem1/a", "mem1/b"):
         await client.post("/memory/forget", json={**base, "key": k})
+
+
+@pytest.mark.asyncio
+async def test_if_match_allows_the_write_when_unchanged(client):
+    """MEM-4: the normal read-modify-write path succeeds."""
+    base = {"namespace": "test", "key": "mem4/doc", "scope": "machine",
+            "user_id": "probe"}
+    first = await client.post("/memory/set", json={**base, "value": "## a\nv1"})
+    v = first.json()["version"]
+    assert v
+
+    ok = await client.post(
+        "/memory/set", json={**base, "value": "## a\nv2", "if_match": v}
+    )
+    assert ok.status_code == 200
+    assert ok.json()["version"] != v, "version must move when the value changes"
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_if_match_refuses_a_lost_update(client):
+    """The motivating case: two agents rewrite their own section of one doc.
+
+    Both read the same version. The first write wins. The second must be
+    REFUSED — under a blind write it would silently discard the first agent's
+    section, which is the exact loss this guard exists to prevent.
+    """
+    base = {"namespace": "test", "key": "mem4/shared", "scope": "machine",
+            "user_id": "probe"}
+    start = await client.post("/memory/set", json={**base, "value": "## a\n## b"})
+    stale = start.json()["version"]
+
+    winner = await client.post(
+        "/memory/set", json={**base, "value": "## a (edited)\n## b", "if_match": stale}
+    )
+    assert winner.status_code == 200
+
+    loser = await client.post(
+        "/memory/set", json={**base, "value": "## a\n## b (edited)", "if_match": stale}
+    )
+    assert loser.status_code == 409
+    detail = loser.json()["detail"]
+    assert detail["error"] == "version_conflict"
+    # The 409 must carry the current value so the loser can re-merge without
+    # another round trip.
+    assert detail["current_value"] == "## a (edited)\n## b"
+    assert detail["current_version"] == winner.json()["version"]
+
+    # The winner's edit survived — the refused write changed nothing.
+    got = await client.post("/memory/get", json=base)
+    assert got.json()["memory"]["value"] == "## a (edited)\n## b"
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conditional_writes_only_one_wins(client):
+    """Under genuine concurrency exactly one conditional write may succeed.
+
+    The check and the write share a transaction with the row locked; without
+    that, both writers see a matching version and both proceed — the guard
+    would have the very race it exists to close.
+    """
+    base = {"namespace": "test", "key": "mem4/race", "scope": "machine",
+            "user_id": "probe"}
+    start = await client.post("/memory/set", json={**base, "value": "seed"})
+    v = start.json()["version"]
+
+    results = await asyncio.gather(*(
+        client.post("/memory/set", json={**base, "value": f"writer-{i}", "if_match": v})
+        for i in range(8)
+    ))
+    codes = [r.status_code for r in results]
+    assert codes.count(200) == 1, f"exactly one writer may win, got {codes}"
+    assert codes.count(409) == 7
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_if_match_empty_string_asserts_absence(client):
+    """`if_match=""` means "I believe this key is unused" — create-only."""
+    base = {"namespace": "test", "key": "mem4/create-only", "scope": "machine",
+            "user_id": "probe"}
+    made = await client.post("/memory/set", json={**base, "value": "mine", "if_match": ""})
+    assert made.status_code == 200
+
+    again = await client.post("/memory/set", json={**base, "value": "yours", "if_match": ""})
+    assert again.status_code == 409, "the row exists now; absence must not be asserted twice"
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_omitting_if_match_is_unconditional(client):
+    """Back-compat: every existing caller keeps today's behavior exactly."""
+    base = {"namespace": "test", "key": "mem4/compat", "scope": "machine",
+            "user_id": "probe"}
+    await client.post("/memory/set", json={**base, "value": "one"})
+    second = await client.post("/memory/set", json={**base, "value": "two"})
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    await client.post("/memory/forget", json=base)

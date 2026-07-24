@@ -65,6 +65,7 @@ class MemoryClient:
         project_dir: str | None = None,
         listen_set: list[str] | None = None,
         reader_identity: str | None = None,
+        if_match: str | None = None,
     ) -> dict:
         body: dict = {
             "namespace": namespace,
@@ -80,6 +81,10 @@ class MemoryClient:
             body["listen_set"] = listen_set
         if reader_identity:
             body["reader_identity"] = reader_identity
+        if if_match is not None:
+            # MEM-4: make the write conditional on the value being unchanged
+            # since we read it. Empty string asserts the key is unused.
+            body["if_match"] = if_match
         return await self._request(
             "POST",
             "/memory/set",

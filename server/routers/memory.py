@@ -49,6 +49,7 @@ from server.services.memory_service import (
     INBOX_NAMESPACE,
     INBOX_SCOPE,
     PRESENCE_SCOPE,
+    VersionConflict,
     inbox_ack,
     inbox_archive,
     inbox_banner,
@@ -107,7 +108,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
         metadata["cwd"] = cwd
     owner = principal["name"] if principal else None
     try:
-        key, created = await memory_set(
+        key, created, version = await memory_set(
             namespace=req.namespace,
             key=req.key,
             value=req.value,
@@ -119,6 +120,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             expiration_days=req.expiration_days,
             metadata=metadata or None,
             owner=owner,
+            if_match=req.if_match,
         )
         banner = None
         if req.listen_set:
@@ -138,8 +140,28 @@ async def set_memory(req: MemorySetRequest, request: Request):
             key=key,
             namespace=req.namespace,
             created=created,
+            version=version,
             inbox_banner=banner,
         )
+    except VersionConflict as e:
+        # 409 carries the CURRENT value so the caller can re-merge its section
+        # immediately, without a second round trip to discover what it lost
+        # the race to. This is the whole point of the guard: the losing write
+        # is refused, not silently applied over someone else's edit.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "version_conflict",
+                "message": (
+                    "the stored value changed since you read it — re-read, "
+                    "re-apply your change, and retry with the new version"
+                ),
+                "current_value": e.current_value,
+                "current_version": e.current_version,
+            },
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("memory_set failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")

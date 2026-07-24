@@ -52,6 +52,12 @@ class MemorySetRequest(_NamespacedRequest):
     force_new: bool = False
     listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
     reader_identity: str | None = Field(default=None, max_length=MAX_ADDR)
+    # MEM-4 optimistic concurrency. Set to the `version` you read and the
+    # write proceeds only if the stored value is unchanged — the guard for a
+    # read-modify-write, e.g. several agents each rewriting their own section
+    # of one shared handoff. `""` asserts the row does not exist yet. Omit for
+    # unconditional write (the default, unchanged behavior).
+    if_match: str | None = Field(default=None, max_length=64)
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -118,6 +124,10 @@ class MemoryItem(BaseModel):
     tags_search: str
     score: float | None = None
     created_at: datetime | None = None
+    # MEM-4: content hash of `value`. Pass it back as `if_match` on a later
+    # write to make that write conditional — the read-modify-write guard for
+    # callers that edit part of a shared document.
+    version: str | None = None
 
 
 class InboxBanner(BaseModel):
@@ -139,6 +149,9 @@ class MemorySetResponse(BaseModel):
     # and the loser could not tell. Clients should surface an overwrite that
     # the caller may not have intended.
     created: bool | None = None
+    # MEM-4: content hash of what is now stored. Pass it as `if_match` on a
+    # follow-up write to make that write conditional.
+    version: str | None = None
     inbox_banner: InboxBanner | None = None
 
 

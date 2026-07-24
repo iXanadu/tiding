@@ -1,3 +1,5 @@
+import contextlib
+import hashlib
 import json
 import re
 import uuid
@@ -36,6 +38,47 @@ _TOOLCALL_TRAILER_RE = re.compile(
     r"\s*(?:</body>|</invoke>|</parameter>)+\s*$",
     re.IGNORECASE,
 )
+
+
+# --- Optimistic concurrency (MEM-4) --------------------------------------
+#
+# A "version" is a content hash of the stored value. Callers that do a
+# read-modify-write (the motivating case: several agents each rewriting their
+# own SECTION of one shared handoff document) pass the version they read as
+# ``if_match``; a mismatch means someone else wrote in between and the write is
+# refused rather than silently discarding their edit.
+#
+# Why a content hash rather than the two obvious alternatives:
+#   · a TIMESTAMP cannot work — ``memory_get`` bumps ``last_used_at`` on every
+#     read, so a concurrent READER would invalidate the token and produce
+#     conflicts that aren't conflicts.
+#   · a version COLUMN would need a schema migration; engram is public and a
+#     hash needs none. It also has a better property: two writers producing
+#     identical content don't conflict, because there is nothing to lose.
+#
+# Truncated to 16 hex chars: this guards against accidental clobbering by
+# cooperating agents, not against an adversary engineering a collision.
+_VERSION_LEN = 16
+
+
+def compute_version(value: str | None) -> str:
+    """The version token for a stored value (``''`` for a missing row)."""
+    if value is None:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:_VERSION_LEN]
+
+
+class VersionConflict(Exception):
+    """Raised when ``if_match`` doesn't match the stored value.
+
+    Carries the CURRENT value so the caller can re-merge immediately instead
+    of paying another round trip to find out what it lost the race to.
+    """
+
+    def __init__(self, current_value: str | None, current_version: str):
+        self.current_value = current_value
+        self.current_version = current_version
+        super().__init__("version mismatch")
 
 
 def _normalize_key_fields(
@@ -98,11 +141,18 @@ async def memory_set(
     expiration_days: int = 0,
     metadata: dict | None = None,
     owner: str | None = None,
-) -> tuple[str, bool]:
+    if_match: str | None = None,
+) -> tuple[str, bool, str]:
     """Store or update a memory with its embedding.
 
-    Returns ``(key, created)`` — ``created=False`` means this write OVERWROTE
-    an existing value.
+    Returns ``(key, created, version)`` — ``created=False`` means this write
+    OVERWROTE an existing value; ``version`` is the content hash of what is
+    now stored, for a caller that intends to read-modify-write it later.
+
+    ``if_match`` (MEM-4) makes the write conditional: it proceeds only if the
+    stored value still hashes to that version, else ``VersionConflict`` is
+    raised carrying the current value. Pass ``""`` to assert the row does not
+    exist yet. Omit it for today's unconditional behavior.
 
     Why the second element exists (MEM-1): memory identity is
     ``(namespace, key, scope, user_id, project)``, which deliberately contains
@@ -130,12 +180,53 @@ async def memory_set(
     metadata_json = json.dumps(metadata) if metadata else None
 
     async with pool.acquire() as conn:
-        # ``xmax = 0`` is the standard way to tell an INSERT from an upsert's
-        # UPDATE branch: on a freshly inserted row the deleting-transaction id
-        # is zero, on an updated row it carries the conflicting transaction.
-        # It costs nothing extra — no second query, no race window.
-        row = await conn.fetchrow(
-            """
+        # The if_match check and the write MUST be one transaction, with the
+        # row locked — otherwise the guard has the very race it exists to
+        # close (two writers both read a matching version, both proceed, one
+        # is lost). SELECT ... FOR UPDATE serialises concurrent conditional
+        # writers on the same key; the row is held only for this statement
+        # pair, never across a client's think-time.
+        async with conn.transaction() if if_match is not None else _null_ctx():
+            if if_match is not None:
+                current = await conn.fetchval(
+                    """
+                    SELECT value FROM memories
+                    WHERE namespace = $1 AND key = $2 AND scope = $3
+                      AND user_id IS NOT DISTINCT FROM $4
+                      AND project IS NOT DISTINCT FROM $5
+                    FOR UPDATE
+                    """,
+                    namespace, key, scope, user_id, project,
+                )
+                if compute_version(current) != if_match:
+                    raise VersionConflict(current, compute_version(current))
+            row = await _upsert_memory(
+                conn, namespace, key, value, scope, user_id, project, tags,
+                tags_search, embedding, search_text, expires_at,
+                metadata_json, owner,
+            )
+    return key, bool(row["created"]), compute_version(value)
+
+
+@contextlib.asynccontextmanager
+async def _null_ctx():
+    """No-op async context — keeps the unconditional path transaction-free."""
+    yield
+
+
+async def _upsert_memory(
+    conn, namespace, key, value, scope, user_id, project, tags, tags_search,
+    embedding, search_text, expires_at, metadata_json, owner,
+):
+    """The upsert itself. Returns a row with a ``created`` flag.
+
+    ``xmax = 0`` is the standard way to tell an INSERT from an upsert's UPDATE
+    branch: on a freshly inserted row the deleting-transaction id is zero, on
+    an updated row it carries the conflicting transaction. It costs nothing
+    extra — no second query, no race window.
+    """
+    return await conn.fetchrow(
+        """
             INSERT INTO memories (namespace, key, value, scope, user_id, project, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
             ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE SET
@@ -164,7 +255,6 @@ async def memory_set(
             metadata_json,
             owner,
         )
-    return key, bool(row["created"])
 
 
 async def memory_get(
@@ -207,7 +297,11 @@ async def memory_get(
                 user_id,
                 project,
             )
-            return MemoryItem(**dict(row))
+            item = dict(row)
+            # MEM-4: hand back the version so a caller that intends to
+            # read-modify-write this value can pass it as if_match.
+            item["version"] = compute_version(item.get("value"))
+            return MemoryItem(**item)
     return None
 
 
