@@ -24,7 +24,7 @@ migration:
     user_id   = 'global'
     project   = <bare project name>
     key       = 'seat/<seat>'      — one row per allocated address
-    metadata  = {session_key, session_nonce, provider, host, aliases, ...}
+    metadata  = {session_key, session_nonce, provider, host, ...}
 
 ``last_used_at`` is the claim heartbeat. Seat rows carry NO embedding (the
 column is nullable and a seat is never semantically searched), so a claim is a
@@ -158,14 +158,13 @@ async def _try_takeover(conn, seat: str, project: str, meta: dict,
 
 
 def _meta(session_key: str, session_nonce: str | None, provider: str,
-          host: str | None, aliases: list[str] | None = None) -> dict:
+          host: str | None) -> dict:
     return {
         "kind": "seat",
         "session_key": session_key,
         "session_nonce": session_nonce,
         "provider": provider,
         "host": host,
-        "aliases": aliases or [],
         "claimed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -235,7 +234,6 @@ async def seat_claim(
                 # Same process, or the previous holder is no longer live: a
                 # genuine restart of the same logical session. Keep the seat.
                 seat = held["key"].removeprefix("seat/")
-                meta["aliases"] = held_md.get("aliases") or []
                 await conn.execute(
                     """
                     UPDATE memories SET metadata = $1::jsonb, last_used_at = NOW()
@@ -289,7 +287,6 @@ async def seat_claim(
             if await _has_undelivered_mail(conn, seat):
                 continue  # R8: never hand a stranger someone else's mail
 
-            meta["aliases"] = []
             if await _try_takeover(conn, seat, project, meta,
                                    older_than=live_cutoff):
                 return {
@@ -329,67 +326,13 @@ async def seat_release(session_key: str, project: str) -> str | None:
     return row["key"].removeprefix("seat/") if row else None
 
 
-async def seat_alias(session_key: str, project: str, alias: str) -> dict:
-    """Bind a ROLE address (``<project>-<alias>``) to this session's seat.
-
-    Additive, never a rename. Two reasons the seat must stay:
-      - peers already hold the seat address; renaming invalidates it
-      - roles change mid-session ("you take testing now") while the seat must
-        stay stable so the session's address never moves under it
-
-    Uniqueness is enforced against the same registry, so two sessions cannot
-    both answer to ``-orchestrator``.
-    """
-    project = (project or "").strip().lower()
-    alias = (alias or "").strip().lower()
-    if not alias:
-        raise ValueError("alias is required")
-    full = alias if alias.startswith(f"{project}-") else f"{project}-{alias}"
-
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        mine = await conn.fetchrow(
-            """
-            SELECT key, metadata FROM memories
-            WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND project = $4
-              AND metadata->>'session_key' = $5
-            """,
-            SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, session_key,
-        )
-        if not mine:
-            raise ValueError(
-                "no seat held by this session_key — claim a seat before "
-                "declaring a role alias"
-            )
-        taken = await conn.fetchrow(
-            """
-            SELECT key FROM memories
-            WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND project = $4
-              AND (key = $5 OR metadata->'aliases' ? $6)
-            """,
-            SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
-            f"seat/{full}", full,
-        )
-        if taken and taken["key"] != mine["key"]:
-            raise ValueError(
-                f"role address {full!r} is already held by another session in "
-                f"this project — ask the roster who has it"
-            )
-        md = _md(mine)
-        aliases = md.get("aliases") or []
-        if full not in aliases:
-            aliases.append(full)
-        md["aliases"] = aliases
-        await conn.execute(
-            """
-            UPDATE memories SET metadata = $1::jsonb, last_used_at = NOW()
-            WHERE namespace = $2 AND scope = $3 AND user_id = $4
-              AND project = $5 AND key = $6
-            """,
-            json.dumps(md), SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
-            project, mine["key"],
-        )
-    return {"seat": mine["key"].removeprefix("seat/"), "aliases": aliases}
+# NOTE (2026-07-24, Rob): no role-as-address. A role is not unique and not
+# provider-stable — "engram-tester" for grok and "engram-tester" for claude
+# collide, which is the exact two-bodies-one-identity bug seats exist to kill.
+# Roles are assigned at HUDDLE time to whichever seats the owner picked, and
+# live in the orchestration layer (AgentBeast), never in an engram address.
+# Addressing is two layers only: the project GROUP and the unique provider-
+# discriminated SEAT. A seat_alias() lived here briefly; it was the mistake.
 
 
 async def seat_list(
@@ -433,7 +376,6 @@ async def seat_list(
             "project": r["project"],
             "provider": md.get("provider"),
             "host": md.get("host"),
-            "aliases": md.get("aliases") or [],
             "session_key": md.get("session_key"),
             "age_seconds": round(age, 1),
             "is_live": age < SEAT_LIVE_SECONDS,

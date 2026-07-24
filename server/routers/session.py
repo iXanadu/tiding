@@ -14,8 +14,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.dependencies import check_namespace_access, get_current_principal
 from server.models import (
-    SeatAliasRequest,
-    SeatAliasResponse,
     SeatClaimRequest,
     SeatClaimResponse,
     SeatEntry,
@@ -26,7 +24,6 @@ from server.models import (
 )
 from server.services.session_registry import (
     SEAT_NAMESPACE,
-    seat_alias,
     seat_claim,
     seat_list,
     seat_release,
@@ -69,8 +66,8 @@ async def claim_seat(req: SeatClaimRequest, request: Request):
         f"address '{req.project}' (group mail still reaches you). "
         f"Your watcher MUST resolve the same seat — if it was armed before "
         f"this claim it will pick the seat up from the seat file on its next "
-        f"poll. Declare a role with /session/alias once you know it; the role "
-        f"is an ADDITIONAL address, not a rename."
+        f"poll. This seat is your whole address; roles (tester, orchestrator) "
+        f"are assigned in the huddle, not encoded here."
     )
     if result.get("warning"):
         guidance = f"⛔ {result['warning']}\n\n{guidance}"
@@ -100,26 +97,6 @@ async def release_seat(req: SeatReleaseRequest, request: Request):
     return SeatReleaseResponse(status="ok", released=released)
 
 
-@router.post("/alias", response_model=SeatAliasResponse)
-async def alias_seat(req: SeatAliasRequest, request: Request):
-    """Bind a ROLE address to this session, in addition to its seat.
-
-    Ordinals guarantee uniqueness but carry no meaning; a role carries meaning
-    but cannot be known at spawn. Declaring it separately means never having to
-    choose between the two.
-    """
-    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "write")
-    try:
-        result = await seat_alias(req.session_key, req.project, req.alias)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except Exception:
-        logger.exception("seat_alias failed")
-        raise HTTPException(status_code=500, detail="internal error — see server logs")
-    return SeatAliasResponse(status="ok", seat=result["seat"],
-                             aliases=result["aliases"])
-
-
 @router.post("/seats", response_model=SeatListResponse)
 async def list_seats(req: SeatListRequest, request: Request):
     """Who holds which address. The registry's read side.
@@ -127,8 +104,9 @@ async def list_seats(req: SeatListRequest, request: Request):
     Pass ``session_key`` for a launcher's direct lookup — "what address did the
     session I spawned actually get?" — so a launcher reads the granted seat
     instead of reconstructing it and silently missing when an ordinal was
-    granted. Each entry also carries ``aliases``, so anything keyed on a
-    session's addresses should key on the seat AND its aliases.
+    granted. The seat is the whole address: there are no role aliases (a role
+    is not unique or provider-stable, so it is never an address — it lives in
+    the huddle/orchestration layer).
     """
     check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
     try:

@@ -48,14 +48,19 @@ Three Claude sessions in one folder get `projgamma-claude`,
 `projgamma` group, so broadcasts reach every one of them. Before this they all
 computed the same name, shared ack-state, and **could not wake each other**.
 
+Addressing is exactly two layers: the project **group** (everyone) and the
+unique provider-discriminated **seat** (exactly one session). There is no
+third. A role — tester, orchestrator, implementer — is **not** an address: it
+is not unique (you might ask both grok and claude to test) and not
+provider-stable, so a role-as-address reintroduces the very collision seats
+kill. Roles are how you describe *why* you want several agents; you assign them
+in the **huddle** to whichever seats you picked, and the huddle thread carries
+that conversation. The seat stays pure plumbing.
+
 - **`session_key`** is stable per session (a launcher's, or derived from the
   harness process). Re-claiming with it returns the *same* seat, so a bridge
   restart never moves a running session's address.
 - **`preferred_seat`** is a request, not an assignment — granted when free.
-- **Roles** (`POST /session/alias`, e.g. `orchestrator`) add
-  `projgamma-orchestrator` as an *extra* address. Ordinals are unique but
-  meaningless; roles are meaningful but unknown at spawn, so they are separate
-  layers and you never choose between them.
 - **`POST /session/release`** frees a seat immediately; otherwise it is
   reclaimed after a grace period — but **never** while undelivered mail is
   addressed to it.
@@ -71,10 +76,14 @@ curl -s ... -d '{"session_key":"claude-ab-projgamma"}' \
 ```
 
 Anything keyed on a session's address (a UI badge map, a router) must key on
-the **seat and its aliases**, both read from here. Recomputing
-`<project>-<provider>` locally is a guess that misses silently the moment an
-ordinal is granted — and a tail like `-2` is only an ordinal by coincidence;
-`-auditor` is a role. Absent beats confidently wrong.
+the **seat** read from here, and take provider as the **field** it returns —
+never parse it off the string. Recomputing `<project>-<provider>` locally is a
+guess that misses silently the moment an ordinal is granted, and a `-2` tail is
+only an ordinal by coincidence. Read the truth; don't infer it.
+
+A launcher's UI should **show the ordinal** when present: `projgamma-claude`
+and `projgamma-claude-2` are different sessions, and a picker that renders both
+as "projgamma (claude)" hides the only thing that tells them apart.
 
 The MCP bridge does all of this automatically. Design and rationale:
 [docs/design/session-registry.md](design/session-registry.md).

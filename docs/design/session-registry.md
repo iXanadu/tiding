@@ -1,9 +1,9 @@
 # Session registry: allocating addresses instead of computing them
 
-Status: **Phase 0 + 1 implemented and committed, NOT yet deployed** (2026-07-24).
+Status: **Phase 1 implemented and committed, NOT yet deployed** (2026-07-24).
 Extends the seat work shipped 2026-07-21..23 (SEAT-1, SEAT-2, seat-collision
-detection). Phases 2–3 (roster lifecycle, role-alias ergonomics in the bridge)
-remain open; the alias *endpoint* ships in Phase 1.
+detection). Phase 2 (roster lifecycle) remains open. There is no role-alias
+layer — see "Roles are not a third layer" below.
 
 ## The one-sentence problem
 
@@ -54,27 +54,40 @@ Two further facts decide the design:
 R8 outranks R7. Accreting numbers is untidy; delivering a message to the wrong
 agent is a correctness failure.
 
-## Design: three layers
+## Design: two layers (and why not three)
 
 ```
-Layer 0  GROUP    engram                  every session in the project   (unchanged)
-Layer 1  SEAT     engram-claude-2         exactly one session            (NEW: allocated)
-Layer 2  ROLE     engram-orchestrator     exactly one session, optional  (NEW: declared)
+GROUP   engram                every session in the project   (unchanged)
+SEAT    engram-claude-2       exactly one session            (NEW: allocated)
 ```
 
-**Layer 0** is Rob's "global listening" and already works — `compute_identity`
+**GROUP** is Rob's "global listening" and already works — `compute_identity`
 puts the bare project name in every listen_set, seat or no seat.
 
-**Layer 1** guarantees uniqueness *without needing to know anything*, so it can
-be assigned at spawn.
+**SEAT** guarantees uniqueness *without needing to know anything*, so it can be
+assigned at spawn. It is provider-discriminated (`-claude`, `-grok`) and
+ordinal-suffixed when a peer already holds the base (`-2`), and that is the
+*whole* address.
 
-**Layer 2** carries meaning, which cannot be known at spawn — AB's own docstring
-says so: *"a role-based seat would need a role AB doesn't know at spawn."*
+### Roles are not a third layer (Rob, 2026-07-24)
 
-Splitting 1 from 2 is the crux: **you never have to choose between "unique" and
-"meaningful."** A role is an *additional* listen address, never a rename —
-because a rename invalidates addresses peers already hold, and roles change
-mid-session while the seat must stay stable (R3).
+An earlier draft added `ROLE` (`engram-orchestrator`) as an optional third
+address. That was wrong, for reasons that also explain why a role can't be a
+seat:
+
+- **A role is not unique.** You might ask *both* grok and claude to test.
+  `engram-tester` would then name two sessions — the exact two-bodies-one-
+  identity collision seats exist to kill, reintroduced through a new door.
+- **A role is not provider-stable.** The alias carried no provider, so it
+  couldn't even distinguish the grok tester from the claude tester.
+- **A role is assigned late, to a chosen seat.** The owner picks specific seats
+  in a huddle ("you — `engram-claude-2` — test") and assigns the role there.
+  The binding lives in the **huddle/orchestration layer (AgentBeast)**, which
+  already knows role→seat; the addressing layer never needs it.
+
+Roles are the vocabulary for *why* you want several agents in a folder. That
+vocabulary belongs in the huddle, not in a listen address. Addressing stays two
+layers; the seat is pure plumbing.
 
 ## The claim protocol
 
@@ -191,20 +204,18 @@ existing cleanup task drop presence rows past a retention horizon.
 
 | Party | Change |
 |---|---|
-| **engram** | registry rows, claim/release/alias endpoints, bridge claim-on-startup, watcher ancestor-walk, roster lifecycle |
-| **AgentBeast** | *nothing mandatory.* Keeps injecting `SESSION_KEY`/`PROVIDER`/`CHANNELS`. Its `INBOX_IDENTITY` becomes a **preference** the server grants or supersedes |
+| **engram** | registry rows, claim/release/seats endpoints, bridge claim-on-startup, watcher ancestor-walk, roster lifecycle |
+| **AgentBeast** | *nothing mandatory* for addressing. Keeps injecting `SESSION_KEY`/`PROVIDER`/`CHANNELS`. Its `INBOX_IDENTITY` becomes a **preference** the server grants or supersedes. One UI change: **show the ordinal** (`-2`) in the session picker and read the granted seat via `/session/seats?session_key=…` instead of recomputing it |
 | **Rob** | nothing — hand-launched sessions self-allocate |
 
-## Rollout — four independently shippable, revertible phases
+## Rollout — three independently shippable, revertible phases
 
-- **Phase 0** — fix the `derive_listen_set` guidance bug (below). Registry rows
-  + endpoints exist; nobody claims yet. No behaviour change.
-- **Phase 1** — bridge claims at startup; env seat becomes a preference; watcher
-  ancestor-walk. *This is the phase that closes Rob's three-Claude case.*
+- **Phase 1** (shipped) — bridge claims at startup; env seat becomes a
+  preference; watcher ancestor-walk; launcher readback; the `derive_listen_set`
+  guidance fix (ADDR-1). *This is the phase that closes Rob's three-Claude case.*
 - **Phase 2** — roster lifecycle (`presumed-dead`, reaping).
-- **Phase 3** — role aliases.
 
-Phase 1 is the whole payload. Phases 2–3 are hygiene and ergonomics.
+Phase 1 is the whole payload. Phase 2 is hygiene.
 
 ## Four holes found by attacking the design, and how each closes
 

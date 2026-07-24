@@ -679,33 +679,11 @@ class SeatReleaseResponse(BaseModel):
     released: str | None = None
 
 
-class SeatAliasRequest(BaseModel):
-    session_key: str = Field(max_length=MAX_ADDR)
-    project: str = Field(max_length=MAX_ADDR)
-    # The ROLE, e.g. "orchestrator". Bound as "<project>-<alias>" and ADDED to
-    # the session's listen_set — never a rename of the seat.
-    alias: str = Field(max_length=MAX_ADDR)
-
-    @field_validator("session_key", "project", "alias", mode="before")
-    @classmethod
-    def alias_not_empty(cls, v):
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("must be a non-empty string")
-        return v.strip().lower()
-
-
-class SeatAliasResponse(BaseModel):
-    status: str
-    seat: str
-    aliases: list[str] = []
-
-
 class SeatEntry(BaseModel):
     seat: str
     project: str | None = None
     provider: str | None = None
     host: str | None = None
-    aliases: list[str] = []
     session_key: str | None = None
     age_seconds: float
     is_live: bool

@@ -194,35 +194,16 @@ async def test_release_frees_the_ordinal_immediately(client, db_pool):
 
 
 @pytest.mark.asyncio
-async def test_role_alias_is_additive_and_unique(client, db_pool):
-    """Ordinals are unique but meaningless; roles are meaningful but unknown at
-    spawn. The alias is an EXTRA address so you never choose between them — and
-    a rename would invalidate the address peers already hold."""
-    await _clear(db_pool)
-    a = (await _claim(client, "lead")).json()
+async def test_no_role_alias_endpoint(client, db_pool):
+    """A role is NOT an address (Rob, 2026-07-24). It is not unique or
+    provider-stable — "engram-tester" for grok and for claude would collide,
+    the exact bug seats kill. Roles are assigned in the huddle to whichever
+    seats the owner picked; the addressing layer never carries them. The
+    endpoint that briefly bound "<project>-<role>" as an address is gone."""
     r = await client.post("/session/alias", json={
         "session_key": "lead", "project": PROJ, "alias": "orchestrator",
     })
-    assert r.status_code == 200
-    assert r.json()["seat"] == a["seat"]  # seat SURVIVES; alias is additional
-    assert f"{PROJ}-orchestrator" in r.json()["aliases"]
-
-    await _claim(client, "second")
-    clash = await client.post("/session/alias", json={
-        "session_key": "second", "project": PROJ, "alias": "orchestrator",
-    })
-    assert clash.status_code == 409
-    await _clear(db_pool)
-
-
-@pytest.mark.asyncio
-async def test_alias_requires_a_seat(client, db_pool):
-    await _clear(db_pool)
-    r = await client.post("/session/alias", json={
-        "session_key": "nobody", "project": PROJ, "alias": "tester",
-    })
-    assert r.status_code == 409
-    await _clear(db_pool)
+    assert r.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -278,15 +259,17 @@ async def test_launcher_can_read_back_the_granted_seat(client, db_pool):
 
 
 @pytest.mark.asyncio
-async def test_readback_exposes_aliases_too(client, db_pool):
-    """Anything keyed on a session's addresses must key on the seat AND its
-    role aliases — a role tail is not an ordinal, and guessing which is which
-    is how you get a confidently wrong answer."""
+async def test_readback_carries_provider_so_a_launcher_need_not_infer_it(
+    client, db_pool
+):
+    """The readback is what lets a badge map key on the granted seat AND read
+    the provider as a field, instead of parsing either off the address string —
+    a "-2" tail is an ordinal, a "-grok" tail is a provider, and nothing in the
+    string reliably tells them apart."""
     await _clear(db_pool)
-    await _claim(client, "aliased")
-    await client.post("/session/alias", json={
-        "session_key": "aliased", "project": PROJ, "alias": "auditor",
-    })
-    r = await client.post("/session/seats", json={"session_key": "aliased"})
-    assert f"{PROJ}-auditor" in r.json()["seats"][0]["aliases"]
+    await _claim(client, "badged", provider="grok")
+    r = await client.post("/session/seats", json={"session_key": "badged"})
+    entry = r.json()["seats"][0]
+    assert entry["provider"] == "grok"
+    assert entry["seat"].startswith(f"{PROJ}-grok")
     await _clear(db_pool)

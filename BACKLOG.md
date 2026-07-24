@@ -23,10 +23,6 @@
   session dies. Mark entries past grace `presumed-dead` and let the cleanup
   task drop rows past a retention horizon.
 
-- **SEAT-5** Bridge ergonomics for role aliases (registry Phase 3). The
-  `/session/alias` endpoint ships; there is no MCP tool for it yet, so a
-  session cannot declare "I am the orchestrator" without a raw HTTP call.
-
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
   recovery and anything written since the last dump is unrecoverable.

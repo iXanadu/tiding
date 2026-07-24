@@ -260,21 +260,6 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
-    async def session_alias(
-        self,
-        session_key: str,
-        project: str,
-        alias: str,
-        project_dir: str | None = None,
-    ) -> dict:
-        """Bind a ROLE address alongside this session's seat (SEAT-3)."""
-        return await self._request(
-            "POST",
-            "/session/alias",
-            json={"session_key": session_key, "project": project, "alias": alias},
-            headers=self._provenance_headers(project_dir),
-        )
-
     async def roster(
         self,
         project: str | None = None,
