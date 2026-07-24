@@ -7,13 +7,14 @@
 
 ## Now (blocking or next up)
 
-- **SEAT-6** Grok can't claim seats yet — grok sessions never get
-  `ENGRAM_SESSION_KEY`/`ENGRAM_PROVIDER` on AgentBeast's launch start path, so
-  they can't claim and their roster provider defaults to `claude`. Both
-  resolve with one upstream fix (AB's launcher env on the grok start path);
-  engram needs no change. Tracked here so the divergence isn't forgotten —
-  owner is AgentBeast. Not an engram instability: grok sessions keep their
-  pre-SEAT-3 launch identity, no regression.
+- **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
+  needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
+  AB's enumeration both report `provider=grok` correctly (AB fixed the
+  enumeration in `b82860a`). What remains: grok gets no `ENGRAM_SESSION_KEY`
+  on AB's launch *start* path, so a grok seat has no stable key across a
+  respawn (grok effort/model changes stop→respawn), meaning it can't reliably
+  re-claim the same seat the way Claude does. Not an engram instability and no
+  regression — grok works today on its launch-injected identity.
 
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
   released: the live roster carries entries days stale, all still reporting
