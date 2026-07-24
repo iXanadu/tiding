@@ -141,6 +141,11 @@ async def set_memory(req: MemorySetRequest, request: Request):
             namespace=req.namespace,
             created=created,
             version=version,
+            # Positive confirmation that the guard ran. A client MUST treat
+            # anything other than True as "not guarded" — on a server that
+            # predates MEM-4 this field is simply absent, which is precisely
+            # the case that would otherwise pass unguarded while looking safe.
+            if_match_applied=req.if_match is not None,
             inbox_banner=banner,
         )
     except VersionConflict as e:

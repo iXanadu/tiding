@@ -470,3 +470,28 @@ async def test_omitting_if_match_is_unconditional(client):
     assert second.status_code == 200
     assert second.json()["created"] is False
     await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_conditional_write_is_positively_confirmed(client):
+    """MEM-4 safety signal: the server states whether the guard actually ran.
+
+    A client sending `if_match` to a server that PREDATES this feature has the
+    field silently dropped by pydantic and its write proceeds UNGUARDED while
+    it believes it was protected — the `confirm: false` shape that cost 1733
+    inbox rows. An old server cannot be fixed retroactively, so the signal
+    must be something only a NEW server emits. Absence must never read as
+    success.
+    """
+    base = {"namespace": "test", "key": "mem4/signal", "scope": "machine",
+            "user_id": "probe"}
+    made = await client.post("/memory/set", json={**base, "value": "v1"})
+    assert made.json()["if_match_applied"] is False, "unconditional write must say so"
+
+    guarded = await client.post("/memory/set", json={
+        **base, "value": "v2", "if_match": made.json()["version"]
+    })
+    assert guarded.json()["if_match_applied"] is True, (
+        "a client must be able to confirm the guard ran, not infer it"
+    )
+    await client.post("/memory/forget", json=base)

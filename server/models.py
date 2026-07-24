@@ -152,6 +152,18 @@ class MemorySetResponse(BaseModel):
     # MEM-4: content hash of what is now stored. Pass it as `if_match` on a
     # follow-up write to make that write conditional.
     version: str | None = None
+    # MEM-4 SAFETY SIGNAL. True means the conditional guard actually ran for
+    # this request; False means the write was unconditional.
+    #
+    # This exists because the failure it prevents is silent and severe: a
+    # client sending `if_match` to a server that PREDATES MEM-4 has the field
+    # dropped by pydantic and the write proceeds UNGUARDED, while the client
+    # believes it was protected — the exact shape of the `confirm: false` flag
+    # that did not exist and cost 1733 inbox rows on 2026-07-23. A server
+    # cannot be fixed retroactively, so the signal has to be something a NEW
+    # server emits and an old one cannot: absence of `true` here means the
+    # guard did NOT run. Never read a missing field as success.
+    if_match_applied: bool | None = None
     inbox_banner: InboxBanner | None = None
 
 
