@@ -132,6 +132,13 @@ class MemorySetResponse(BaseModel):
     # alias-canonicalized at the boundary) — lets clients display the truth
     # instead of echoing their possibly-legacy configured name.
     namespace: str | None = None
+    # MEM-1: False means this write OVERWROTE an existing value. Memory
+    # identity carries no session dimension (deliberately — the work outlives
+    # the session), so two sessions writing one key destroy each other's
+    # value. Until this field existed both got an identical "stored" response
+    # and the loser could not tell. Clients should surface an overwrite that
+    # the caller may not have intended.
+    created: bool | None = None
     inbox_banner: InboxBanner | None = None
 
 

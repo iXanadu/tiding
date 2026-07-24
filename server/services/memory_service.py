@@ -98,8 +98,23 @@ async def memory_set(
     expiration_days: int = 0,
     metadata: dict | None = None,
     owner: str | None = None,
-) -> str:
-    """Store or update a memory with its embedding."""
+) -> tuple[str, bool]:
+    """Store or update a memory with its embedding.
+
+    Returns ``(key, created)`` — ``created=False`` means this write OVERWROTE
+    an existing value.
+
+    Why the second element exists (MEM-1): memory identity is
+    ``(namespace, key, scope, user_id, project)``, which deliberately contains
+    no session dimension — the work outlives the session that wrote it. The
+    consequence is that two sessions in one project writing the same key
+    silently destroy each other's value, and until now both got a byte-
+    identical "stored" response, so the loser could not tell it had just
+    erased someone. Same shape as an unguarded bulk delete: a destructive
+    outcome with no signal. The caller surfaces this so an overwrite is at
+    least *visible*; it is not prevented, because overwriting your own key is
+    the normal case.
+    """
     namespace, key, scope, user_id, project = _normalize_key_fields(
         namespace, key, scope, user_id, project
     )
@@ -115,7 +130,11 @@ async def memory_set(
     metadata_json = json.dumps(metadata) if metadata else None
 
     async with pool.acquire() as conn:
-        await conn.execute(
+        # ``xmax = 0`` is the standard way to tell an INSERT from an upsert's
+        # UPDATE branch: on a freshly inserted row the deleting-transaction id
+        # is zero, on an updated row it carries the conflicting transaction.
+        # It costs nothing extra — no second query, no race window.
+        row = await conn.fetchrow(
             """
             INSERT INTO memories (namespace, key, value, scope, user_id, project, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
@@ -129,6 +148,7 @@ async def memory_set(
                 metadata = EXCLUDED.metadata,
                 owner = EXCLUDED.owner,
                 last_used_at = NOW()
+            RETURNING (xmax = 0) AS created
             """,
             namespace,
             key,
@@ -144,7 +164,7 @@ async def memory_set(
             metadata_json,
             owner,
         )
-    return key
+    return key, bool(row["created"])
 
 
 async def memory_get(

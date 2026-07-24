@@ -459,7 +459,16 @@ async def memory_store(
     # Prefer the CANONICAL namespace the server says it wrote to (it
     # canonicalizes legacy aliases); fall back to config for older servers.
     stored_ns = result.get("namespace") or settings.memory_namespace
-    head = f"Stored memory '{result['key']}' (namespace: {stored_ns}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
+    # MEM-1: say so when the write REPLACED an existing value. Memory identity
+    # has no session dimension, so a peer session writing the same key (the
+    # classic case: two sessions both writing 'wip/current') is destroyed
+    # silently — and an identical "Stored" response gave the writer no way to
+    # know. `created` is None on older servers, which reads as "unknown", not
+    # as "created".
+    verb = "Stored"
+    if result.get("created") is False:
+        verb = "Stored (REPLACED an existing value)"
+    head = f"{verb} memory '{result['key']}' (namespace: {stored_ns}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
     return banner_text + head if banner_text else head
 
 

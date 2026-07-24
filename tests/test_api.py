@@ -317,3 +317,54 @@ async def test_default_store_is_permanent(client, db_pool):
     # Clean up
     await client.post("/memory/forget", json={"namespace": "test", "key": "ttl_default"})
     await client.post("/memory/forget", json={"namespace": "test", "key": "ttl_explicit"})
+
+
+@pytest.mark.asyncio
+async def test_set_reports_created_vs_overwritten(client):
+    """MEM-1: a write that REPLACES an existing value must say so.
+
+    Memory identity is (namespace, key, scope, user_id, project) and carries
+    no session dimension — deliberately, since the work outlives the session.
+    The consequence is that two sessions in one project writing the same key
+    destroy each other's value. Before this, both writes returned a
+    byte-identical success and the loser had no way to know it had erased
+    someone: a destructive outcome with no signal, the same shape as an
+    unguarded bulk delete.
+    """
+    payload = {
+        "namespace": "test", "key": "mem1/clobber", "value": "first writer",
+        "scope": "machine", "user_id": "probe",
+    }
+    first = await client.post("/memory/set", json=payload)
+    assert first.status_code == 200
+    assert first.json()["created"] is True
+
+    second = await client.post(
+        "/memory/set", json={**payload, "value": "second writer"}
+    )
+    assert second.status_code == 200
+    assert second.json()["created"] is False, "an overwrite must not look like a create"
+
+    # And the overwrite really did land — the signal describes reality.
+    got = await client.post("/memory/get", json={
+        "namespace": "test", "key": "mem1/clobber",
+        "scope": "machine", "user_id": "probe",
+    })
+    assert got.json()["memory"]["value"] == "second writer"
+
+    await client.post("/memory/forget", json={
+        "namespace": "test", "key": "mem1/clobber",
+        "scope": "machine", "user_id": "probe",
+    })
+
+
+@pytest.mark.asyncio
+async def test_distinct_keys_do_not_report_an_overwrite(client):
+    """The signal must be specific — a different key is not a clobber."""
+    base = {"namespace": "test", "scope": "machine", "user_id": "probe"}
+    a = await client.post("/memory/set", json={**base, "key": "mem1/a", "value": "a"})
+    b = await client.post("/memory/set", json={**base, "key": "mem1/b", "value": "b"})
+    assert a.json()["created"] is True
+    assert b.json()["created"] is True
+    for k in ("mem1/a", "mem1/b"):
+        await client.post("/memory/forget", json={**base, "key": k})

@@ -107,7 +107,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
         metadata["cwd"] = cwd
     owner = principal["name"] if principal else None
     try:
-        key = await memory_set(
+        key, created = await memory_set(
             namespace=req.namespace,
             key=req.key,
             value=req.value,
@@ -134,7 +134,11 @@ async def set_memory(req: MemorySetRequest, request: Request):
                 if banner_dict:
                     banner = InboxBanner(**banner_dict)
         return MemorySetResponse(
-            status="ok", key=key, namespace=req.namespace, inbox_banner=banner
+            status="ok",
+            key=key,
+            namespace=req.namespace,
+            created=created,
+            inbox_banner=banner,
         )
     except Exception as e:
         logger.exception("memory_set failed")

@@ -22,15 +22,6 @@
   session dies. Mark entries past grace `presumed-dead` and let the cleanup
   task drop rows past a retention horizon.
 
-- **MEM-1** `POST /memory/set` gives no signal that a write overwrote an
-  existing value — the response is byte-identical for a create and for a
-  clobber (blind `ON CONFLICT DO UPDATE`; `MemorySetResponse` carries no
-  created/updated field). Two sessions writing one key silently destroy each
-  other's value with both seeing "Stored". Same shape as the hardened
-  bulk-delete: a destructive outcome with no signal. Return created vs
-  updated. Small, independent of any handoff design, and worth doing on its
-  own merits.
-
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
   recovery and anything written since the last dump is unrecoverable.
