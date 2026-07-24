@@ -113,10 +113,15 @@ project = foo
   channel memberships. Those are injected at launch (see
   [multi-provider.md](multi-provider.md)) — which is exactly what lets
   several agents share one checkout cleanly.
+- **Two agents in one folder just work.** Each session claims a distinct
+  address from the server at startup — `foo-claude`, `foo-claude-2`,
+  `foo-grok` — while all keep the shared `foo` group address. No manual
+  assignment, no way to collide. See
+  [multi-provider.md](multi-provider.md#a-second-session-in-the-same-folder-seats).
 - Optional second line `inbox_identity = foo-server` gives a *folder* a
-  distinct mail address — for the one-identity-per-folder layout (e.g.
-  `foo/` and `foo-app/` as sibling repos of one project). For two agents in
-  **one** folder, use the launch-time env var instead.
+  distinct default mail address — for the one-identity-per-folder layout (e.g.
+  `foo/` and `foo-app/` as sibling repos of one project). It seeds the
+  preference; the server still guarantees uniqueness.
 
 ## Where to next
 

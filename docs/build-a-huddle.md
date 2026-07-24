@@ -31,13 +31,18 @@ bridge does the agent side automatically.
 
 ```bash
 # each agent session, at launch (the bridge + watcher inherit it):
-ENGRAM_CHANNELS="#devagents" ENGRAM_INBOX_IDENTITY=myproj-audit claude
-ENGRAM_CHANNELS="#devagents" ENGRAM_INBOX_IDENTITY=myproj-build grok
+ENGRAM_CHANNELS="#devagents" claude
+ENGRAM_CHANNELS="#devagents" grok
 ```
 
-Distinct `ENGRAM_INBOX_IDENTITY` seats matter when sessions share a project
-folder — see [multi-provider.md](multi-provider.md#a-second-session-in-the-same-folder-seats).
-(Launcher-spawned workers: your launcher exports the same two vars.)
+`ENGRAM_CHANNELS` is what puts a session in the room. Its DM **seat** is
+allocated automatically at startup (`myproj-claude`, `myproj-grok`,
+`myproj-claude-2` for two of the same provider), so sessions sharing a folder
+never collide — you don't have to hand out identities. Add
+`ENGRAM_INBOX_IDENTITY=myproj-audit` only if you want to *prefer* a specific
+seat label; the server grants it when free. See
+[multi-provider.md](multi-provider.md#a-second-session-in-the-same-folder-seats).
+(Launcher-spawned workers: your launcher exports the same vars.)
 
 ## Step 2 — speak, listen, see the room (curl)
 

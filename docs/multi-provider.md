@@ -29,18 +29,16 @@ The rules that make it safe come down to one sentence:
    project's brain in half. Provider identity is *provenance metadata*, not
    a partition axis.
 
-3. **Its own inbox identity.** Two agents in one project folder need
-   distinct addresses to DM each other and to keep read-receipts from
-   colliding. The project's `.engram.cfg` stays identity-free
-   (`project = <name>` only); per-agent identity is injected **at launch**:
-   - MCP bridge: `ENGRAM_INBOX_IDENTITY=foo-grok` in that agent's env
-   - Raw HTTP: pass `reader_identity=` / `from_=` per call
-
-   A declared identity keeps the shared project group in its listen_set —
-   so `foo` broadcasts still reach both agents, while `foo` (Claude) and
-   `foo-grok` have private addresses. Discriminate by whatever is unique in
-   *your* seat map: role (`-server`/`-app`), provider (`-grok`/`-codex`),
-   or provider+ordinal (`-claude-2`).
+3. **Its own inbox identity — allocated for you.** Two agents in one project
+   folder need distinct addresses to DM each other and to keep read-receipts
+   from colliding. The bridge **claims** one from the server at startup, so
+   this is automatic: `foo` (Claude) and `foo-grok`, or `foo-claude` and
+   `foo-claude-2` for two of the same provider. The project's `.engram.cfg`
+   stays identity-free (`project = <name>` only). Every seat keeps the shared
+   `foo` group address in its listen_set, so broadcasts still reach both
+   agents. A launcher may *prefer* a seat (`ENGRAM_INBOX_IDENTITY=foo-audit`,
+   granted when free); a raw-HTTP client passes `reader_identity=` / `from_=`
+   per call. Full mechanics in [the seats section below](#a-second-session-in-the-same-folder-seats).
 
 ## The wiring playbook (per box, per provider)
 
@@ -108,25 +106,81 @@ roster exists precisely so no agent has to guess).
 
 ## A second session in the same folder (seats)
 
-Two sessions in one project folder — same provider or not — MUST take
-distinct seats, declared **at launch**:
+Put two agent sessions in one project folder — same provider or not — and each
+**claims a distinct address from the server automatically**. No manual
+assignment, and no way for the two to collide. The first Claude session in
+`myproject` gets `myproject-claude`, the second `myproject-claude-2`, a Grok
+session `myproject-grok`. All of them keep the shared `myproject` group address
+(broadcasts reach everyone); each also gets its own DM address and independent
+read-state.
+
+This is the **session registry**. Addressing is exactly two layers:
+
+| Layer | Example | Reaches |
+|---|---|---|
+| Project **group** | `myproject` | every session in the folder |
+| **Seat** | `myproject-claude-2` | exactly one session |
+
+A **role** (tester, orchestrator, implementer) is deliberately *not* a third
+layer. A role isn't unique — ask both Claude and Grok to test and
+`myproject-tester` would name two sessions, the exact collision seats exist to
+prevent — and it's assigned late, to a session you already picked. You attach
+roles when you convene the work (in a [huddle](build-a-huddle.md)), addressing
+the specific seats involved; the address itself stays
+`<project>-<provider>[-ordinal]`.
+
+### You don't assign seats — you can prefer one
+
+The bridge claims a seat on startup, so the common case needs nothing from you.
+A launcher may still state a **preference** — the server grants it when free
+and hands out the next ordinal when a peer already holds it:
 
 ```bash
-ENGRAM_INBOX_IDENTITY=myproject-remediate claude   # seat 1
-ENGRAM_INBOX_IDENTITY=myproject-audit     grok     # seat 2
+# a preference, not an assignment — honored when free, ordinal-suffixed when taken:
+ENGRAM_INBOX_IDENTITY=myproject-audit ENGRAM_PROVIDER=grok grok
 ```
 
-Both keep the shared `myproject` group address (broadcasts reach everyone);
-each gets its own DM address and independent read-state. Discriminate by
-**role** first (`-audit`, `-remediate`), by provider/model only when that is
-the real distinction. The watcher inherits the same env, so bridge and
-watcher always agree.
+So the old manual-seat line still works; it just can't collide any more. If two
+launchers (or a launcher and a hand-started terminal) both ask for
+`myproject-audit`, one gets it and the other gets `myproject-audit-2` — the
+server is the only party that sees every session, so it is the only place that
+can guarantee uniqueness.
+
+### Reading the granted seat (launchers and UIs)
+
+Because the granted seat can be an ordinal the launcher didn't predict, **read
+it back — never recompute it**:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"session_key":"<the key you injected>"}' http://localhost:8920/session/seats
+# → {"seats":[{"seat":"myproject-audit-2","provider":"grok","session_key":"…"}]}
+```
+
+Key any UI, badge, or router on the returned **seat**, and take provider from
+the **field** — never parse either off the address string (a `-2` tail is an
+ordinal, a `-grok` tail is a provider, and nothing in the string reliably tells
+them apart). A picker must **show the ordinal**: `myproject-claude` and
+`myproject-claude-2` are different sessions, and hiding the suffix collapses
+them to identical rows. Middle-truncate address labels — the ordinal is the
+tail, and default truncation (CSS `text-overflow: ellipsis`, SwiftUI) drops the
+tail first.
+
+### The launcher's job (unchanged, plus one key)
 
 Set `ENGRAM_PROVIDER=<claude|grok|…>` alongside the seat. The bridge is one
 provider-neutral module that every harness spawns, so it cannot tell from the
 inside who launched it — unset means the roster reports `claude` (the
 historical default), and two providers become indistinguishable exactly when
 you most need to tell them apart.
+
+Set `ENGRAM_SESSION_KEY` to a value that is **stable across a respawn and never
+pid-derived** (a launcher's own session name is ideal). The seat is keyed to it,
+so a bridge restart re-claims the *same* seat instead of drifting to a new
+ordinal. A **hand-launched** session — no launcher, no injected key — still
+self-allocates: the bridge derives a key from its own harness process, so
+co-working works even when you decide *after* launch that two agents should
+pair.
 
 > **Never pin these in a provider's static MCP `env` block.** Launch-time
 > injection *is* the mechanism. Where a provider's config declares a static env
@@ -139,13 +193,19 @@ you most need to tell them apart.
 > 2026-07-23: Grok inherits the full parent environment and merges the config
 > block **on top**.
 
-**If you forget, engram tells you.** Every session heartbeats a per-process
-nonce; when the server sees two live sessions on one identity it flags a
-**seat collision** — a ⛔ STOP banner on the colliding sessions' memory
-calls and on the roster — because two sessions on one seat share ack-state
-and cannot message or wake each other. Deliberately shared roles (the
-`admin` identity) are exempt. Fix = relaunch one session with a seat, and
-arm its watcher with the same env.
+**The safety net — collision detection.** Auto-allocation prevents collisions
+for any session that claims a seat, which is the normal path. Two kinds of
+session still can't claim, and the older guard covers them: a session started
+*before* the registry existed, and one whose engram was unreachable at startup
+(it keeps its locally-computed seat and retries). For those, every session
+heartbeats a per-process nonce, and when the server sees two live sessions on
+one identity it flags a **seat collision** — a ⛔ STOP banner on the colliding
+sessions' memory calls and on the roster — because two sessions on one seat
+share ack-state and cannot message or wake each other. Deliberately shared
+roles (the `admin` identity) are exempt. Fix = relaunch one session so it
+claims, and arm its watcher with the same env. In normal operation you should
+never see this banner; if you do, a session is running that predates the
+registry or couldn't reach it.
 
 **Arm the watcher by inheritance, not by discipline.** Spawn it as a *child of
 the agent process* so it inherits that process's environment. Then there is no

@@ -45,6 +45,11 @@ the owner, command the whole team with verified authority from a single message.
   are stamped server-side from the authenticated token. One
   `authority-directive` to a project group or cross-project `#channel` lands
   on every agent as **✓ VERIFIED OWNER** — and no agent token can fake it.
+- **Several agents, one folder, zero fuss.** Run an orchestrator, a tester,
+  and an implementer in the same project and each is handed a distinct
+  address automatically (`myproj-claude`, `myproj-claude-2`, …) — DM one and
+  only it wakes, post to the group and all of them do. No identity juggling,
+  no collisions.
 
 **Where it fits:** engram is a durable *shared* memory store first — hybrid
 semantic + trigram search over Postgres/pgvector — with an inbox and presence
@@ -330,20 +335,27 @@ Built on top of the memory table. Enables Claude Code sessions (or any agent) to
 - `POST /memory/inbox/{id}/resolve` — Close a finished thread so it drains from the default view (kept, reversible; either party may resolve)
 - `POST /memory/inbox/{id}/archive` — Archive a message (global hide; for noise/mistakes — prefer resolve)
 - `POST /memory/inbox/wait` — Long-poll for new mail (what the watcher uses)
-- `POST /memory/presence` — Heartbeat: a session self-reports its liveness state (also detects seat collisions — two sessions on one inbox identity)
+- `POST /memory/presence` — Heartbeat: a session self-reports its liveness state (also the safety-net seat-collision check)
 - `POST /memory/roster` — Who's listening where: identities, providers, liveness, channel membership
+
+**Session registry (seats).** So N sessions in one project folder get N distinct addresses with no human step, a session *claims* an address instead of computing one — the server hands out one nobody else holds.
+
+- `POST /session/claim` — Claim this session's unique seat (the bridge does this at startup; idempotent per session, so a restart keeps the same seat)
+- `POST /session/release` — Free a seat immediately (otherwise reclaimed after a grace period, never while it holds undelivered mail)
+- `POST /session/seats` — List allocated seats; pass `session_key` for a launcher's direct lookup of the seat that was actually granted, with `provider` as a field
 
 **Message lifecycle.** Every message has a status (`open` → `resolved`/`superseded`) and an `intent` (`fyi | action | proceed | escalate`). `fyi` never wakes a dormant peer; `action` does. Stale open messages (72h default) are annotated, never auto-deleted.
 
 **Addressing.** An address is a flat string; a session listens on a *set* of them (its `listen_set`) and is reachable on any:
 
 - `<project>` — loose **group** address: every session on that project
+- `<project>-<provider>[-N]` — a **seat**: exactly one session, allocated by the server (`<project>-claude`, `<project>-claude-2`, `<project>-grok`)
 - `machine:<host>` — every session on that machine
 - `<project>@<host>` — that one session, **precisely**
 
 Replies (`memory_reply`) thread automatically and route back to the sender's group address.
 
-**Per-session identity.** Two sessions on one project — e.g. a web backend and a native app sharing one `.engram.cfg` — share project *memory* but need distinct inbox identities so they can DM each other without cross-waking. Declare an identity and the session is addressed as `<name>@<host>` while still joining the `<project>` group for broadcasts. Memory scoping is unaffected (it stays `project`-derived). Two sources, env winning as an override:
+**Per-session identity.** Two sessions on one project share project *memory* but need distinct inbox identities so they can DM each other without cross-waking. The bridge **claims a seat** for each at startup, so this is automatic — two Claude sessions in one folder become `<project>-claude` and `<project>-claude-2`, still both joining the `<project>` group for broadcasts, with memory scoping unaffected (it stays `project`-derived). A **role** is never an address — it isn't unique across providers and is assigned when you convene the work, not at spawn (see [multi-provider.md](docs/multi-provider.md#a-second-session-in-the-same-folder-seats)). For the one-identity-per-*folder* layout — e.g. a web backend and a native app as sibling repos of one project — a folder can seed a default seat, which the server still de-conflicts:
 
 ```ini
 # .engram.cfg — preferred: per-repo, version-controlled, resolved from the
