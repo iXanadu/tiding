@@ -36,10 +36,11 @@
   unrelated five-month-old note scores 0.45, so "read all the open handoffs"
   is not reliably expressible and a missing one is indistinguishable from
   none. Would honor namespace read perms exactly as search does. Requested by
-  AgentBeast 2026-07-24; engram's own `/startup` wants it too (it reads exact
-  keys and is blind to sibling `wip/*` by construction). **Gated on the
-  owner's multi-session handoff design** — needed if handoffs get distinct
-  keys per session, unnecessary if one overwritten `wip/current` stays.
+  AgentBeast 2026-07-24. **Justified today, independent of any multi-session
+  design** — sibling `wip/*` keys have sat unread for weeks in a
+  single-session world because `/startup` fetches exact keys and everything
+  else is invisible by construction. What the owner's handoff direction gates
+  is this item's PRIORITY, not its validity.
 
 - **MEM-3** A lifecycle verb for memories — resolve/supersede, copying the
   inbox's existing pattern rather than inventing one (same table, same
