@@ -7,14 +7,13 @@
 
 ## Now (blocking or next up)
 
-- **SEAT-3** Close out the session registry. Server DEPLOYED (prod 0d41cf6);
-  first live exercise PASSED — two Claude sessions in one folder claimed
-  distinct seats (`agentbeast-claude` + `agentbeast-claude-2`) at startup with
-  no human step, verified in engram's own registry, and AB's hub enumerates
-  both by granted seat. Left to close: (a) the wake half — confirm a DM to
-  `-2` wakes only that session; (b) AB-app's picker screenshot as the visual
-  confirmation. Both in flight. Design:
-  [docs/design/session-registry.md](docs/design/session-registry.md).
+- **SEAT-6** Grok can't claim seats yet — grok sessions never get
+  `ENGRAM_SESSION_KEY`/`ENGRAM_PROVIDER` on AgentBeast's launch start path, so
+  they can't claim and their roster provider defaults to `claude`. Both
+  resolve with one upstream fix (AB's launcher env on the grok start path);
+  engram needs no change. Tracked here so the divergence isn't forgotten —
+  owner is AgentBeast. Not an engram instability: grok sessions keep their
+  pre-SEAT-3 launch identity, no regression.
 
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
   released: the live roster carries entries days stale, all still reporting
