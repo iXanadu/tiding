@@ -7,14 +7,14 @@
 
 ## Now (blocking or next up)
 
-- **SEAT-3** Deploy the session registry (built, tested, committed, **not
-  deployed**). Sessions now claim a server-allocated address instead of
-  computing one, so N sessions in a project get N distinct addresses with no
-  human step. Deploy needs a `/opt/srv/engram` pull + `com.engram` kickstart;
-  each session's bridge picks it up at its next start. Held back
-  deliberately: blast radius is fleet-wide addressing and it was built while
-  the owner was travelling and unable to observe fallout. Nothing is broken
-  today without it. Design + verification:
+- **SEAT-3** Run the live acceptance test for the session registry. Server is
+  DEPLOYED (prod at 0d41cf6, allocation proven live via probe: two claims for
+  one preferred seat returned `-claude` and `-claude-2`). What is NOT yet
+  observed end to end: two real sessions claiming in one folder, the roster
+  showing two distinct seats, a DM waking each independently, and AB's hub
+  enumerating both by GRANTED seat so AB-app renders two rows. The last link
+  (hub enumeration keyed on the granted seat, not a recomputed one) is AB's
+  and is the gating item. Design:
   [docs/design/session-registry.md](docs/design/session-registry.md).
 
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
