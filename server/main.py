@@ -9,7 +9,15 @@ from server.auth import PrincipalAuthMiddleware
 from server.config import settings
 from server.db import close_pool, init_pool
 from server.embeddings import close_client, init_client
-from server.routers import admin, dashboard, health, identity, memory, principals
+from server.routers import (
+    admin,
+    dashboard,
+    health,
+    identity,
+    memory,
+    principals,
+    session,
+)
 from server.services.cleanup_task import (
     expiration_cleanup_loop,
     inbox_autoresolve_loop,
@@ -145,6 +153,7 @@ app.add_middleware(
 )
 
 app.include_router(memory.router)
+app.include_router(session.router)
 app.include_router(admin.router)
 app.include_router(principals.router)
 app.include_router(identity.router)

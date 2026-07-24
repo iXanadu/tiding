@@ -168,6 +168,7 @@ class MemoryClient:
         project_dir: str | None = None,
         intent: str | None = None,
         supersedes: str | None = None,
+        listen_set: list[str] | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
         if from_:
@@ -178,6 +179,11 @@ class MemoryClient:
             payload["intent"] = intent
         if supersedes:
             payload["supersedes"] = supersedes
+        if listen_set:
+            # ADDR-1: the server cannot reconstruct this from from_ once a
+            # session holds a seat — the identity string carries neither the
+            # project group address nor channel subscriptions.
+            payload["listen_set"] = listen_set
         return await self._request(
             "POST",
             "/memory/send",
@@ -209,6 +215,63 @@ class MemoryClient:
                 "channels": channels or [],
                 "session_nonce": session_nonce,
             },
+            headers=self._provenance_headers(project_dir),
+        )
+
+    async def session_claim(
+        self,
+        session_key: str,
+        project: str,
+        provider: str = "claude",
+        session_nonce: str | None = None,
+        host: str | None = None,
+        preferred_seat: str | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Claim this session's unique inbox address (SEAT-3).
+
+        Idempotent on ``session_key`` — safe to call on every heartbeat.
+        """
+        return await self._request(
+            "POST",
+            "/session/claim",
+            json={
+                "session_key": session_key,
+                "project": project,
+                "provider": provider,
+                "session_nonce": session_nonce,
+                "host": host,
+                "preferred_seat": preferred_seat,
+            },
+            headers=self._provenance_headers(project_dir),
+        )
+
+    async def session_release(
+        self,
+        session_key: str,
+        project: str,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Free this session's seat immediately (SEAT-3)."""
+        return await self._request(
+            "POST",
+            "/session/release",
+            json={"session_key": session_key, "project": project},
+            headers=self._provenance_headers(project_dir),
+        )
+
+    async def session_alias(
+        self,
+        session_key: str,
+        project: str,
+        alias: str,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Bind a ROLE address alongside this session's seat (SEAT-3)."""
+        return await self._request(
+            "POST",
+            "/session/alias",
+            json={"session_key": session_key, "project": project, "alias": alias},
             headers=self._provenance_headers(project_dir),
         )
 

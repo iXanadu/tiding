@@ -21,11 +21,44 @@ def _isolate_settings(monkeypatch):
     monkeypatch.setattr(config.settings, "memory_namespace", "fleet")
     monkeypatch.setattr(config.settings, "memory_read_namespaces", "")
     monkeypatch.setattr(config.settings, "memory_default_scope", "machine")
-    # Launch-env addressing must not leak into the suite: a session launched
-    # with ENGRAM_CHANNELS (e.g. "#devagents") appends the channel to every
-    # computed listen_set and breaks exact-set assertions. Tests that exercise
-    # channels set the var explicitly.
-    monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
+    # Launch-env addressing must not leak into the suite. A session launched by
+    # a launcher carries ENGRAM_CHANNELS (appends channels to every computed
+    # listen_set), ENGRAM_INBOX_IDENTITY (replaces the computed seat),
+    # ENGRAM_SESSION_KEY (names the seat file) and ENGRAM_PROVIDER — every one
+    # of which changes what compute_identity() returns. Scrubbing only channels
+    # meant the suite PASSED on a bare terminal and FAILED with 14 identity
+    # errors inside an agent session, purely from the environment: the result
+    # depended on who started the shell rather than on the code. Tests that
+    # exercise these set them explicitly.
+    for _var in (
+        "ENGRAM_CHANNELS",
+        identity.INBOX_IDENTITY_ENV,
+        identity.SESSION_KEY_ENV,
+        "ENGRAM_PROVIDER",
+    ):
+        monkeypatch.delenv(_var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_seat_files(monkeypatch, tmp_path):
+    """Never let a test touch a REAL session's seat file.
+
+    ``take_seat()`` writes an actual file, and the path is keyed on the session
+    key — which is inherited from the environment when a launcher set one, and
+    otherwise derived from this process's harness parent. So a suite run INSIDE
+    a live agent session would rewrite that session's own seat: its bridge and
+    its watcher both re-resolve identity from that file, so both would silently
+    start answering to whatever the last test set, at another project's address.
+
+    That is not hypothetical — it happened during development of SEAT-3, and
+    the symptom was a compute_identity assertion failing with a completely
+    unrelated project's name. Autouse and unconditional: the guarantee has to
+    hold for every test, including ones that never mention seats.
+    """
+    monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path / "seats"))
+    identity._DISCOVERED_SEAT_PATH = None
+    yield
+    identity._DISCOVERED_SEAT_PATH = None
 
 
 @pytest.fixture(autouse=True)

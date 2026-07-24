@@ -7,6 +7,26 @@
 
 ## Now (blocking or next up)
 
+- **SEAT-3** Deploy the session registry (built, tested, committed, **not
+  deployed**). Sessions now claim a server-allocated address instead of
+  computing one, so N sessions in a project get N distinct addresses with no
+  human step. Deploy needs a `/opt/srv/engram` pull + `com.engram` kickstart;
+  each session's bridge picks it up at its next start. Held back
+  deliberately: blast radius is fleet-wide addressing and it was built while
+  the owner was travelling and unable to observe fallout. Nothing is broken
+  today without it. Design + verification:
+  [docs/design/session-registry.md](docs/design/session-registry.md).
+
+- **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
+  released: the live roster carries entries days stale, all still reporting
+  `state: running`, because self-reported state is never corrected once a
+  session dies. Mark entries past grace `presumed-dead` and let the cleanup
+  task drop rows past a retention horizon.
+
+- **SEAT-5** Bridge ergonomics for role aliases (registry Phase 3). The
+  `/session/alias` endpoint ships; there is no MCP tool for it yet, so a
+  session cannot declare "I am the orchestrator" without a raw HTTP call.
+
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
   recovery and anything written since the last dump is unrecoverable.

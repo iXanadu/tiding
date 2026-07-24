@@ -24,6 +24,7 @@ inside this subprocess, which is unreliable (see commit 223b17b).
 
 import os
 import socket
+import subprocess
 
 from engram_mcp.scoping import resolve_inbox_identity, resolve_project_name
 
@@ -194,9 +195,98 @@ _SESSION_SEAT: str | None = None
 SESSION_KEY_ENV = "ENGRAM_SESSION_KEY"
 
 
+def _proc_info(pid: int) -> tuple[int, str] | None:
+    """``(ppid, start_time)`` for ``pid`` via POSIX ps, or None.
+
+    ``ps`` rather than /proc so one implementation covers macOS and Linux. The
+    start time is opaque — we only need it to be stable for a process's
+    lifetime and different after a PID is recycled.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,lstart=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    parts = out.stdout.split()
+    if len(parts) < 6:
+        return None
+    try:
+        return int(parts[0]), " ".join(parts[1:6])
+    except ValueError:
+        return None
+
+
+def auto_session_key_for(pid: int, start: str, host: str | None = None) -> str:
+    """The session key naming the harness process ``pid``.
+
+    Shared vocabulary between the bridge (which knows the harness is its own
+    parent) and the watcher (which must rediscover it by walking ancestors), so
+    both name the same session without a launcher.
+    """
+    host = host or hostname()
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in start).strip("-")
+    return f"auto-{host}-{pid}-{safe}".lower()
+
+
+def derive_session_key() -> str | None:
+    """This session's key when no launcher injected one, or None.
+
+    The harness is this process's PARENT — reliable by construction, because a
+    stdio MCP server is spawned as a direct child of the harness that talks to
+    it (verified across the fleet's registration, which invokes the venv python
+    directly with no shell wrapper).
+
+    Deliberately NOT "walk up to pid 1": that reaches the tmux server, which is
+    shared by every tmux session on the box, and would hand every session the
+    same key — the precise opposite of the goal.
+
+    The start time defeats PID reuse: a recycled pid yields a different key
+    rather than silently inheriting a dead session's seat.
+    """
+    try:
+        ppid = os.getppid()
+    except OSError:  # pragma: no cover - no parent to anchor to
+        return None
+    if ppid <= 1:
+        return None
+    info = _proc_info(ppid)
+    if info is None:
+        return None
+    return auto_session_key_for(ppid, info[1])
+
+
 def resolve_session_key() -> str | None:
-    """The launcher-injected per-session key, or None when unlaunched."""
-    return (os.environ.get(SESSION_KEY_ENV) or "").strip().lower() or None
+    """This session's stable key: launcher-injected, else derived.
+
+    A launcher-injected key is preferred — AgentBeast's tmux name is unique per
+    box and survives a respawn, which a pid cannot. The derived key is what
+    gives a HAND-LAUNCHED session the same guarantees, since it has no launcher
+    to inject anything and cannot re-exec itself.
+    """
+    env = (os.environ.get(SESSION_KEY_ENV) or "").strip().lower()
+    if env:
+        return env
+    return derive_session_key()
+
+
+# Where seat files live. Redirectable via ENGRAM_SEATS_DIR — which exists
+# primarily so a TEST RUN CAN NEVER TOUCH A LIVE SESSION'S SEAT. take_seat()
+# writes a real file, so a suite exercising seats inside a session that has a
+# session key would otherwise rewrite that session's own inbox identity, and
+# both its bridge and its watcher would silently start answering to whatever
+# the last test happened to set. Found the hard way: a bridge test run
+# reseated this very session to another project's address mid-suite.
+SEATS_DIR_ENV = "ENGRAM_SEATS_DIR"
+DEFAULT_SEATS_DIR = "~/.local/state/engram/seats"
+
+
+def seats_dir() -> str:
+    """Directory holding seat files."""
+    return os.path.expanduser(
+        (os.environ.get(SEATS_DIR_ENV) or "").strip() or DEFAULT_SEATS_DIR
+    )
 
 
 def seat_file_path(session_key: str | None = None) -> str | None:
@@ -212,9 +302,7 @@ def seat_file_path(session_key: str | None = None) -> str | None:
     safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in key)[:128]
     if not safe:
         return None
-    return os.path.join(
-        os.path.expanduser("~/.local/state/engram/seats"), f"{safe}.seat"
-    )
+    return os.path.join(seats_dir(), f"{safe}.seat")
 
 
 _SEAT_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
@@ -232,16 +320,8 @@ def _is_valid_seat(value: str) -> bool:
     return bool(value) and len(value) <= 128 and set(value) <= _SEAT_ALLOWED
 
 
-def read_seat_file() -> str | None:
-    """The seat recorded for this session, or None.
-
-    Deliberately total: ANY problem — no key, missing file, unreadable,
-    malformed, empty — returns None rather than raising. This is called from
-    the watcher's poll loop, and a watcher that dies on a bad seat file is
-    strictly worse than one listening on a stale seat: the stale one still
-    catches project-addressed mail, the dead one catches nothing.
-    """
-    path = seat_file_path()
+def _read_seat_at(path: str | None) -> str | None:
+    """Read and validate one seat file. None on any problem."""
     if not path:
         return None
     try:
@@ -250,6 +330,74 @@ def read_seat_file() -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
     return value if _is_valid_seat(value) else None
+
+
+# Cache of the ancestor-discovered seat PATH (not its contents). The seat inside
+# can change — a re-seat is exactly what the watcher must follow — but which
+# file belongs to this session cannot, so the walk runs once rather than every
+# poll.
+_DISCOVERED_SEAT_PATH: str | None = None
+
+
+def discover_seat_file() -> str | None:
+    """Find this session's seat file by walking up the process tree.
+
+    The bridge names its seat file after the HARNESS process (its own parent).
+    A watcher is a deeper descendant of that same harness — typically
+    ``watcher → shell → harness`` — so the harness is on the watcher's ancestor
+    chain, and the file the bridge wrote is discoverable without a launcher
+    having injected anything.
+
+    Nearest ancestor wins, which is the correct answer under nested harnesses.
+    We probe for an EXISTING file rather than pattern-matching process names, so
+    this needs no list of harness binaries to keep current.
+    """
+    global _DISCOVERED_SEAT_PATH
+    if _DISCOVERED_SEAT_PATH and os.path.exists(_DISCOVERED_SEAT_PATH):
+        return _DISCOVERED_SEAT_PATH
+    _DISCOVERED_SEAT_PATH = None
+    try:
+        pid = os.getpid()
+    except OSError:  # pragma: no cover
+        return None
+    host = hostname()
+    seen: set[int] = set()
+    for _ in range(12):  # bounded: never loop on a cyclic/odd tree
+        if pid <= 1 or pid in seen:
+            break
+        seen.add(pid)
+        info = _proc_info(pid)
+        if info is None:
+            break
+        ppid, start = info
+        path = seat_file_path(auto_session_key_for(pid, start, host))
+        if path and os.path.exists(path):
+            _DISCOVERED_SEAT_PATH = path
+            return path
+        pid = ppid
+    return None
+
+
+def read_seat_file() -> str | None:
+    """The seat recorded for this session, or None.
+
+    Two lookups, in order:
+      1. our OWN session key — the bridge's own file, and any launcher-injected
+         key, which the watcher inherits through the process tree
+      2. ancestor discovery — the hand-launched case, where no launcher injected
+         a key and the watcher's own derived key names its shell, not the
+         harness
+
+    Deliberately total: ANY problem — no key, missing file, unreadable,
+    malformed, empty — returns None rather than raising. This is called from
+    the watcher's poll loop, and a watcher that dies on a bad seat file is
+    strictly worse than one listening on a stale seat: the stale one still
+    catches project-addressed mail, the dead one catches nothing.
+    """
+    value = _read_seat_at(seat_file_path())
+    if value:
+        return value
+    return _read_seat_at(discover_seat_file())
 
 
 def _write_seat_file(seat: str) -> str | None:

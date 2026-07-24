@@ -15,10 +15,12 @@ from engram_mcp.identity import (
     INBOX_IDENTITY_ENV,
     compute_identity,
     derive_project_name,
+    hostname,
     reader_to_address,
     remember_project_dir,
     resolve_channels,
     resolve_provider,
+    resolve_session_key,
     seat_file_path,
     take_seat,
 )
@@ -301,12 +303,63 @@ _HEARTBEAT_EVERY_SECONDS = 120.0
 _last_heartbeat = 0.0
 
 
+# SEAT-3: has this session claimed its allocated address yet?
+_SEAT_CLAIMED = False
+
+
+async def _claim_seat(project_dir: str | None) -> None:
+    """Claim this session's unique inbox address from the registry.
+
+    Runs once per session, before the first heartbeat, so the seat is allocated
+    before this session is announced as live at it.
+
+    FAILURE IS NON-FATAL BY DESIGN. On any error — engram unreachable, an old
+    server with no /session/claim, no resolvable session key — the session
+    keeps the seat it resolves locally today (env, .engram.cfg, or its project
+    name). The registry is an upgrade over that fallback, never a dependency of
+    it: a session must never fail to start because the address service is down.
+    """
+    global _SEAT_CLAIMED
+    if _SEAT_CLAIMED:
+        return
+    session_key = resolve_session_key()
+    if not session_key:
+        _SEAT_CLAIMED = True  # nothing to key on; keep the local seat
+        return
+    try:
+        project = derive_project_name(remember_project_dir(project_dir or None))
+        reader_identity, _ = compute_identity(project_dir or None)
+        preferred = reader_identity.split("@", 1)[0]
+        resp = await _client.session_claim(
+            session_key=session_key,
+            project=project,
+            provider=resolve_provider(),
+            session_nonce=_SESSION_NONCE,
+            host=hostname(),
+            preferred_seat=preferred,
+            project_dir=project_dir or None,
+        )
+        granted = (resp.get("seat") or "").strip().lower()
+        _SEAT_CLAIMED = True
+        if granted and granted != preferred:
+            # Writing the seat file is what carries the grant to the watcher:
+            # it re-resolves identity every poll and seat-file outranks env, so
+            # a watcher armed BEFORE this claim converges without a restart.
+            take_seat(granted)
+    except Exception:
+        # Leave _SEAT_CLAIMED False so the next heartbeat retries — a transient
+        # server blip should not cost this session its allocated address for
+        # the rest of its life.
+        pass
+
+
 async def _heartbeat(project_dir: str | None) -> None:
     global _last_heartbeat
     now = time.monotonic()
     if now - _last_heartbeat < _HEARTBEAT_EVERY_SECONDS:
         return
     _last_heartbeat = now
+    await _claim_seat(project_dir)
     try:
         reader_identity, _listen_set = compute_identity(project_dir or None)
         identity = reader_identity.split("@", 1)[0]
@@ -932,7 +985,7 @@ async def memory_send(
     if "," in targets:
         targets = [t.strip() for t in targets.split(",") if t.strip()]
     body, subject, leak_warning = _strip_leaked_markup(body, subject)
-    reader_identity, _ = compute_identity(project_dir or None)
+    reader_identity, listen_set = compute_identity(project_dir or None)
     await _heartbeat(project_dir or None)
     result = await _client.inbox_send(
         to=targets,
@@ -943,6 +996,7 @@ async def memory_send(
         project_dir=project_dir or None,
         intent=intent.strip() or None,
         supersedes=supersedes.strip() or None,
+        listen_set=listen_set,
     )
     corrected_from = result.get("corrected_from")
     ids = result.get("ids")

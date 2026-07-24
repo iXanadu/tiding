@@ -375,6 +375,12 @@ class InboxSendRequest(BaseModel):
     thread_id: str | None = Field(default=None, max_length=MAX_ADDR)
     supersedes: str | None = Field(default=None, max_length=MAX_ADDR)  # id of a prior message this one replaces
     intent: str | None = None  # fyi | action | proceed | escalate | authority-directive
+    # ADDR-1: the sender's REAL listen_set, for the addressing guidance echoed
+    # back. The server cannot reconstruct it from ``from_`` — once a session
+    # holds a seat, the identity string carries neither the project group
+    # address nor channel subscriptions. Optional: older bridges omit it and
+    # get the (clearly-labelled) approximation instead.
+    listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
 
     @field_validator("to")
     @classmethod
@@ -609,3 +615,107 @@ class InboxAckResponse(BaseModel):
     status: str
     id: str
     guidance: str | None = None
+
+
+# --- Seat registry (SEAT-3) ----------------------------------------------
+#
+# Sessions CLAIM an address rather than computing one, so N sessions in a
+# project get N distinct addresses with no human step. See
+# docs/design/session-registry.md.
+
+
+class SeatClaimRequest(BaseModel):
+    # Stable per-session key. CONTINUITY, not identity: re-claiming with the
+    # same key returns the same seat, so a bridge restart never moves a
+    # session's address. Launcher-injected (ENGRAM_SESSION_KEY) or derived by
+    # the bridge from its harness parent process.
+    session_key: str = Field(max_length=MAX_ADDR)
+    project: str = Field(max_length=MAX_ADDR)
+    provider: str = Field(default="claude", max_length=MAX_ADDR)
+    # Per-PROCESS nonce. With session_key it forms IDENTITY: a known key
+    # arriving with a different nonce while the holder is still live means two
+    # processes share one key, not that one restarted.
+    session_nonce: str | None = None
+    host: str | None = Field(default=None, max_length=MAX_ADDR)
+    # What the caller would LIKE (e.g. a launcher's "<project>-<provider>").
+    # A preference, never an assignment — the server grants it when free.
+    preferred_seat: str | None = Field(default=None, max_length=MAX_ADDR)
+
+    @field_validator("session_key", "project", mode="before")
+    @classmethod
+    def claim_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("must be a non-empty string")
+        return v.strip().lower()
+
+
+class SeatClaimResponse(BaseModel):
+    status: str
+    seat: str
+    is_new: bool = False
+    # Set when this seat was taken over from an abandoned session — surfaced so
+    # a reclaim is visible in logs rather than silent.
+    reclaimed_from: str | None = None
+    # Set when the caller's session_key is provably not unique. Loud on
+    # purpose: the failure it describes is otherwise silent.
+    warning: str | None = None
+    guidance: str | None = None
+
+
+class SeatReleaseRequest(BaseModel):
+    session_key: str = Field(max_length=MAX_ADDR)
+    project: str = Field(max_length=MAX_ADDR)
+
+    @field_validator("session_key", "project", mode="before")
+    @classmethod
+    def release_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("must be a non-empty string")
+        return v.strip().lower()
+
+
+class SeatReleaseResponse(BaseModel):
+    status: str
+    released: str | None = None
+
+
+class SeatAliasRequest(BaseModel):
+    session_key: str = Field(max_length=MAX_ADDR)
+    project: str = Field(max_length=MAX_ADDR)
+    # The ROLE, e.g. "orchestrator". Bound as "<project>-<alias>" and ADDED to
+    # the session's listen_set — never a rename of the seat.
+    alias: str = Field(max_length=MAX_ADDR)
+
+    @field_validator("session_key", "project", "alias", mode="before")
+    @classmethod
+    def alias_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("must be a non-empty string")
+        return v.strip().lower()
+
+
+class SeatAliasResponse(BaseModel):
+    status: str
+    seat: str
+    aliases: list[str] = []
+
+
+class SeatEntry(BaseModel):
+    seat: str
+    project: str | None = None
+    provider: str | None = None
+    host: str | None = None
+    aliases: list[str] = []
+    session_key: str | None = None
+    age_seconds: float
+    is_live: bool
+    reclaimable: bool
+
+
+class SeatListRequest(BaseModel):
+    project: str | None = None
+
+
+class SeatListResponse(BaseModel):
+    status: str
+    seats: list[SeatEntry] = []

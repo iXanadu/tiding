@@ -31,6 +31,38 @@ group* is a **subscription**, not a name — extra listen_set entries like the
 `foo` project group or a `#courseware` channel. Two agents never share an
 identity; they share subscriptions.
 
+### Seats: the server allocates identities, sessions don't invent them
+
+That rule used to be advice. It is now enforced: a session **claims** its
+address and engram hands back one nobody else holds.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"session_key":"claude-ab-projgamma","project":"projgamma","provider":"claude"}' \
+  http://localhost:8920/session/claim
+# → {"seat": "projgamma-claude-2", ...}
+```
+
+Three Claude sessions in one folder get `projgamma-claude`,
+`projgamma-claude-2`, `projgamma-claude-3` — all still listening on the
+`projgamma` group, so broadcasts reach every one of them. Before this they all
+computed the same name, shared ack-state, and **could not wake each other**.
+
+- **`session_key`** is stable per session (a launcher's, or derived from the
+  harness process). Re-claiming with it returns the *same* seat, so a bridge
+  restart never moves a running session's address.
+- **`preferred_seat`** is a request, not an assignment — granted when free.
+- **Roles** (`POST /session/alias`, e.g. `orchestrator`) add
+  `projgamma-orchestrator` as an *extra* address. Ordinals are unique but
+  meaningless; roles are meaningful but unknown at spawn, so they are separate
+  layers and you never choose between them.
+- **`POST /session/release`** frees a seat immediately; otherwise it is
+  reclaimed after a grace period — but **never** while undelivered mail is
+  addressed to it.
+
+The MCP bridge does all of this automatically. Design and rationale:
+[docs/design/session-registry.md](design/session-registry.md).
+
 ## Sending
 
 ```bash

@@ -1,5 +1,7 @@
 """Tests for inbox identity computation — including the per-session override."""
 
+import os
+
 import engram_mcp.identity as identity
 from engram_mcp.identity import compute_identity
 
@@ -386,9 +388,27 @@ class TestSeatFile:
 
     teardown_method = setup_method
 
-    def test_no_session_key_means_no_file(self, monkeypatch):
-        """Hand-launched sessions must not regress — they simply fall back."""
+    def test_no_launcher_key_still_gets_a_seat_file(self, monkeypatch):
+        """SEAT-3 reverses the old "no launcher, no seat file" contract.
+
+        Previously a hand-launched session got no session key, so no seat file,
+        so no way for its watcher to follow a re-seat — the structural
+        guarantee was reserved for launcher-spawned sessions. The key is now
+        DERIVED from the harness parent process, so the guarantee is universal.
+        """
         monkeypatch.delenv(identity.SESSION_KEY_ENV, raising=False)
+        path = identity.seat_file_path()
+        assert path is not None
+        assert "auto-" in path
+
+    def test_no_resolvable_key_means_no_file(self, monkeypatch):
+        """The genuine fallback: nothing to key on at all.
+
+        Must degrade to exactly the pre-SEAT-3 behaviour rather than raise —
+        a session whose process tree cannot be read still has to start.
+        """
+        monkeypatch.delenv(identity.SESSION_KEY_ENV, raising=False)
+        monkeypatch.setattr(identity, "derive_session_key", lambda: None)
         assert identity.seat_file_path() is None
         assert identity.read_seat_file() is None
 
@@ -461,3 +481,110 @@ class TestSeatFile:
         import pytest
         with pytest.raises(ValueError):
             identity.take_seat("two words")
+
+
+class TestAutoSessionKey:
+    """SEAT-3: a session key without a launcher.
+
+    Launch-time injection only ever covered sessions a launcher started. A
+    session opened by hand — the common case when someone decides AFTER
+    starting that two agents should co-work in one folder — had no key, so no
+    seat file, so its watcher could not follow a re-seat.
+    """
+
+    def setup_method(self):
+        identity.clear_seat()
+        identity._DISCOVERED_SEAT_PATH = None
+
+    teardown_method = setup_method
+
+    def test_bridge_keys_on_its_harness_parent(self, monkeypatch):
+        """The harness is the bridge's PARENT by construction: a stdio MCP
+        server is spawned as a direct child of the harness that speaks to it."""
+        monkeypatch.setattr(identity.os, "getppid", lambda: 4813)
+        monkeypatch.setattr(
+            identity, "_proc_info", lambda pid: (4812, "Fri Jul 24 10:29:35 2026")
+        )
+        key = identity.derive_session_key()
+        assert key == "auto-" + identity.hostname() + "-4813-fri-jul-24-10-29-35-2026"
+
+    def test_start_time_defeats_pid_reuse(self):
+        """A recycled pid must yield a DIFFERENT key, not silently inherit a
+        dead session's seat."""
+        a = identity.auto_session_key_for(4813, "Fri Jul 24 10:29:35 2026", "macmini")
+        b = identity.auto_session_key_for(4813, "Fri Jul 24 18:02:11 2026", "macmini")
+        assert a != b
+
+    def test_launcher_key_still_wins(self, monkeypatch):
+        """A launcher's key is preferred: it survives a respawn, a pid cannot."""
+        monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-ab-engram")
+        assert identity.resolve_session_key() == "claude-ab-engram"
+
+    def test_orphan_has_no_derived_key(self, monkeypatch):
+        """ppid <= 1 means no harness to anchor to — degrade, never guess."""
+        monkeypatch.setattr(identity.os, "getppid", lambda: 1)
+        assert identity.derive_session_key() is None
+
+    def test_watcher_discovers_the_bridge_seat_by_walking_ancestors(
+        self, monkeypatch, tmp_path
+    ):
+        """The hand-launched case end to end.
+
+        The bridge names its seat file after the HARNESS (its own parent). The
+        watcher is a deeper descendant — watcher -> shell -> harness — so its
+        own derived key names the SHELL and finds nothing. Walking up, it
+        reaches the harness and finds the file the bridge wrote.
+        """
+        monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path / "seats"))
+        monkeypatch.delenv(identity.SESSION_KEY_ENV, raising=False)
+        monkeypatch.setattr(identity, "hostname", lambda: "macmini")
+
+        # watcher(6177) -> zsh(6175) -> harness(4813) -> tmux server(4812)
+        tree = {
+            6177: (6175, "Fri Jul 24 10:42:49 2026"),
+            6175: (4813, "Fri Jul 24 10:42:49 2026"),
+            4813: (4812, "Fri Jul 24 10:29:35 2026"),
+            4812: (1, "Fri Jul 24 10:29:35 2026"),
+        }
+        monkeypatch.setattr(identity, "_proc_info", lambda pid: tree.get(pid))
+        monkeypatch.setattr(identity.os, "getpid", lambda: 6177)
+
+        # The bridge wrote its seat under the HARNESS pid.
+        harness_key = identity.auto_session_key_for(
+            4813, tree[4813][1], "macmini"
+        )
+        path = identity.seat_file_path(harness_key)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("engram-claude-2\n")
+
+        assert identity.discover_seat_file() == path
+        assert identity.read_seat_file() == "engram-claude-2"
+
+    def test_discovery_stops_at_the_nearest_ancestor(self, monkeypatch, tmp_path):
+        """Nearest wins, which is the right answer under nested harnesses —
+        and keeps the walk from reaching the tmux server, which is SHARED by
+        every session on the box and would hand them all one key."""
+        monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path / "seats"))
+        monkeypatch.delenv(identity.SESSION_KEY_ENV, raising=False)
+        monkeypatch.setattr(identity, "hostname", lambda: "macmini")
+        tree = {
+            10: (20, "start-a"),
+            20: (30, "start-b"),
+            30: (1, "start-c"),
+        }
+        monkeypatch.setattr(identity, "_proc_info", lambda pid: tree.get(pid))
+        monkeypatch.setattr(identity.os, "getpid", lambda: 10)
+
+        near = identity.seat_file_path(
+            identity.auto_session_key_for(20, "start-b", "macmini")
+        )
+        far = identity.seat_file_path(
+            identity.auto_session_key_for(30, "start-c", "macmini")
+        )
+        os.makedirs(os.path.dirname(near), exist_ok=True)
+        for p, seat in ((near, "near-seat"), (far, "far-seat")):
+            with open(p, "w") as fh:
+                fh.write(seat + "\n")
+
+        assert identity.read_seat_file() == "near-seat"

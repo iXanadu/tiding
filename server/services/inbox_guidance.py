@@ -11,9 +11,20 @@ from __future__ import annotations
 
 
 def derive_listen_set(reader_identity: str | None) -> list[str]:
-    """Reconstruct a listen_set from a reader_identity.
+    """APPROXIMATE a listen_set from a reader_identity. Fallback only.
 
-    Mirrors the MCP bridge's compute_identity():
+    This is a LOWER BOUND, not the truth, and callers must say so (ADDR-1). It
+    once mirrored the bridge's compute_identity(), back when a session's
+    identity WAS its project name. Since seats shipped it cannot: from
+    'engram-claude@macmini' there is no way to recover either the project group
+    address ('engram') or channel subscriptions ('#devagents') — both of which
+    the session really does receive mail on.
+
+    Under-reporting here is not cosmetic: this text reaches an agent at the
+    moment it is deciding how to address peers, and a session told it is not in
+    a channel may report that to its owner as fact. Prefer the real listen_set
+    from the client whenever it is supplied.
+
       - 'project@host'  → [project, machine:host, project@host]
       - 'machine:host'  → [machine:host]
       - None / unknown  → []
@@ -28,9 +39,25 @@ def derive_listen_set(reader_identity: str | None) -> list[str]:
     return [reader_identity]
 
 
-def send_guidance(to: str, reader_identity: str | None) -> str:
-    listen_set = derive_listen_set(reader_identity)
+def send_guidance(
+    to: str,
+    reader_identity: str | None,
+    listen_set: list[str] | None = None,
+) -> str:
+    """Addressing guidance echoed back to a sender.
+
+    ``listen_set`` is the sender's REAL set as computed by its own bridge. When
+    omitted (older bridge) we fall back to the approximation and label it, so a
+    reader is never handed a partial list presented as complete.
+    """
+    approximate = not listen_set
+    listen_set = listen_set or derive_listen_set(reader_identity)
     ri_display = reader_identity or "(unknown)"
+    qualifier = (
+        " (approximate — your bridge did not report it; a seat's project group "
+        "and channels cannot be recovered from the identity string)"
+        if approximate else ""
+    )
     return (
         "How inbox addressing works:\n"
         f"  • You just sent to '{to}'. Recipients see this when they call memory_inbox\n"
@@ -40,7 +67,8 @@ def send_guidance(to: str, reader_identity: str | None) -> str:
         "      - 'machine:<hostname>' (e.g. 'machine:macmini') for admin sessions\n"
         "  • To learn a recipient's address: ask the user, or use the sender\n"
         "    field of a message you already received.\n"
-        f"  • Your own listen_set this call: {listen_set} (as '{ri_display}').\n"
+        f"  • Your own listen_set this call: {listen_set} (as '{ri_display}')"
+        f"{qualifier}.\n"
         "  • Replies should use memory_reply, which handles addressing + thread\n"
         "    linking automatically. Do NOT reply by calling memory_send manually\n"
         "    with the sender's reader_identity — that won't land."

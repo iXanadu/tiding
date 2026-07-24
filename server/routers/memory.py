@@ -37,6 +37,7 @@ from server.models import (
     RosterResponse,
 )
 from server.services.identity import autocorrect_address, validate_listen_set
+from server.services.session_registry import SEAT_SCOPE
 from server.services.inbox_guidance import (
     ack_guidance,
     archive_guidance,
@@ -65,11 +66,12 @@ from server.services.memory_service import (
 
 logger = logging.getLogger(__name__)
 
-# Inbox and presence rows have their own lifecycle endpoints (send/ack/resolve/
-# archive; presence heartbeat). The generic set/forget path must NOT reach them
-# — otherwise a writer could overwrite a message body (wiping read_by /
-# from_principal) or delete mail outside its lifecycle.
-_RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE}
+# Inbox, presence and seat rows have their own lifecycle endpoints (send/ack/
+# resolve/archive; presence heartbeat; seat claim/release). The generic
+# set/forget path must NOT reach them — otherwise a writer could overwrite a
+# message body (wiping read_by / from_principal), delete mail outside its
+# lifecycle, or hand itself an address the registry believes someone else holds.
+_RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE, SEAT_SCOPE}
 
 
 def _reject_reserved_scope(scope: str | None) -> None:
@@ -77,7 +79,8 @@ def _reject_reserved_scope(scope: str | None) -> None:
         raise HTTPException(
             status_code=400,
             detail=f"scope '{scope}' is managed by its own endpoints "
-                   f"(inbox: /memory/send, presence: /memory/presence) — "
+                   f"(inbox: /memory/send, presence: /memory/presence, "
+                   f"seat: /session/claim) — "
                    f"not writable via /memory/set or /memory/forget.",
         )
 
@@ -317,7 +320,11 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]
         if len(corrected) == 1:
-            guidance = send_guidance(to=first_to, reader_identity=req.from_)
+            guidance = send_guidance(
+                to=first_to,
+                reader_identity=req.from_,
+                listen_set=req.listen_set,
+            )
             if first_corrected:
                 guidance = (
                     f"⚠️  ADDRESS AUTO-CORRECTED: '{first_corrected}' → '{first_to}'\n"
