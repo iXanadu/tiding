@@ -3,6 +3,7 @@
 import json
 
 import httpx
+import pytest
 import respx
 from unittest.mock import patch
 
@@ -513,3 +514,64 @@ async def test_collision_clear_removes_banner(respx_mock):
     srv._SEAT_COLLISION = {"live_sessions": 2, "providers": ["claude"]}  # was colliding
     result = await memory_store(key="k", value="v")
     assert "SEAT COLLISION" not in result  # cleared by the clean heartbeat
+
+
+@pytest.mark.asyncio
+async def test_seat_claim_refreshes_and_does_not_stop_after_the_first(monkeypatch):
+    """The seat claim must RUN AGAIN, not once per session.
+
+    A seat row's last_used_at is its liveness signal. Claiming once froze that
+    timestamp at session start, so a running session's seat read as not-live
+    after the live window and became RECLAIMABLE after the grace period — at
+    which point a new session in the same project could take the address out
+    from under it, putting two sessions on one seat. That is the collision
+    seats exist to prevent, reintroduced by the mechanism meant to prevent it.
+    Observed live 2026-07-24 (three alive sessions all reporting live=false).
+    """
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-testkey")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity", lambda _d: ("proj-claude@host", []))
+
+    calls = []
+
+    async def _fake_claim(**kw):
+        calls.append(kw["session_key"])
+        return {"seat": "proj-claude", "is_new": False}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+
+    await srv._claim_seat("/tmp/proj")
+    await srv._claim_seat("/tmp/proj")
+    await srv._claim_seat("/tmp/proj")
+
+    assert len(calls) == 3, (
+        "the claim must refresh on every heartbeat; claiming once lets a live "
+        f"session's seat go stale and be reclaimed (got {len(calls)} calls)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_session_key_stops_claiming_permanently(monkeypatch):
+    """The one case that SHOULD latch: nothing to key a claim on."""
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: None)
+
+    calls = []
+
+    async def _fake_claim(**kw):
+        calls.append(kw)
+        return {}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+
+    await srv._claim_seat("/tmp/proj")
+    await srv._claim_seat("/tmp/proj")
+    assert calls == [], "with no session key there is nothing to claim"
+    assert srv._SEAT_UNCLAIMABLE is True

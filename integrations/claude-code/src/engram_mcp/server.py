@@ -305,13 +305,31 @@ _last_heartbeat = 0.0
 
 # SEAT-3: has this session claimed its allocated address yet?
 _SEAT_CLAIMED = False
+# True only when there is nothing to key a claim on (no session key). Permanent
+# for the session — distinct from _SEAT_CLAIMED, which must NOT stop re-claims.
+_SEAT_UNCLAIMABLE = False
 
 
 async def _claim_seat(project_dir: str | None) -> None:
-    """Claim this session's unique inbox address from the registry.
+    """Claim — and REFRESH — this session's unique inbox address.
 
-    Runs once per session, before the first heartbeat, so the seat is allocated
-    before this session is announced as live at it.
+    Runs on every heartbeat (which is itself throttled), not once per session.
+    The refresh is the load-bearing part and was missing in the first cut:
+
+    A seat row's ``last_used_at`` is its liveness signal. Claiming once meant
+    that timestamp froze at session start, so a running session's seat read as
+    not-live after 10 minutes and became RECLAIMABLE after the 2h grace — at
+    which point a new session in the same project could take the address out
+    from under it, leaving two sessions on one seat. That is precisely the
+    collision seats exist to prevent, reintroduced by the mechanism meant to
+    prevent it. Observed live 2026-07-24: three demonstrably-alive sessions all
+    reporting live=false, reclaimable=true.
+
+    The claim is idempotent on ``session_key`` and writes no embedding, so
+    re-claiming is cheap; it returns the same seat and refreshes the timestamp.
+    If this session's seat WAS taken while it was quiet, the re-claim discovers
+    that (its key no longer holds the row), allocates a fresh seat, and the
+    seat file carries the change to the watcher.
 
     FAILURE IS NON-FATAL BY DESIGN. On any error — engram unreachable, an old
     server with no /session/claim, no resolvable session key — the session
@@ -320,11 +338,12 @@ async def _claim_seat(project_dir: str | None) -> None:
     it: a session must never fail to start because the address service is down.
     """
     global _SEAT_CLAIMED
-    if _SEAT_CLAIMED:
+    if _SEAT_UNCLAIMABLE:
         return
     session_key = resolve_session_key()
     if not session_key:
-        _SEAT_CLAIMED = True  # nothing to key on; keep the local seat
+        # Nothing to key on — keep the locally-resolved seat, permanently.
+        globals()["_SEAT_UNCLAIMABLE"] = True
         return
     try:
         project = derive_project_name(remember_project_dir(project_dir or None))
@@ -347,9 +366,8 @@ async def _claim_seat(project_dir: str | None) -> None:
             # a watcher armed BEFORE this claim converges without a restart.
             take_seat(granted)
     except Exception:
-        # Leave _SEAT_CLAIMED False so the next heartbeat retries — a transient
-        # server blip should not cost this session its allocated address for
-        # the rest of its life.
+        # Best-effort: the next heartbeat retries. A transient server blip must
+        # not cost this session its address, and must not stop the refresh.
         pass
 
 

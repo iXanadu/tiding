@@ -16,6 +16,18 @@
   re-claim the same seat the way Claude does. Not an engram instability and no
   regression — grok works today on its launch-injected identity.
 
+- **SEAT-7** Seat liveness tracks TOOL ACTIVITY, not session existence. The
+  seat claim now refreshes on each heartbeat (fixing a frozen timestamp that
+  made live sessions look reclaimable), but the heartbeat only fires on tool
+  calls — so a session idle while its human is away still ages past the live
+  window and, after grace, becomes reclaimable while genuinely alive. The
+  right liveness proxy is the **watcher**: it polls on its own timer and lives
+  exactly as long as the session. Have it refresh the seat. Also revisit the
+  `same_slot` takeover shortcut, which permits a takeover at ~10 minutes of
+  quiet when provider+host match — too aggressive given liveness is
+  undercounted, and it cannot distinguish a harness restart from a distinct
+  peer. Pairs with MSG-5 (same underlying signal).
+
 - **MSG-5** Make LISTENING observable — the roster should report whether an
   address has a live **watcher**, not merely a live session. Today a session
   that never armed `engram-inbox-wait` is fully addressable and permanently
