@@ -16,11 +16,24 @@
   re-claim the same seat the way Claude does. Not an engram instability and no
   regression — grok works today on its launch-injected identity.
 
+- **MSG-5** Make LISTENING observable — the roster should report whether an
+  address has a live **watcher**, not merely a live session. Today a session
+  that never armed `engram-inbox-wait` is fully addressable and permanently
+  silent, and nothing reports it: mail looks delivered and simply never wakes
+  anyone. Wake is therefore reliable *by convention* (launcher env +
+  `/startup`) rather than by guarantee — currently 4/4 sessions armed, but
+  nothing enforces or surfaces that. Would also give senders the missing
+  "nobody is listening at that address" signal, which today is
+  indistinguishable from "not read yet." Highest-value item in the messaging
+  layer and small; the presence heartbeat already exists to carry the flag.
+
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
   released: the live roster carries entries days stale, all still reporting
   `state: running`, because self-reported state is never corrected once a
-  session dies. Mark entries past grace `presumed-dead` and let the cleanup
-  task drop rows past a retention horizon.
+  session dies (observed: a session reporting `running` four hours after it
+  died). Mark entries past grace `presumed-dead` and let the cleanup task
+  drop rows past a retention horizon. Pairs with MSG-5 — together they turn
+  "who is reachable" from last-known into truth.
 
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
