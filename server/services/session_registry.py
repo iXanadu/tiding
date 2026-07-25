@@ -56,11 +56,27 @@ SEAT_NAMESPACE = INBOX_NAMESPACE
 # longer live in the registry" mean the same thing to a reader.
 SEAT_LIVE_SECONDS = 600
 
-# Past this, a seat is RECLAIMABLE. Deliberately far beyond SEAT_LIVE_SECONDS: a
-# closed laptop, a session paused over lunch, or an overnight gap must NOT cost a
-# session its address. Between the two windows the seat is QUIET — reclaimable
-# only by a session that looks like the same slot (see seat_claim rule 3).
-SEAT_GRACE_SECONDS = 7200  # 2h
+# Past this, a seat is RECLAIMABLE.
+#
+# Deliberately very long, because RECLAMATION BUYS ALMOST NOTHING AND RISKS A
+# LOT. A session restarting with a stable session_key gets its own seat back
+# through the continuity check above, which has no age condition at all — so
+# reclamation serves exactly one purpose: letting a genuinely NEW session reuse
+# an abandoned ordinal to keep numbering tight. That is cosmetic.
+#
+# What it risks is not cosmetic. Liveness is inferred from heartbeats, and
+# heartbeats only fire on tool calls, so a session doing long uninterrupted
+# work looks identical to a dead one — and it is precisely the session you
+# least want to disturb. Observed 2026-07-24: a live session, quiet 4.8h while
+# running its own build, with its seat reading reclaimable while it was still
+# listening. Reclaiming it would have handed its address to a newcomer.
+#
+# So the window is set past any plausible quiet stretch rather than past a
+# plausible pause. The real fix is a liveness signal that does not depend on
+# the agent speaking (the watcher, which polls on its own timer — SEAT-7);
+# until that exists, this is the conservative trade: slightly untidier
+# ordinals, no stolen addresses.
+SEAT_GRACE_SECONDS = 86400  # 24h
 
 # Refuse rather than allocate unbounded. A project needing >64 concurrent
 # sessions is a misconfiguration (usually a session_key that changes every
@@ -303,17 +319,24 @@ async def seat_claim(
                 continue  # live holder; never evict
 
             prior = _md(row)
-            reclaimable = row["last_used_at"] < grace_cutoff
-            # QUIET seat, same logical slot: a harness that fully restarted gets
-            # a new session_key, so continuity-by-key cannot recognise it. Letting
-            # it re-take its own seat is what keeps a restart from drifting to -2
-            # while its peers hold -1.
-            same_slot = (
-                prior.get("provider") == provider
-                and prior.get("host") == host
-                and host is not None
-            )
-            if not (reclaimable or same_slot):
+            # ONE condition for takeover: the seat is past the full grace window.
+            #
+            # There used to be a "same slot" shortcut here — same provider, same
+            # host, past the LIVE window — meant to let a harness that restarted
+            # with a new session_key re-take its own seat instead of drifting to
+            # an ordinal. It permitted a takeover after only ~10 minutes of
+            # quiet, and it could not tell "my own restart" from "a different
+            # session that happens to match provider and host". With liveness
+            # inferred from tool activity, ten minutes of quiet is an ordinary
+            # state for a working session, so the shortcut was a live-address
+            # steal waiting for the right timing.
+            #
+            # Dropping it costs only tidiness, and only in the narrow case of a
+            # session whose KEY changed (a hand-launched restart): it gets a
+            # fresh ordinal rather than its old one. Launcher-spawned sessions
+            # are unaffected — their key is stable, so continuity returns their
+            # seat directly.
+            if row["last_used_at"] >= grace_cutoff:
                 continue
             if await _has_undelivered_mail(conn, seat):
                 continue  # R8: never hand a stranger someone else's mail

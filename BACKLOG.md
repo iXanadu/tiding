@@ -20,7 +20,9 @@
   seat claim now refreshes on each heartbeat (fixing a frozen timestamp that
   made live sessions look reclaimable), but the heartbeat only fires on tool
   calls — so a session idle while its human is away still ages past the live
-  window and, after grace, becomes reclaimable while genuinely alive. The
+  window and, after grace, becomes reclaimable while genuinely alive (grace is
+  now 24h and the ~10min same-slot shortcut is gone, so the exposure is much
+  narrower — but time cannot distinguish quiet from dead at any setting). The
   right liveness proxy is the **watcher**: it polls on its own timer and lives
   exactly as long as the session. Have it refresh the seat. Also revisit the
   `same_slot` takeover shortcut, which permits a takeover at ~10 minutes of

@@ -339,3 +339,49 @@ async def test_fresh_presence_vetoes_a_takeover_even_if_the_seat_looks_stale(
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", PROJ)
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_but_live_session_keeps_its_address(client, db_pool):
+    """The steal that liveness-by-tool-activity makes possible.
+
+    A session doing long uninterrupted work sends no heartbeats and is
+    therefore indistinguishable from a dead one — and it is exactly the
+    session you least want to disturb. Observed 2026-07-24: a live session
+    quiet 4.8h during its own build, seat reading reclaimable while it was
+    still listening.
+
+    Takeover now needs the full grace window, which is set past any plausible
+    quiet stretch rather than past a plausible pause. The old "same provider,
+    same host, past the LIVE window" shortcut allowed this at ~10 minutes.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "heads-down")).json()
+    # Quiet for hours — well past the old 2h grace and the old shortcut, but
+    # inside the window a working session can plausibly occupy.
+    await _age_seat(db_pool, a["seat"], 6 * 3600)
+
+    # A newcomer matching provider AND host — what the shortcut used to admit.
+    newcomer = (await _claim(client, "newcomer", host=None)).json()
+    assert newcomer["seat"] != a["seat"], (
+        "a session quiet for hours is not evidence of death; its address must hold"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_with_a_stable_key_never_needs_reclamation(client, db_pool):
+    """Why hardening reclamation is nearly free.
+
+    Continuity is keyed on session_key and has NO age condition, so a launcher-
+    spawned session restarting gets its own seat back however long it was
+    away. Reclamation therefore only ever serves ordinal tidiness for a
+    genuinely NEW session — which is why it can afford to be conservative.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "stable-key")).json()
+    await _age_seat(db_pool, a["seat"], 30 * 24 * 3600)  # a month quiet
+    back = (await _claim(client, "stable-key")).json()
+    assert back["seat"] == a["seat"], "a stable key must reclaim its own seat at any age"
+    assert back["is_new"] is False
+    await _clear(db_pool)
