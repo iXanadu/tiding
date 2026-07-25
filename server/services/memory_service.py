@@ -644,6 +644,11 @@ async def inbox_list(
 
 PRESENCE_NAMESPACE = INBOX_NAMESPACE
 PRESENCE_SCOPE = "presence"
+# Seat-registry constants live here, beside inbox/presence, so the heartbeat
+# can refresh a seat row without importing session_registry (which imports
+# THIS module — the reverse direction would be circular).
+SEAT_SCOPE = "seat"
+SEAT_USER_ID = "global"
 PRESENCE_STALE_AFTER_SECONDS = 600  # 10 min without a heartbeat → stale
 
 
@@ -734,6 +739,27 @@ async def presence_update(
             """,
             value, json.dumps(metadata),
             PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
+        )
+        # SEAT-8: a presence heartbeat is THE liveness signal, so the seat row
+        # must inherit it. Without this the seat kept its own clock — set once
+        # at claim time and never refreshed — and the two disagreed about the
+        # same session: observed live 2026-07-24, the roster reporting a
+        # session fresh at 374s while its seat read is_live=false and
+        # reclaimable=true, at which point a new session could have been
+        # granted an address a running one still held.
+        #
+        # Server-side on purpose: the client-side refresh only reaches a
+        # session once its bridge restarts, so it cannot rescue the sessions
+        # already running. This one takes effect for every heartbeating
+        # session the moment it deploys.
+        await conn.execute(
+            """
+            UPDATE memories SET last_used_at = NOW()
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND key = $5
+            """,
+            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+            project, f"seat/{identity}",
         )
         if updated == "UPDATE 0":
             embedding = await embed(value)

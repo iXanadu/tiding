@@ -42,12 +42,13 @@ from server.services.memory_service import (
     INBOX_NAMESPACE,
     INBOX_OPEN,
     INBOX_SCOPE,
+    PRESENCE_SCOPE,
     SEAT_EXEMPT_IDENTITIES,
+    SEAT_SCOPE,
+    SEAT_USER_ID,
 )
 
 SEAT_NAMESPACE = INBOX_NAMESPACE
-SEAT_SCOPE = "seat"
-SEAT_USER_ID = "global"
 
 # A seat whose holder beat within this window is LIVE — never reassigned, and
 # the window that distinguishes a duplicate session_key from a genuine restart.
@@ -108,6 +109,36 @@ async def _has_undelivered_mail(conn, seat: str) -> bool:
         INBOX_NAMESPACE, INBOX_SCOPE, seat, INBOX_OPEN,
     )
     return row is not None
+
+
+async def _presence_is_fresh(conn, seat: str, project: str) -> bool:
+    """Is a session independently heartbeating at this address right now?
+
+    The seat row and the presence row are two clocks on the same session, and
+    they disagreed in production: the roster reported a session fresh at 374
+    seconds while its seat read not-live and reclaimable, because the seat's
+    timestamp was written once at claim time and never refreshed. Reclaiming
+    on the seat clock alone would therefore hand a running session's address
+    to a newcomer — the collision seats exist to prevent, arriving through
+    reclamation instead of allocation.
+
+    So takeover consults BOTH: presence is the signal that the holder is
+    actually alive, and a fresh one vetoes reclamation outright. Defence in
+    depth alongside the heartbeat now refreshing the seat directly — that fix
+    keeps the clocks together, this one is what holds if they ever drift
+    again.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT last_used_at FROM memories
+        WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND key = $4
+        """,
+        SEAT_NAMESPACE, PRESENCE_SCOPE, project, f"presence/{seat}",
+    )
+    if row is None:
+        return False
+    age = (datetime.now(timezone.utc) - row["last_used_at"]).total_seconds()
+    return age < SEAT_LIVE_SECONDS
 
 
 async def _try_insert(conn, seat: str, project: str, meta: dict) -> bool:
@@ -286,6 +317,8 @@ async def seat_claim(
                 continue
             if await _has_undelivered_mail(conn, seat):
                 continue  # R8: never hand a stranger someone else's mail
+            if await _presence_is_fresh(conn, seat, project):
+                continue  # SEAT-8: an independently-live session holds this
 
             if await _try_takeover(conn, seat, project, meta,
                                    older_than=live_cutoff):

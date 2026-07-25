@@ -16,7 +16,7 @@
   re-claim the same seat the way Claude does. Not an engram instability and no
   regression — grok works today on its launch-injected identity.
 
-- **SEAT-7** Seat liveness tracks TOOL ACTIVITY, not session existence. The
+- **SEAT-7** Seat liveness still tracks TOOL ACTIVITY, not session existence. The
   seat claim now refreshes on each heartbeat (fixing a frozen timestamp that
   made live sessions look reclaimable), but the heartbeat only fires on tool
   calls — so a session idle while its human is away still ages past the live

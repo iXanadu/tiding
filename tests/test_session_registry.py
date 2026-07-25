@@ -273,3 +273,69 @@ async def test_readback_carries_provider_so_a_launcher_need_not_infer_it(
     assert entry["provider"] == "grok"
     assert entry["seat"].startswith(f"{PROJ}-grok")
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
+    client, db_pool
+):
+    """SEAT-8: the presence heartbeat must keep the seat row fresh.
+
+    The seat and the presence row are two clocks on one session. The seat's
+    was written once at claim time and never refreshed, so they disagreed in
+    production: the roster reported a session fresh at 374s while its seat
+    read is_live=false, reclaimable=true — at which point a newcomer could be
+    granted an address a running session still held.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "beating")).json()
+    # Age the seat past the grace window, as a long-running session's would.
+    await _age_seat(db_pool, a["seat"], SEAT_GRACE_SECONDS + 600)
+
+    listed = (await client.post("/session/seats",
+                                json={"session_key": "beating"})).json()["seats"][0]
+    assert listed["is_live"] is False  # stale, pre-heartbeat
+
+    # One heartbeat at that identity — exactly what a live session sends.
+    beat = await client.post("/memory/presence", json={
+        "identity": a["seat"], "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "n1",
+    })
+    assert beat.status_code == 200
+
+    after = (await client.post("/session/seats",
+                               json={"session_key": "beating"})).json()["seats"][0]
+    assert after["is_live"] is True, "a heartbeating session must not read as dead"
+    assert after["reclaimable"] is False, "and its address must not be reclaimable"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", PROJ)
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_fresh_presence_vetoes_a_takeover_even_if_the_seat_looks_stale(
+    client, db_pool
+):
+    """Defence in depth: if the two clocks ever drift again, presence wins.
+
+    A seat aged past grace is normally reclaimable. But if something is
+    independently heartbeating at that address it is ALIVE, and handing its
+    address to a newcomer would put two sessions on one seat.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "quiet-but-alive")).json()
+    await _age_seat(db_pool, a["seat"], SEAT_GRACE_SECONDS + 600)
+    await client.post("/memory/presence", json={
+        "identity": a["seat"], "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "n1",
+    })
+    # Re-age ONLY the seat row, simulating the two clocks disagreeing.
+    await _age_seat(db_pool, a["seat"], SEAT_GRACE_SECONDS + 600)
+
+    newcomer = (await _claim(client, "newcomer", host="otherbox")).json()
+    assert newcomer["seat"] != a["seat"], (
+        "a seat whose holder is independently heartbeating must not be reclaimed"
+    )
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", PROJ)
+    await _clear(db_pool)
