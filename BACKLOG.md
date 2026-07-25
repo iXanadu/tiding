@@ -27,6 +27,16 @@
   recovery and anything written since the last dump is unrecoverable.
   Decide whether the operational cost is worth closing that window.
 
+- **AUDIT-1** `audit_log` has **zero rows** — the table ships with the
+  principals work and nothing ever writes to it. So there is no write trail:
+  the store cannot answer "who wrote what, when." Proven costly on
+  2026-07-24, when "did a shut-down agent store its findings?" needed three
+  inferential DB queries by hand instead of one lookup against an append-only
+  log, and still could not fully rule out an overwrite. Compounding factors:
+  there is no `updated_at` column, and `last_used_at` bumps on **reads**, so
+  it is useless as a write signal. Decide what to record (writes at minimum:
+  principal, key, scope, project, timestamp) and its retention.
+
 ## Needs decision
 
 - **SEC-7** Decide whether `/memory/set` should reject unknown fields
@@ -54,6 +64,12 @@
   single-session world because `/startup` fetches exact keys and everything
   else is invisible by construction. What the owner's handoff direction gates
   is this item's PRIORITY, not its validity.
+  **Live incident the same evening:** an agent was shut down mid-job and the
+  question "did it store anything?" could not be answered from any client —
+  semantic search cannot establish absence, and eight differently-phrased
+  searches returning nothing is evidence, not proof. Answering it took direct
+  SQL. The real form of this capability is not a multi-session nicety; it is
+  "did an agent's work survive its own shutdown."
 
 - **MEM-3** A lifecycle verb for memories — resolve/supersede, copying the
   inbox's existing pattern rather than inventing one (same table, same
