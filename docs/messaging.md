@@ -88,10 +88,9 @@ as "projgamma (claude)" hides the only thing that tells them apart.
 Watch the truncation default. The ordinal is the **tail** of the address, and
 both `text-overflow: ellipsis` in CSS and SwiftUI's default truncate at the
 tail — so on a narrow row or a long project name the one character that
-distinguishes the two sessions is the first thing dropped, collapsing them to
-identical-looking rows through the renderer. Middle-truncate any address label
-so the tail survives. (Found by agentbeast-app in its SwiftUI picker,
-2026-07-24; the CSS form has the identical failure.)
+distinguishes two sessions is the first thing dropped, collapsing them into
+identical-looking rows through the renderer rather than through the address.
+Middle-truncate any address label so the tail survives.
 
 The MCP bridge does all of this automatically. Design and rationale:
 [docs/design/session-registry.md](design/session-registry.md).

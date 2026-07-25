@@ -239,6 +239,39 @@ Store or update a memory.
 | `tags` | string | `""` | Comma-separated keywords for search boosting |
 | `tags_search` | string | `""` | Additional search-optimized tags |
 | `expiration_days` | int | `0` | `0` = never expires (default — engram is a durable store). Set a positive value only for genuinely ephemeral memories. |
+| `if_match` | string | `null` | Optional **conditional write**. Set it to the `version` you last read and the write proceeds only if the stored value is unchanged; otherwise `409`. `""` asserts the key does not exist yet (create-only). Omit for an unconditional write. |
+
+Response fields worth knowing:
+
+| Field | Meaning |
+|---|---|
+| `created` | `false` means this write **replaced** an existing value. Memory has no session dimension, so two writers on one key overwrite each other — this makes an unintended overwrite visible. |
+| `version` | Content hash of what is now stored. Pass it back as `if_match` on a follow-up write. |
+| `if_match_applied` | `true` only if the conditional guard actually ran. **Anything else — `false`, or the field missing on an older server — means the write was NOT guarded.** Never read a missing field as success. |
+
+#### Conditional writes (read-modify-write)
+
+When several writers edit *parts* of one shared value, a plain write silently
+discards whoever wrote last-but-one. `if_match` turns that into a refusal:
+
+```bash
+# 1. read, and keep the version
+curl -s ... -d '{"namespace":"main","key":"team/handoff"}' localhost:8920/memory/get
+# → {"memory": {"value": "...", "version": "3bfc269594ef6492", ...}}
+
+# 2. write back, conditional on nothing having changed underneath you
+curl -s ... -d '{"namespace":"main","key":"team/handoff","value":"<edited>",
+                 "if_match":"3bfc269594ef6492"}' localhost:8920/memory/set
+# → 200 {"version": "<new>", "if_match_applied": true}
+# → 409 {"detail": {"error": "version_conflict",
+#                   "current_value": "...", "current_version": "..."}}
+```
+
+A `409` hands back the **current value**, so the retry is one round trip: re-apply
+your edit to what you were given and resubmit with `current_version`. Bound the
+retries (3 is plenty) and surface the failure rather than falling back to an
+unconditional write — that would reintroduce exactly the overwrite you were
+guarding against.
 
 ```bash
 curl -X POST http://localhost:8920/memory/set \

@@ -106,13 +106,22 @@ roster exists precisely so no agent has to guess).
 
 ## A second session in the same folder (seats)
 
+**If you run one agent per folder, nothing here changes and nothing is
+required of you.** Your session's address stays the plain project name
+(`myproject`), exactly as before. Read on only when a second agent joins.
+
 Put two agent sessions in one project folder — same provider or not — and each
 **claims a distinct address from the server automatically**. No manual
-assignment, and no way for the two to collide. The first Claude session in
-`myproject` gets `myproject-claude`, the second `myproject-claude-2`, a Grok
-session `myproject-grok`. All of them keep the shared `myproject` group address
-(broadcasts reach everyone); each also gets its own DM address and independent
-read-state.
+assignment, and no way for the two to collide. The first session keeps
+`myproject`; the second is granted `myproject-claude` (or `myproject-grok`),
+and a third `myproject-claude-2`. All of them keep the shared `myproject`
+group address (broadcasts reach everyone); each also gets its own DM address
+and independent read-state.
+
+The rule is simply *first come keeps what it asked for*: a session requests
+the address it would have used anyway, and the server only hands out something
+different when that one is already taken. So the feature costs nothing until
+the moment you actually need it.
 
 This is the **session registry**. Addressing is exactly two layers:
 
