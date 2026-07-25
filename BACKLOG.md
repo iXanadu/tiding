@@ -16,19 +16,18 @@
   re-claim the same seat the way Claude does. Not an engram instability and no
   regression — grok works today on its launch-injected identity.
 
-- **SEAT-7** Seat liveness still tracks TOOL ACTIVITY, not session existence. The
-  seat claim now refreshes on each heartbeat (fixing a frozen timestamp that
-  made live sessions look reclaimable), but the heartbeat only fires on tool
-  calls — so a session idle while its human is away still ages past the live
-  window and, after grace, becomes reclaimable while genuinely alive (grace is
-  now 24h and the ~10min same-slot shortcut is gone, so the exposure is much
-  narrower — but time cannot distinguish quiet from dead at any setting). The
-  right liveness proxy is the **watcher**: it polls on its own timer and lives
-  exactly as long as the session. Have it refresh the seat. Also revisit the
-  `same_slot` takeover shortcut, which permits a takeover at ~10 minutes of
-  quiet when provider+host match — too aggressive given liveness is
-  undercounted, and it cannot distinguish a harness restart from a distinct
-  peer. Pairs with MSG-5 (same underlying signal).
+- **SEAT-7** Seat liveness tracks TOOL ACTIVITY, not session existence.
+  Heartbeats fire only on tool calls, so a session working uninterrupted (or
+  idle while its human is away) still ages past the live window — and after
+  grace its address becomes reclaimable while it is genuinely alive and
+  listening. Exposure is now narrow (grace is 24h, takeover requires the full
+  window, and fresh presence vetoes it) but **no time-based setting can
+  distinguish quiet from dead** — a bigger number is not a different kind of
+  answer. The right proxy is the **watcher**: it polls on its own timer and
+  lives exactly as long as the session, so it reports existence rather than
+  activity. Have it refresh the seat. Pairs with MSG-5 — same underlying
+  signal, and AgentBeast is supplying a `watcher_alive` process-truth field to
+  consume rather than each side inventing one.
 
 - **MSG-5** Make LISTENING observable — the roster should report whether an
   address has a live **watcher**, not merely a live session. Today a session
@@ -48,6 +47,16 @@
   died). Mark entries past grace `presumed-dead` and let the cleanup task
   drop rows past a retention horizon. Pairs with MSG-5 — together they turn
   "who is reachable" from last-known into truth.
+
+- **MSG-6** Two properties of the transport are UNTESTED — not lightly
+  tested, never exercised — and both are engram's rail rather than a client's:
+  (a) **mid-job interrupt wake.** Every wake proven to date is of a session
+  dormant BETWEEN turns. Whether inbound mail reaches a session stalled
+  mid-task has never been tried, and any "keep a worker moving" pattern rests
+  entirely on it. (b) **cross-machine delivery.** Clients on other boxes point
+  at this server; nothing has been verified across that boundary. Each is a
+  single deliberate test. Until they run, both are assumptions wearing the
+  costume of facts.
 
 - **DR-3** Consider enabling WAL archiving. Recovery granularity today is
   "the last dump" — `archive_mode=off`, so there is no point-in-time
