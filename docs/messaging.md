@@ -95,6 +95,55 @@ Middle-truncate any address label so the tail survives.
 The MCP bridge does all of this automatically. Design and rationale:
 [docs/design/session-registry.md](design/session-registry.md).
 
+### Is anyone listening? (`watcher_alive`)
+
+A session is dormant between turns. It only learns that mail arrived because a
+**watcher** (`engram-inbox-wait`) is running beside it and wakes it. A session
+that never armed one is fully addressable and *permanently silent*: mail is
+accepted, stored, and read by nobody until a human types into that terminal.
+
+That state used to be invisible. "Nobody is listening at this address" looked
+exactly like "not read yet." The roster now reports it:
+
+```bash
+curl -s ... -d '{"project":"projgamma"}' http://localhost:8920/memory/roster
+# → {"entries":[{"identity":"projgamma-claude", "state":"running",
+#                "watcher_alive": true, "watcher_last_seen":"2026-07-25T22:40:11Z", ...}]}
+```
+
+`watcher_alive` is **three-valued, and the third value matters**:
+
+| value | meaning |
+|-------|---------|
+| `true` | a watcher beat recently — mail will wake this session |
+| `false` | a watcher used to beat here and has stopped — **addressable but deaf** |
+| `null` | no watcher has ever beaten here: **no basis**, not a "no" |
+
+**Never coerce `null` to `false`.** Absent is not dead. That conflation is what
+once let a live session's address be handed to somebody else.
+
+Two rules for consumers:
+
+- **`watcher_alive: false` is not a reclaim signal.** A session can be doing
+  real work with a dead watcher. It is unreachable, not gone — "don't expect a
+  reply", never "take the address."
+- **`state` and `watcher_alive` are independent.** The pair worth acting on is
+  `state: running` with `watcher_alive: false`: running, addressable, and deaf.
+
+The watcher beat also fixes a subtler problem. The ordinary heartbeat rides
+tool calls, so it measures *activity* — a session heads-down on a long build
+stops beating and ages toward reclaimable while it is alive and listening. No
+timeout can tell quiet from dead; a bigger number is not a different kind of
+answer. The watcher polls on its own timer and lives exactly as long as the
+session, so it measures *existence*, and its beat refreshes both the presence
+row and the seat.
+
+Arm one at session start and leave it running:
+
+```bash
+engram-inbox-wait --follow --project-dir /path/to/repo
+```
+
 ## Sending
 
 ```bash

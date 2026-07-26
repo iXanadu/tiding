@@ -34,7 +34,11 @@ import httpx
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
-from engram_mcp.identity import compute_identity, reader_to_address
+from engram_mcp.identity import (
+    compute_identity,
+    derive_project_name,
+    reader_to_address,
+)
 
 # Exit code for auth failure — distinct from 0 (clean) so a Monitor-armed
 # session sees the watcher die with a reason instead of it silently
@@ -148,6 +152,30 @@ async def _poll(client, listen_set, reader_identity, seen: set) -> list:
     return fresh
 
 
+async def _beat(client, reader_identity: str, project_dir: str | None) -> None:
+    """Tell the server an EAR is alive at this address (MSG-5, SEAT-7).
+
+    Best-effort and deliberately silent on failure: a session's ability to
+    wake must never depend on the bookkeeping that reports it can.
+
+    Why the watcher and not the bridge: the bridge heartbeat rides tool calls,
+    so it measures ACTIVITY — a session heads-down on a long build stops
+    beating and ages toward reclaimable while it is alive and listening. This
+    process polls on its own timer and lives exactly as long as the session,
+    so it measures EXISTENCE. It is also the only process whose presence means
+    inbound mail actually reaches somebody.
+    """
+    try:
+        await client.presence_update(
+            identity=reader_identity.split("@", 1)[0],
+            project=derive_project_name(project_dir),
+            project_dir=project_dir,
+            watcher=True,
+        )
+    except Exception:
+        pass
+
+
 async def _run(args) -> int:
     reader_identity, listen_set = compute_identity(args.project_dir or None)
     if args.address:
@@ -190,6 +218,7 @@ async def _run(args) -> int:
                         file=sys.stderr, flush=True,
                     )
                     reader_identity, listen_set = new_identity, new_listen
+            await _beat(client, reader_identity, args.project_dir or None)
             try:
                 fresh = await _poll(client, listen_set, reader_identity, seen)
             except Exception as e:

@@ -563,6 +563,11 @@ class PresenceUpdateRequest(BaseModel):
     # one seat" misconfiguration (shared acks, mutual self-echo drop). None =
     # legacy client; collision tracking skipped for that heartbeat.
     session_nonce: str | None = None
+    # MSG-5: this beat came from the inbox WATCHER, not the session itself.
+    # Routed to a narrow write that records only "an ear is alive here" — it
+    # carries no state and joins no nonce map, because the watcher shares its
+    # session's identity and would otherwise look like a second live session.
+    watcher: bool = False
 
     @field_validator("identity", "project", mode="before")
     @classmethod
@@ -595,6 +600,13 @@ class RosterEntry(BaseModel):
     live_sessions: int = 1
     collision: bool = False
     providers_seen: list[str] = []  # providers across live sessions (collision detail)
+    # MSG-5: is anyone actually LISTENING at this address? True = a watcher
+    # beat recently; False = one used to beat and has gone quiet; None = no
+    # watcher has ever beaten here, so there is no basis. None is never
+    # coerced to False — absent is not dead. The state worth acting on is
+    # is_stale=False with watcher_alive=False: running, addressable, and deaf.
+    watcher_alive: bool | None = None
+    watcher_last_seen: datetime | None = None
 
 
 class RosterRequest(BaseModel):

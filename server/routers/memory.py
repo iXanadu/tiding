@@ -62,6 +62,7 @@ from server.services.memory_service import (
     memory_search,
     memory_set,
     presence_update,
+    presence_watcher_beat,
     roster_list,
 )
 
@@ -542,6 +543,16 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
     transitions (running → awaiting-input → done). Engram never scrapes."""
     check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
     try:
+        if req.watcher:
+            # MSG-5/SEAT-7: a watcher beat proves an EAR is alive, which is a
+            # different claim from the session's own state. It refreshes
+            # liveness (presence + seat) without touching anything the session
+            # reported, and never reports a collision — one watcher per
+            # session is the correct arrangement, not a misconfiguration.
+            await presence_watcher_beat(identity=req.identity, project=req.project)
+            return PresenceUpdateResponse(
+                status="ok", identity=req.identity, state=req.state, collision=None
+            )
         collision = await presence_update(
             identity=req.identity,
             project=req.project,

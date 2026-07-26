@@ -206,8 +206,15 @@ class MemoryClient:
         channels: list[str] | None = None,
         session_nonce: str | None = None,
         project_dir: str | None = None,
+        watcher: bool = False,
     ) -> dict:
-        """Self-reported liveness heartbeat (MSG-4)."""
+        """Self-reported liveness heartbeat (MSG-4).
+
+        ``watcher=True`` marks the beat as coming from the inbox watcher
+        rather than the session: it records that an EAR is alive at this
+        address (MSG-5) and refreshes liveness (SEAT-7) without touching the
+        state the session reported.
+        """
         return await self._request(
             "POST",
             "/memory/presence",
@@ -219,6 +226,7 @@ class MemoryClient:
                 "overlays": overlays or [],
                 "channels": channels or [],
                 "session_nonce": session_nonce,
+                "watcher": watcher,
             },
             headers=self._provenance_headers(project_dir),
         )

@@ -254,3 +254,47 @@ def test_no_plaintext_warning_for_localhost_or_https(capsys):
     _warn_plaintext_url("http://127.0.0.1:8920")
     _warn_plaintext_url("https://engram.example.com")
     assert capsys.readouterr().err == ""
+
+
+# --- MSG-5: the watcher reports that an EAR is alive -----------------------
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_watcher_beats_presence_each_poll(respx_mock, capsys):
+    """The watcher is the only process whose presence means mail wakes anyone.
+
+    Before this it polled silently, so engram had no way to tell a listening
+    session from a permanently deaf one — and the roster reported both as
+    running.
+    """
+    beat = respx_mock.post("/memory/presence").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "identity": "engram",
+                                               "state": "running", "collision": None})
+    )
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [_msg(1)]})
+    )
+    rc = await _run(_Args(include_existing=True))
+    assert rc == 0
+    assert beat.called
+    sent = json.loads(beat.calls[0].request.content)
+    assert sent["watcher"] is True
+    # Carries no session state and no nonce: it must neither overwrite what the
+    # session reported nor read as a second live session on the same identity.
+    assert sent.get("session_nonce") is None
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_beat_failure_never_stops_a_wake(respx_mock, capsys):
+    """Bookkeeping must not gate delivery.
+
+    If reporting "I am listening" could break listening, the feature would
+    cost more than it buys.
+    """
+    respx_mock.post("/memory/presence").mock(return_value=httpx.Response(500, json={}))
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [_msg(7)]})
+    )
+    rc = await _run(_Args(include_existing=True))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out.strip())["id"] == "inbox/7"

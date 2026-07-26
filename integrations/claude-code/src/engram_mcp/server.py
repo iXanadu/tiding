@@ -945,6 +945,7 @@ async def memory_roster(
         )
     lines = []
     collisions = []
+    deaf = []
     for e in entries:
         stale = " ⚠️ STALE" if e.get("is_stale") else ""
         age = int(e.get("age_seconds") or 0)
@@ -954,11 +955,32 @@ async def memory_roster(
             provs = ", ".join(e.get("providers_seen") or []) or "?"
             clash = f" ⛔ {n} LIVE SESSIONS on this ONE identity ({provs})"
             collisions.append(e["identity"])
+        # MSG-5: three-valued, and rendered as three states. '?' is not a
+        # softer 'no' — it means no watcher has ever reported here, which is
+        # a different thing from one that stopped.
+        wa = e.get("watcher_alive")
+        if wa is True:
+            ear = " 👂 listening"
+        elif wa is False:
+            ear = " 🔇 NOT LISTENING"
+            if not e.get("is_stale"):
+                deaf.append(e["identity"])
+        else:
+            ear = " ?listening"
         lines.append(
             f"  {e['identity']:<28} [{e.get('provider') or '?'}] "
-            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}{clash}"
+            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}{ear}{clash}"
         )
     head = f"Live roster ({len(entries)}):\n" + "\n".join(lines)
+    if deaf:
+        head += (
+            f"\n\n🔇 ADDRESSABLE BUT DEAF: {', '.join(deaf)} — running, and mail "
+            f"will be accepted and stored, but no watcher is alive to wake them, "
+            f"so nothing will be read until a human types into that session. "
+            f"Do not expect a reply. This is NOT grounds to take the address — "
+            f"a session can be doing real work with a dead watcher; it is "
+            f"unreachable, not gone."
+        )
     if collisions:
         head += (
             f"\n\n⛔ SEAT COLLISION on: {', '.join(collisions)} — multiple live "

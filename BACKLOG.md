@@ -16,37 +16,15 @@
   re-claim the same seat the way Claude does. Not an engram instability and no
   regression — grok works today on its launch-injected identity.
 
-- **SEAT-7** Seat liveness tracks TOOL ACTIVITY, not session existence.
-  Heartbeats fire only on tool calls, so a session working uninterrupted (or
-  idle while its human is away) still ages past the live window — and after
-  grace its address becomes reclaimable while it is genuinely alive and
-  listening. Exposure is now narrow (grace is 24h, takeover requires the full
-  window, and fresh presence vetoes it) but **no time-based setting can
-  distinguish quiet from dead** — a bigger number is not a different kind of
-  answer. The right proxy is the **watcher**: it polls on its own timer and
-  lives exactly as long as the session, so it reports existence rather than
-  activity. Have it refresh the seat. Pairs with MSG-5 — same underlying
-  signal, and AgentBeast is supplying a `watcher_alive` process-truth field to
-  consume rather than each side inventing one.
-
-- **MSG-5** Make LISTENING observable — the roster should report whether an
-  address has a live **watcher**, not merely a live session. Today a session
-  that never armed `engram-inbox-wait` is fully addressable and permanently
-  silent, and nothing reports it: mail looks delivered and simply never wakes
-  anyone. Wake is therefore reliable *by convention* (launcher env +
-  `/startup`) rather than by guarantee — currently 4/4 sessions armed, but
-  nothing enforces or surfaces that. Would also give senders the missing
-  "nobody is listening at that address" signal, which today is
-  indistinguishable from "not read yet." Highest-value item in the messaging
-  layer and small; the presence heartbeat already exists to carry the flag.
-
 - **SEAT-4** Roster lifecycle (registry Phase 2). Presence rows are never
   released: the live roster carries entries days stale, all still reporting
   `state: running`, because self-reported state is never corrected once a
   session dies (observed: a session reporting `running` four hours after it
   died). Mark entries past grace `presumed-dead` and let the cleanup task
-  drop rows past a retention horizon. Pairs with MSG-5 — together they turn
-  "who is reachable" from last-known into truth.
+  drop rows past a retention horizon. **Narrowed by MSG-5:** a dead session's
+  watcher dies with it, so `watcher_alive` flipping to `false` is now the
+  positive death signal `is_stale` never had — what remains is acting on it
+  (correcting the stale `running`, and a retention horizon for the rows).
 
 - **MSG-6** Two properties of the transport are UNTESTED — not lightly
   tested, never exercised — and both are engram's rail rather than a client's:

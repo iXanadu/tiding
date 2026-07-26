@@ -660,6 +660,11 @@ SEAT_COLLISION_WINDOW_SECONDS = 300
 # by design (per the two-axis doctrine): never flagged as collisions.
 SEAT_EXEMPT_IDENTITIES = {"admin"}
 
+# MSG-5/SEAT-7: a watcher beat is fresh for this long. Window ≈ 6.6× the
+# watcher's 45s poll interval, so a slow poll or one dropped request never
+# reads as a dead ear.
+WATCHER_STALE_AFTER_SECONDS = 300
+
 
 def _fresh_sessions(md: dict, now: datetime) -> dict:
     """Return the still-fresh entries of a presence row's nonce map."""
@@ -782,6 +787,93 @@ async def presence_update(
     return None
 
 
+async def presence_watcher_beat(identity: str, project: str) -> bool:
+    """Record that this identity's inbox WATCHER is alive (MSG-5, SEAT-7).
+
+    A session's liveness and its ability to HEAR are different properties. The
+    bridge heartbeat rides tool calls, so it proves activity; the watcher polls
+    on its own timer and lives exactly as long as the session, so it proves
+    existence — and it is the only process whose presence means mail will
+    actually wake somebody. A session that never armed one is fully addressable
+    and permanently silent, which today is indistinguishable from "not read
+    yet."
+
+    Deliberately a NARROW write, not a second presence_update:
+
+    * It must not join the nonce map. The watcher shares its session's
+      identity, so a nonce here would read as a second live session and
+      false-flag the very seat collision SEAT-3 exists to detect.
+    * It must not write state/provider/overlays/channels. Those are the
+      session's to report; a watcher beat carrying a default would silently
+      revert an ``awaiting-input`` session to ``running``.
+    * It must not INSERT. No presence row means the session has never
+      heartbeated, and inventing one from a watcher would conjure a session
+      that does not exist. Returns False in that case.
+
+    It DOES refresh ``last_used_at`` on both presence and seat rows, which is
+    the SEAT-7 fix: liveness stops being a proxy for tool activity, so a
+    session working uninterrupted for hours no longer ages into reclaimable
+    while it is alive and listening.
+    """
+    identity = identity.lower()
+    project = project.lower()
+    now = datetime.now(timezone.utc)
+    key = f"presence/{identity}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # jsonb_set merges into the existing metadata, so everything the
+        # session reported survives untouched.
+        updated = await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'::jsonb),
+                    '{watcher_last_seen}', to_jsonb($1::text), true
+                ),
+                last_used_at = NOW()
+            WHERE namespace = $2 AND scope = $3 AND user_id = $4 AND key = $5
+            """,
+            now.isoformat(),
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
+        )
+        if updated == "UPDATE 0":
+            return False
+        await conn.execute(
+            """
+            UPDATE memories SET last_used_at = NOW()
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND key = $5
+            """,
+            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+            project, f"seat/{identity}",
+        )
+    return True
+
+
+def _watcher_state(md: dict, now: datetime) -> tuple[bool | None, datetime | None]:
+    """Three-valued listening state for a presence row.
+
+    Follows the same discipline AgentBeast applies to its process-ancestry
+    field, so the two sources answer with one vocabulary:
+
+      True   a watcher beat within the freshness window — mail will wake it.
+      False  a watcher HAS beaten for this identity before and has since gone
+             quiet. Silence is only evidence once there was a signal to lose.
+      None   no watcher has ever beaten here — no basis. An older watcher
+             build, or a session that never armed one. NEVER coerce None to
+             False: absent is not dead, and that conflation is what let a live
+             session's address be taken in the first place.
+    """
+    raw = md.get("watcher_last_seen")
+    if not raw:
+        return None, None
+    try:
+        seen = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None, None
+    return (now - seen).total_seconds() < WATCHER_STALE_AFTER_SECONDS, seen
+
+
 async def roster_list(
     project: str | None = None,
     channel: str | None = None,
@@ -821,6 +913,7 @@ async def roster_list(
         ident = r["key"].removeprefix("presence/")
         fresh = _fresh_sessions(md, now)
         live = max(len(fresh), 1)
+        watcher_alive, watcher_seen = _watcher_state(md, now)
         entries.append({
             "identity": ident,
             "project": r["user_id"],
@@ -834,6 +927,8 @@ async def roster_list(
             "live_sessions": live,
             "collision": live > 1 and ident not in SEAT_EXEMPT_IDENTITIES,
             "providers_seen": sorted({(i.get("provider") or "unknown") for i in fresh.values()}) if fresh else [],
+            "watcher_alive": watcher_alive,
+            "watcher_last_seen": watcher_seen,
         })
     return entries
 
