@@ -139,7 +139,16 @@
   perturbs every pane every 300s, so compare the marker's position against
   BOTH the send time and the watchdog cadence — matching the send proves the
   message woke it, matching the cadence catches the confound. Probe must be
-  launched with remote-control disabled.
+  launched with remote-control disabled (`remote_control: false` on the
+  launcher API) — but note that only removes the injected-keystroke path;
+  the pane is still captured and repainted every pass, which is why the
+  control is still needed. Have the worker stamp WALL-CLOCK time beside each
+  step, so position-in-sequence and elapsed time cross-check each other and a
+  stalled or drifting task shows up instead of being silently reinterpreted.
+  Time off the last OBSERVED pass, never a projected one. **Write down what a
+  negative looks like before running:** no marker before the end means
+  mid-job delivery does not work — a finding, not a disappointment, and it
+  gets reported as loudly as a pass.
 
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
