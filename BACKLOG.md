@@ -41,6 +41,16 @@
   recovery and anything written since the last dump is unrecoverable.
   Decide whether the operational cost is worth closing that window.
 
+- **OBS-1** The application log carries **no timestamps** — 840k+ lines of
+  uvicorn access output, not one of them dated. Found 2026-07-25 while
+  investigating a reported data loss: the log proved that `/memory/forget`
+  was called, and could not say *when*, so it could not be tied to the
+  incident or to any session. Combined with AUDIT-1 (no write trail) and
+  Postgres `logging_collector=off`, there is currently **no dated record of
+  any destructive operation anywhere in the stack**. Configure the uvicorn
+  access formatter with a timestamp; this is a config line, and it is
+  cheaper than any of the forensics it would have replaced.
+
 - **AUDIT-1** `audit_log` has **zero rows** — the table ships with the
   principals work and nothing ever writes to it. So there is no write trail:
   the store cannot answer "who wrote what, when." Proven costly on
