@@ -50,8 +50,11 @@ from server.services.memory_service import (
 
 SEAT_NAMESPACE = INBOX_NAMESPACE
 
-# A seat whose holder beat within this window is LIVE — never reassigned, and
-# the window that distinguishes a duplicate session_key from a genuine restart.
+# A seat whose holder beat within this window is LIVE — never reassigned to a
+# DIFFERENT session_key. It no longer gates same-key restarts: that used to be
+# the window separating "duplicate key" from "genuine restart", and it could
+# not do the job, because seconds after a process dies its seat row, its
+# presence row and its watcher all still read fresh. See seat_claim.
 # Matches the presence staleness threshold so "stale on the roster" and "no
 # longer live in the registry" mean the same thing to a reader.
 SEAT_LIVE_SECONDS = 600
@@ -82,6 +85,12 @@ SEAT_GRACE_SECONDS = 86400  # 24h
 # sessions is a misconfiguration (usually a session_key that changes every
 # call), and silently minting seat -517 would hide it.
 MAX_SEAT_ORDINAL = 64
+
+# How many displaced process nonces a seat remembers (SEAT-9, the one-way
+# door). Only needs to outlast a dying predecessor's final heartbeats, so a
+# handful is ample; the bound keeps a long-lived seat's metadata from growing
+# without limit across many restarts.
+MAX_SUPERSEDED_NONCES = 8
 
 
 def seat_candidates(project: str, provider: str, preferred: str | None = None):
@@ -221,7 +230,7 @@ async def _try_takeover(conn, seat: str, project: str, meta: dict,
 
 
 def _meta(session_key: str, session_nonce: str | None, provider: str,
-          host: str | None) -> dict:
+          host: str | None, superseded: list[str] | None = None) -> dict:
     return {
         "kind": "seat",
         "session_key": session_key,
@@ -229,6 +238,10 @@ def _meta(session_key: str, session_nonce: str | None, provider: str,
         "provider": provider,
         "host": host,
         "claimed_at": datetime.now(timezone.utc).isoformat(),
+        # THE ONE-WAY DOOR (SEAT-9). Nonces that have been displaced from this
+        # seat. A claim bearing one of these never gets the seat back — see
+        # seat_claim for why a dying predecessor makes that necessary.
+        "superseded_nonces": list(superseded or [])[-MAX_SUPERSEDED_NONCES:],
     }
 
 
@@ -245,6 +258,11 @@ async def seat_claim(
     Idempotent on ``session_key``: a bridge restart or a harness respawn
     re-claims the SAME seat instead of burning an ordinal, so a session's
     address never changes underneath it or its watcher.
+
+    That idempotency is now unconditional (SEAT-9, newest-wins) and is
+    protected by a one-way door rather than by a liveness window — a process
+    displaced from a seat can never take it back. Both rules are explained at
+    the point of decision below.
 
     Returns ``{seat, is_new, reclaimed_from, warning}``.
     """
@@ -321,23 +339,70 @@ async def seat_claim(
             held = mine[0] if mine else ordered[0]
             held_md = _md(held)
             held_nonce = held_md.get("session_nonce")
+            superseded = list(held_md.get("superseded_nonces") or [])
             same_process = (
                 bool(mine)
                 or not session_nonce
                 or not held_nonce
                 or held_nonce == session_nonce
             )
-            if same_process or held["last_used_at"] < live_cutoff:
-                # Same process, or the previous holder is no longer live: a
-                # genuine restart of the same logical session. Keep the seat.
+
+            # THE ONE-WAY DOOR. A nonce displaced from this seat NEVER regains
+            # it. This is what makes newest-wins safe rather than a race.
+            #
+            # A launcher restarting a session does not wait for the old process
+            # to finish dying — AgentBeast's grok path kills a tmux session and
+            # starts the replacement with zero wait, so the predecessor may
+            # still be exiting while the successor claims. Without this, the
+            # dying process's LAST heartbeat would take the address back off
+            # the successor that had just been given it: a failure that strikes
+            # at random, which is worse than the predictable one it replaces.
+            #
+            # With the door, the dying tail is harmless by construction rather
+            # than by timing. It falls through to allocation, gets an ordinal
+            # it will never use, and that row ages out.
+            door_closed = (
+                bool(session_nonce) and not mine and session_nonce in superseded
+            )
+
+            if door_closed:
+                warning = (
+                    f"seat {held['key'].removeprefix('seat/')!r} was already "
+                    f"handed to a newer process for session_key "
+                    f"{session_key!r}; this process was displaced and cannot "
+                    f"reclaim it. Allocating a separate seat."
+                )
+            else:
+                # NEWEST-WINS. A claim on a known session_key is the same
+                # LOGICAL session returning, so it gets its address back —
+                # whether or not the previous holder still looks live.
+                #
+                # This deliberately replaces the older rule, which treated a
+                # new nonce on a live-looking holder as two rival sessions and
+                # exiled the newcomer to an ordinal. That guard defended
+                # against a launcher handing one key to two concurrent
+                # workers — a class the key scheme now prevents by
+                # construction, since session_key derives from the tmux slot
+                # (or ppid + parent start time) and two live workers cannot
+                # share a slot except while one is tearing down. It was
+                # charging a certain, frequent, user-visible breakage on every
+                # respawn to defend a case that can no longer arise, and it
+                # sent a huddle invitation to two dead mailboxes on
+                # 2026-07-26 to prove it.
                 seat = held["key"].removeprefix("seat/")
+                if not same_process and held_nonce:
+                    superseded.append(held_nonce)
                 await conn.execute(
                     """
                     UPDATE memories SET metadata = $1::jsonb, last_used_at = NOW()
                     WHERE namespace = $2 AND scope = $3 AND user_id = $4
                       AND project = $5 AND key = $6
                     """,
-                    json.dumps(meta), SEAT_NAMESPACE, SEAT_SCOPE,
+                    json.dumps(
+                        _meta(session_key, session_nonce, provider, host,
+                              superseded)
+                    ),
+                    SEAT_NAMESPACE, SEAT_SCOPE,
                     SEAT_USER_ID, project, held["key"],
                 )
                 # Collapse the duplicates this session accumulated while the
@@ -367,12 +432,6 @@ async def seat_claim(
                     )
                 return {"seat": seat, "is_new": False,
                         "reclaimed_from": None, "warning": None}
-            warning = (
-                f"session_key {session_key!r} is already held by a LIVE session "
-                f"with a different process nonce — it is not unique. Allocating a "
-                f"separate seat so you are still individually addressable, but "
-                f"whatever generates this key must be fixed."
-            )
 
         # 2-5. Allocate: first free candidate, then first reclaimable one.
         for seat in seat_candidates(project, provider, preferred):

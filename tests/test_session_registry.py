@@ -95,20 +95,86 @@ async def test_reclaim_is_idempotent_so_a_restart_keeps_its_address(client, db_p
 
 
 @pytest.mark.asyncio
-async def test_duplicate_session_key_on_a_live_holder_gets_its_own_seat(
+async def test_a_respawn_takes_its_address_back_from_a_live_looking_holder(
     client, db_pool
 ):
-    """session_key means CONTINUITY; (key, nonce) means IDENTITY.
+    """NEWEST-WINS (SEAT-9, 2026-07-26). A DELIBERATE POLICY REVERSAL.
 
-    Two processes sharing one key is the very collision this registry exists to
-    prevent — blessing it with the same seat would reintroduce the bug with the
-    server's endorsement. The claimant is separated AND told.
+    This test previously asserted the opposite: a new nonce on a live-looking
+    holder was separated onto its own ordinal and warned about, on the grounds
+    that two processes sharing one key is the collision seats exist to prevent.
+
+    That guard could not tell a rival session from a RESTART, because seconds
+    after a process dies its seat row, presence row and watcher all still read
+    fresh. So it fired on every respawn — the common case — and a launcher
+    that injected a stable key and an explicit identity still got an address
+    neither it nor its own watcher expected. On 2026-07-26 that sent a huddle
+    invitation to two dead mailboxes: delivered, waking nobody.
+
+    The class it defended against no longer arises: session_key derives from
+    the tmux slot (or ppid + parent start time), and two LIVE workers cannot
+    share a slot. The one case that does produce overlap — a launcher killing
+    and relaunching with no wait — is a predecessor mid-teardown, which the
+    one-way door below handles.
     """
     await _clear(db_pool)
     a = (await _claim(client, "shared-key", session_nonce="nonceA")).json()
     b = (await _claim(client, "shared-key", session_nonce="nonceB")).json()
-    assert b["seat"] != a["seat"]
-    assert b["warning"] and "not unique" in b["warning"]
+    assert b["seat"] == a["seat"], "a respawn must get its own address back"
+    assert b["is_new"] is False
+    assert not b["warning"], "an ordinary respawn is not an alarm"
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_displaced_process_can_never_reclaim_its_seat(client, db_pool):
+    """THE ONE-WAY DOOR — what makes newest-wins safe instead of a race.
+
+    AgentBeast's grok path kills a tmux session and starts its replacement
+    with ZERO wait, so the predecessor may still be exiting while the
+    successor claims. Under naive newest-wins the dying process's final
+    heartbeat would take the address back off the successor that had just
+    been given it — a failure that strikes at random, which is worse than the
+    predictable one it replaces.
+
+    So displacement is permanent: the seat remembers who it was taken from.
+    """
+    await _clear(db_pool)
+    old = (await _claim(client, "handover", session_nonce="dying")).json()
+    new = (await _claim(client, "handover", session_nonce="successor")).json()
+    assert new["seat"] == old["seat"]
+
+    # The predecessor's last gasp, arriving after it already lost the seat.
+    ghost = (await _claim(client, "handover", session_nonce="dying")).json()
+    assert ghost["seat"] != old["seat"], (
+        "a dying predecessor took the address back from its own successor"
+    )
+    assert ghost["warning"] and "displaced" in ghost["warning"]
+
+    # And the successor still holds it, repeatedly.
+    for _ in range(3):
+        still = (await _claim(client, "handover", session_nonce="successor")).json()
+        assert still["seat"] == old["seat"]
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_the_door_survives_several_restarts(client, db_pool):
+    """The bound on remembered nonces must not let an old ghost back in.
+
+    A long-lived seat accumulates displaced nonces across restarts. Within the
+    bound, every one of them stays locked out — checked at the far end of a
+    chain rather than only for the most recent predecessor.
+    """
+    await _clear(db_pool)
+    first = (await _claim(client, "chain", session_nonce="gen0")).json()
+    for gen in range(1, 5):
+        nxt = (await _claim(client, "chain", session_nonce=f"gen{gen}")).json()
+        assert nxt["seat"] == first["seat"]
+
+    for gen in range(0, 4):
+        ghost = (await _claim(client, "chain", session_nonce=f"gen{gen}")).json()
+        assert ghost["seat"] != first["seat"], f"gen{gen} reclaimed the seat"
     await _clear(db_pool)
 
 
@@ -397,17 +463,34 @@ async def test_a_split_key_does_not_burn_an_ordinal_on_every_claim(client, db_po
     returning the OTHER process's row and never the row this process had just
     been handed. So every heartbeat fell through to allocation: -3, -4, -5, -6
     on byte-identical input. Live sessions changed address every beat.
+
+    Newest-wins no longer PRODUCES a split, so the split is constructed
+    directly here: rows left by an older build, or by the bug itself, still
+    exist in live stores and must not send a session spinning.
     """
     await _clear(db_pool)
     a = (await _claim(client, "runaway", session_nonce="A")).json()
-    b = (await _claim(client, "runaway", session_nonce="B")).json()
-    assert b["seat"] != a["seat"]  # the split itself is existing, tested behaviour
+    dupe = f"{PROJ}-claude-2"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            SELECT namespace, $1, $2, scope, user_id, project,
+                   tags, tags_search, $2, NULL,
+                   jsonb_set(metadata, '{session_nonce}', '"B"')
+            FROM memories
+            WHERE scope = 'seat' AND project = $3 AND key = $4
+            """,
+            f"seat/{dupe}", dupe, PROJ, f"seat/{a['seat']}",
+        )
 
     seats = [
         (await _claim(client, "runaway", session_nonce="B")).json()["seat"]
         for _ in range(5)
     ]
-    assert set(seats) == {b["seat"]}, (
+    assert set(seats) == {dupe}, (
         f"address moved on identical input — one process, five addresses: {seats}"
     )
     await _clear(db_pool)
