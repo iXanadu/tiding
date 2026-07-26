@@ -112,15 +112,34 @@
   positive death signal `is_stale` never had — what remains is acting on it
   (correcting the stale `running`, and a retention horizon for the rows).
 
-- **MSG-6** Two properties of the transport are UNTESTED — not lightly
-  tested, never exercised — and both are engram's rail rather than a client's:
+- **MSG-6** Three properties of the transport are UNTESTED — not lightly
+  tested, never exercised — and all are engram's rail rather than a client's:
   (a) **mid-job interrupt wake.** Every wake proven to date is of a session
   dormant BETWEEN turns. Whether inbound mail reaches a session stalled
   mid-task has never been tried, and any "keep a worker moving" pattern rests
   entirely on it. (b) **cross-machine delivery.** Clients on other boxes point
-  at this server; nothing has been verified across that boundary. Each is a
-  single deliberate test. Until they run, both are assumptions wearing the
-  costume of facts.
+  at this server; nothing has been verified across that boundary.
+  (c) **huddle delivery across a participant restart.** SEAT-9 proved a
+  restarted session keeps its ADDRESS; it did not prove a huddle formed
+  BEFORE the restart still delivers to that participant AFTER it. Different
+  mechanisms — the seat versus the participant list fixed at send time.
+  Cheap and interpretable today.
+  Until they run, all three are assumptions wearing the costume of facts.
+  **(a) has a designed, agreed protocol — do not run the naive version.**
+  "Message a busy agent and see if it answers" is UNFALSIFIABLE here: the
+  launcher does not log prompt sends, so an autonomous wake and a prompted
+  turn leave identical traces. (A peer's ledger carried this as PROVEN for a
+  day on exactly that inference, retracted 2026-07-26 —
+  `shared:lesson/a-proven-backlog-entry-is-the-most-dangerous-object-in-a-repo`.)
+  Instead put the discriminator in the WORKER'S OWN ORDERED OUTPUT: give it a
+  strictly sequential task with one observable step per second, instruct it to
+  append a marker the instant mail arrives, and read the marker's POSITION.
+  Position inside a sequence is positive evidence; a missing log line never
+  is. Confound to instrument rather than dodge: the launcher's watchdog
+  perturbs every pane every 300s, so compare the marker's position against
+  BOTH the send time and the watchdog cadence — matching the send proves the
+  message woke it, matching the cadence catches the confound. Probe must be
+  launched with remote-control disabled.
 
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
