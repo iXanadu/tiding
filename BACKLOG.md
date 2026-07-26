@@ -36,10 +36,17 @@
   single deliberate test. Until they run, both are assumptions wearing the
   costume of facts.
 
-- **DR-3** Consider enabling WAL archiving. Recovery granularity today is
-  "the last dump" — `archive_mode=off`, so there is no point-in-time
-  recovery and anything written since the last dump is unrecoverable.
-  Decide whether the operational cost is worth closing that window.
+- **DR-3** Consider enabling WAL archiving. The backup chain itself is
+  sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
+  zero failures), captured onsite and offsite, and a dump already rotated off
+  local disk was recovered from the archive and restored cleanly. So the gap
+  is not coverage — it is GRANULARITY. `archive_mode=off` means no
+  point-in-time recovery between dumps, and the floor is therefore ~30
+  minutes. Demonstrated the same evening: a sub-second overwrite destroyed a
+  peer's content that no snapshot ever contained, because the whole race
+  resolved inside one backup window. No backup cadence fixes that class —
+  only a correct guard does. Decide whether the operational cost of WAL
+  archiving is worth closing the remaining window.
 
 - **OBS-1** The application log carries **no timestamps** — 840k+ lines of
   uvicorn access output, not one of them dated. Found 2026-07-25 while
