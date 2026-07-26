@@ -25,6 +25,19 @@
   fallback should be visible rather than silent. Same shape as the rest of
   the day: two paths answering one question differently, permissive one
   winning quietly.
+  **Not just scratch dirs — production ones.** Rung 2 is a `/projects/`
+  path segment, so everything under `~/projects` is safe without a cfg.
+  `/opt/srv` satisfies neither rung 1 nor rung 2, and it is a configured
+  launcher root. Audited 2026-07-26 — under `/opt/srv`, these carry a real
+  cfg: AgentBeast, FleetBackup, FleetVault, engram. These do NOT and would
+  resolve to `admin` if a session were launched in them: `ProjectTracker`,
+  `claude-memory-mcp`, `engram-backups`, `ha-semantic-memory`. Latent only —
+  no session runs in any of them today. Of the four, three are dead weight
+  (two archived repos, plus the stale manual dump dir already proposed for
+  deletion), so `ProjectTracker` is the sole live concern. The launcher-side
+  half is AgentBeast's (warn when a target would resolve to `admin`,
+  exempting `~/maintenance` where shared identity is the point) — and
+  writing `.engram.cfg` into another project's tree is NOT the fix.
 
 - **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
   **silently and permanently**: one unresolvable session key latches a
