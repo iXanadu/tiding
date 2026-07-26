@@ -106,6 +106,22 @@ def _md(row) -> dict:
     return md or {}
 
 
+def _seat_ordinal(seat: str, base: str) -> int:
+    """Sort position for a seat name: the base seat is 1, ``<base>-N`` is N.
+
+    Used to give the continuity lookup a TOTAL ORDER. Lexicographic ordering
+    will not do — ``x-claude-10`` sorts before ``x-claude-2`` as text, so a
+    session's address would depend on how many siblings it happened to have.
+    """
+    if seat == base:
+        return 1
+    if seat.startswith(f"{base}-"):
+        suffix = seat[len(base) + 1:]
+        if suffix.isdigit():
+            return int(suffix)
+    return MAX_SEAT_ORDINAL + 1
+
+
 async def _has_undelivered_mail(conn, seat: str) -> bool:
     """Is there open, never-read mail addressed to this seat?
 
@@ -262,7 +278,27 @@ async def seat_claim(
         # the very collision this registry exists to prevent. Blessing it would
         # reintroduce the bug with the server's endorsement, so that case falls
         # through to allocation and is reported.
-        held = await conn.fetchrow(
+        #
+        # This lookup MUST consider every row sharing the key, in a stable
+        # order. It used to be a bare ``fetchrow`` with no ORDER BY over a
+        # predicate that is not unique, which meant a session with more than one
+        # seat row got an ARBITRARY one of them — a different one from call to
+        # call, as UPDATEs moved tuples around the heap. That produced two
+        # distinct live failures (2026-07-26, reproduced on a scratch project):
+        #
+        #   RUNAWAY (nonce differs): the lookup kept finding the predecessor's
+        #   row and never the row this process had just been given, so EVERY
+        #   heartbeat fell through to allocation and burned a fresh ordinal —
+        #   -3, -4, -5 … on identical input.
+        #
+        #   OSCILLATION (nonce matches): with two rows carrying one key and one
+        #   nonce, whichever row came back was kept — so a running session's
+        #   address flipped between them mid-session, and its bridge, its
+        #   watcher and its replies each reported a different identity.
+        #
+        # So: read them all, prefer the row THIS PROCESS holds, and otherwise
+        # take the lowest ordinal. Same input, same seat, always.
+        held_rows = await conn.fetch(
             """
             SELECT key, metadata, last_used_at FROM memories
             WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND project = $4
@@ -271,11 +307,25 @@ async def seat_claim(
             SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, session_key,
         )
         warning = None
-        if held:
+        if held_rows:
+            base = f"{project}-{provider}"
+            ordered = sorted(
+                held_rows,
+                key=lambda r: (_seat_ordinal(r["key"].removeprefix("seat/"), base),
+                               r["key"]),
+            )
+            mine = [
+                r for r in ordered
+                if session_nonce and _md(r).get("session_nonce") == session_nonce
+            ]
+            held = mine[0] if mine else ordered[0]
             held_md = _md(held)
             held_nonce = held_md.get("session_nonce")
             same_process = (
-                not session_nonce or not held_nonce or held_nonce == session_nonce
+                bool(mine)
+                or not session_nonce
+                or not held_nonce
+                or held_nonce == session_nonce
             )
             if same_process or held["last_used_at"] < live_cutoff:
                 # Same process, or the previous holder is no longer live: a
@@ -290,6 +340,31 @@ async def seat_claim(
                     json.dumps(meta), SEAT_NAMESPACE, SEAT_SCOPE,
                     SEAT_USER_ID, project, held["key"],
                 )
+                # Collapse the duplicates this session accumulated while the
+                # lookup was non-deterministic. One session holds ONE seat per
+                # project — the invariant the UNIQUE index never expressed,
+                # because it constrains the seat NAME, not the claimant.
+                #
+                # R8 still outranks tidiness: a duplicate holding undelivered
+                # mail is left alone rather than freed for a stranger to be
+                # allocated and read. It ages out through normal reclamation.
+                for row in ordered:
+                    if row["key"] == held["key"]:
+                        continue
+                    if _md(row).get("session_nonce") != session_nonce:
+                        continue  # not provably mine — never free another's seat
+                    dupe = row["key"].removeprefix("seat/")
+                    if await _has_undelivered_mail(conn, dupe):
+                        continue
+                    await conn.execute(
+                        """
+                        DELETE FROM memories
+                        WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                          AND project = $4 AND key = $5
+                        """,
+                        SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+                        project, row["key"],
+                    )
                 return {"seat": seat, "is_new": False,
                         "reclaimed_from": None, "warning": None}
             warning = (

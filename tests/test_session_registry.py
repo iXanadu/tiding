@@ -10,6 +10,7 @@ import asyncio
 
 import pytest
 
+from server.services.memory_service import INBOX_NAMESPACE
 from server.services.session_registry import (
     SEAT_GRACE_SECONDS,
     SEAT_LIVE_SECONDS,
@@ -384,4 +385,119 @@ async def test_a_restart_with_a_stable_key_never_needs_reclamation(client, db_po
     back = (await _claim(client, "stable-key")).json()
     assert back["seat"] == a["seat"], "a stable key must reclaim its own seat at any age"
     assert back["is_new"] is False
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_split_key_does_not_burn_an_ordinal_on_every_claim(client, db_pool):
+    """RUNAWAY (2026-07-26): identical input must not keep minting addresses.
+
+    Once a duplicate-key split put two rows under one session_key, the
+    continuity lookup — a bare fetchrow over a non-unique predicate — kept
+    returning the OTHER process's row and never the row this process had just
+    been handed. So every heartbeat fell through to allocation: -3, -4, -5, -6
+    on byte-identical input. Live sessions changed address every beat.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "runaway", session_nonce="A")).json()
+    b = (await _claim(client, "runaway", session_nonce="B")).json()
+    assert b["seat"] != a["seat"]  # the split itself is existing, tested behaviour
+
+    seats = [
+        (await _claim(client, "runaway", session_nonce="B")).json()["seat"]
+        for _ in range(5)
+    ]
+    assert set(seats) == {b["seat"]}, (
+        f"address moved on identical input — one process, five addresses: {seats}"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_session_owning_two_rows_gets_one_stable_address(client, db_pool):
+    """OSCILLATION (2026-07-26): the state two live sessions were actually in.
+
+    One process — one session_key, one nonce — owning two seat rows, because
+    the split above had already happened. With no ORDER BY, whichever row came
+    back was kept, so the address flipped between them from call to call and
+    the session's bridge, watcher and replies each reported a different
+    identity. The claim must be a pure function of its input, and the
+    duplicate must be collapsed rather than left to flip again.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "osc", session_nonce="N")).json()
+    dupe = f"{PROJ}-claude-2"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            SELECT namespace, $1, $2, scope, user_id, project,
+                   tags, tags_search, $2, NULL, metadata
+            FROM memories
+            WHERE scope = 'seat' AND project = $3 AND key = $4
+            """,
+            f"seat/{dupe}", dupe, PROJ, f"seat/{a['seat']}",
+        )
+
+    seats = {
+        (await _claim(client, "osc", session_nonce="N")).json()["seat"]
+        for _ in range(6)
+    }
+    assert seats == {a["seat"]}, f"a live session's address oscillated: {seats}"
+
+    async with db_pool.acquire() as conn:
+        remaining = await conn.fetchval(
+            "SELECT count(*) FROM memories WHERE scope = 'seat' AND project = $1",
+            PROJ,
+        )
+    assert remaining == 1, "one session must end up holding exactly one seat"
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_collapsing_duplicates_never_frees_a_seat_holding_mail(client, db_pool):
+    """R8 outranks tidiness, in the new collapse path too.
+
+    Deleting a duplicate seat row un-allocates that address, so a stranger
+    could be granted it and read mail meant for someone else. A duplicate with
+    undelivered mail is therefore left alone to age out normally.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "mailguard", session_nonce="N")).json()
+    dupe = f"{PROJ}-claude-2"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            SELECT namespace, $1, $2, scope, user_id, project,
+                   tags, tags_search, $2, NULL, metadata
+            FROM memories
+            WHERE scope = 'seat' AND project = $3 AND key = $4
+            """,
+            f"seat/{dupe}", dupe, PROJ, f"seat/{a['seat']}",
+        )
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            VALUES ($1, $2, 'held mail', 'inbox', $3, $4,
+                    '', '', 'held mail', NULL, '{}'::jsonb)
+            """,
+            INBOX_NAMESPACE, f"inbox/{dupe}-pending", dupe, PROJ,
+        )
+
+    (await _claim(client, "mailguard", session_nonce="N")).json()
+
+    async with db_pool.acquire() as conn:
+        still_there = await conn.fetchval(
+            "SELECT count(*) FROM memories WHERE scope = 'seat' AND project = $1 "
+            "AND key = $2",
+            PROJ, f"seat/{dupe}",
+        )
+    assert still_there == 1, "a duplicate holding undelivered mail must not be freed"
     await _clear(db_pool)
