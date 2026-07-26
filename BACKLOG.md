@@ -7,6 +7,28 @@
 
 ## Now (blocking or next up)
 
+- **ID-2** `memory_take_seat` is **silently reverted** on launcher-spawned
+  sessions. The tool exists so a session can be re-addressed mid-flight when
+  someone decides two agents are co-working in one folder; it sets the
+  runtime seat and writes the seat file, which is what carries the change to
+  an already-running watcher. But such a session also re-claims every
+  heartbeat, and the registry answers from its own record keyed on
+  `session_key` — so it returns the seat it already holds, `_claim_seat`
+  sees `granted != preferred`, and overwrites the file the agent just set.
+  The runtime seat is undone within one heartbeat. The tool reported
+  success and handed back a re-arm command; nothing reports the reversal.
+  Two mechanisms answering "who is this session", with the loser never told
+  — the shape that ran through the whole 2026-07-26 investigation.
+  **Verified, not inferred:** pinned by a bridge test that takes a runtime
+  seat, runs one claim, and asserts the file was overwritten. Observed live
+  first — a probe session took `<proj>-claude-opus5` 71s after a restart
+  while the registry held `<proj>-claude`, and the seat-file mtime proved
+  the session itself wrote it post-restart. Matters because /startup step
+  4a-bis tells co-working sessions to take a seat, so the documented
+  co-working path is the one that breaks. Decide whether a runtime seat
+  should be registered with the server (so continuity returns it) or
+  whether the tool should refuse when a launcher already seated the session.
+
 - **ID-1** An unconfigured session silently becomes `admin` for ADDRESSING,
   because engram answers "what project is this?" with two resolvers of
   different strictness. Memory operations go through

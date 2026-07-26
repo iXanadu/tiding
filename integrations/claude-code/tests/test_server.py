@@ -575,3 +575,49 @@ async def test_no_session_key_stops_claiming_permanently(monkeypatch):
     await srv._claim_seat("/tmp/proj")
     assert calls == [], "with no session key there is nothing to claim"
     assert srv._SEAT_UNCLAIMABLE is True
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_seat_is_silently_reverted_by_the_next_claim(
+    monkeypatch, tmp_path
+):
+    """ID-2 (2026-07-26): take_seat and the registry fight, and nobody is told.
+
+    `memory_take_seat` exists so a session can be re-addressed mid-flight when
+    someone decides two agents are co-working in one folder. It sets the
+    runtime seat AND writes the seat file, which is what carries the change to
+    the already-running watcher.
+
+    But a launcher-spawned session also re-claims on every heartbeat, and the
+    registry answers that claim from its OWN record keyed on session_key — so
+    it hands back the seat it already holds, `_claim_seat` sees granted !=
+    preferred, and overwrites the file the agent just set. The runtime seat is
+    reverted within one heartbeat, silently: the tool reported success and
+    returned a re-arm command, and the session is quietly moved back.
+
+    Observed on a live probe 2026-07-26: a session took `<proj>-claude-opus5`
+    71 seconds after a restart while the registry held `<proj>-claude`.
+    """
+    from engram_mcp import identity, server as srv
+
+    monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv("ENGRAM_SESSION_KEY", "claude-ab-proj")
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+
+    # The agent deliberately re-seats itself mid-session.
+    identity.take_seat("proj-claude-opus5")
+    assert identity.current_seat() == "proj-claude-opus5"
+    assert identity.read_seat_file() == "proj-claude-opus5"
+
+    # The registry knows nothing of that name; continuity returns its own seat.
+    async def _fake_claim(**kw):
+        return {"seat": "proj-claude", "is_new": False}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat(str(tmp_path))
+
+    assert identity.read_seat_file() == "proj-claude", (
+        "the next heartbeat silently overwrote the seat the agent just took"
+    )
+    identity.clear_seat()
