@@ -36,6 +36,11 @@
   `-opus5` name from the leftover file and was corrected ~7s later by the
   claim. Harmless only because the claim is prompt. Teardown should remove
   the seat file, or the file should carry the nonce it was written for.
+  **Unexplained, recorded because neither side could account for it:** the
+  same probe recipe launched twice took a runtime seat on the first run and
+  not the second, so the live take_seat→revert sequence was never caught in
+  the wild despite two attempts. The constructed test carries that half
+  alone. Whatever makes the runtime seat conditional is not understood.
 
 - **ID-1** An unconfigured session silently becomes `admin` for ADDRESSING,
   because engram answers "what project is this?" with two resolvers of
