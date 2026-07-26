@@ -27,6 +27,21 @@
   can never be held by two live processes even briefly, and on the owner,
   since it changes what an address means during a restart.
 
+- **SEAT-10** The bridge's seat-claim path can fail **permanently and
+  silently**. One unresolvable session key latches a sticky per-session flag
+  that is never cleared, and every other failure is swallowed by a bare
+  `except: pass`. So a session can go its whole life never claiming, emitting
+  nothing — and the server cannot tell "never claimed" from "not running",
+  because both are an absence. Found 2026-07-26: after the SEAT-9 fix landed,
+  one live session healed and a peer's did not; the collapse was proven
+  correct against that peer's exact state on a scratch project, which left
+  "its bridge never calls claim" as the only remaining explanation.
+  Best-effort was the right call for AVAILABILITY — a session must not fail
+  to start because the address service is down — but silent AND permanent are
+  separable from best-effort, and conflating them is the defect. Needs a
+  signal (surface the failure in tool guidance, and let the sticky flag
+  retry). Bridge change: lands at each session's NEXT start.
+
 - **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the
