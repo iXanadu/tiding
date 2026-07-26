@@ -27,20 +27,24 @@
   can never be held by two live processes even briefly, and on the owner,
   since it changes what an address means during a restart.
 
-- **SEAT-10** The bridge's seat-claim path can fail **permanently and
-  silently**. One unresolvable session key latches a sticky per-session flag
-  that is never cleared, and every other failure is swallowed by a bare
-  `except: pass`. So a session can go its whole life never claiming, emitting
-  nothing — and the server cannot tell "never claimed" from "not running",
-  because both are an absence. Found 2026-07-26: after the SEAT-9 fix landed,
-  one live session healed and a peer's did not; the collapse was proven
-  correct against that peer's exact state on a scratch project, which left
-  "its bridge never calls claim" as the only remaining explanation.
-  Best-effort was the right call for AVAILABILITY — a session must not fail
-  to start because the address service is down — but silent AND permanent are
-  separable from best-effort, and conflating them is the defect. Needs a
-  signal (surface the failure in tool guidance, and let the sticky flag
-  retry). Bridge change: lands at each session's NEXT start.
+- **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
+  **silently and permanently**: one unresolvable session key latches a
+  per-session flag that is never cleared, and every other failure is
+  swallowed by a bare `except: pass`. A session could go its whole life
+  never claiming and emit nothing, and the server cannot tell "never
+  claimed" from "not running" — both are an absence. Best-effort was the
+  right call for AVAILABILITY (a session must not fail to start because the
+  address service is down), but silent and permanent are separable from
+  best-effort; conflating them is the defect. Needs a signal in tool
+  guidance and a retrying latch. Bridge change — lands at each session's
+  next start.
+  **Not observed firing.** Raised 2026-07-26 as the explanation for a peer
+  whose seat looked stuck; that turned out to be the peer's own
+  arbitrary-pick bug manufacturing the symptom, and their bridge had been
+  claiming correctly throughout. The shape is still worth fixing on its own
+  merits, but nothing has yet been traced to it. Named BRIDGE-1 rather than
+  SEAT-N deliberately: it is a bridge item, and the SEAT-N space is shared
+  with AgentBeast's ledger where the numbers already mean other things.
 
 - **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
