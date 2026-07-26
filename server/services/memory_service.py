@@ -187,6 +187,40 @@ async def memory_set(
         # writers on the same key; the row is held only for this statement
         # pair, never across a client's think-time.
         async with conn.transaction() if if_match is not None else _null_ctx():
+            if if_match == "":
+                # MUST-NOT-EXIST is a different problem from must-match, and
+                # the row lock below cannot solve it: SELECT ... FOR UPDATE has
+                # nothing to lock when the row does not exist yet. Two writers
+                # racing on a fresh key both read "absent", both pass, and the
+                # second one's upsert takes the DO UPDATE branch straight over
+                # the first's content — with both responses reporting success
+                # and if_match_applied=true. AgentBeast lost real content to
+                # exactly this on 2026-07-26; it survived review because every
+                # test of it was sequential, where the loser reads a committed
+                # row and correctly 409s.
+                #
+                # So absence is asserted by the UNIQUE INDEX instead of by a
+                # read. DO NOTHING makes the database the arbiter: the insert
+                # either wins outright or affects no row, and there is no
+                # window between the check and the write because they are the
+                # same statement.
+                created_row = await _insert_if_absent(
+                    conn, namespace, key, value, scope, user_id, project, tags,
+                    tags_search, embedding, search_text, expires_at,
+                    metadata_json, owner,
+                )
+                if created_row is None:
+                    current = await conn.fetchval(
+                        """
+                        SELECT value FROM memories
+                        WHERE namespace = $1 AND key = $2 AND scope = $3
+                          AND user_id IS NOT DISTINCT FROM $4
+                          AND project IS NOT DISTINCT FROM $5
+                        """,
+                        namespace, key, scope, user_id, project,
+                    )
+                    raise VersionConflict(current, compute_version(current))
+                return key, True, compute_version(value)
             if if_match is not None:
                 current = await conn.fetchval(
                     """
@@ -206,6 +240,33 @@ async def memory_set(
                 metadata_json, owner,
             )
     return key, bool(row["created"]), compute_version(value)
+
+
+async def _insert_if_absent(
+    conn, namespace, key, value, scope, user_id, project, tags, tags_search,
+    embedding, search_text, expires_at, metadata_json, owner,
+):
+    """Insert only if the key is unused. Returns the row, or None if taken.
+
+    ON CONFLICT DO NOTHING is a compare-and-swap against the UNIQUE index —
+    the same primitive the seat registry uses to hand out addresses without
+    locks. It is the only way to assert absence race-free, because there is no
+    row to lock until one exists.
+
+    NULLS NOT DISTINCT on that index is what makes this reliable for rows with
+    a NULL user_id or project: without it those rows would never collide and
+    every concurrent create would "win".
+    """
+    return await conn.fetchrow(
+        """
+            INSERT INTO memories (namespace, key, value, scope, user_id, project, tags, tags_search, embedding, search_text, expires_at, metadata, owner)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+            ON CONFLICT (namespace, key, scope, user_id, project) DO NOTHING
+            RETURNING id
+            """,
+        namespace, key, value, scope, user_id, project, tags, tags_search,
+        embedding, search_text, expires_at, metadata_json, owner,
+    )
 
 
 @contextlib.asynccontextmanager

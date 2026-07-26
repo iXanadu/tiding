@@ -461,6 +461,67 @@ async def test_if_match_empty_string_asserts_absence(client):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_create_only_writes_only_one_wins(client):
+    """The must-not-exist guard must hold under concurrency, not just in sequence.
+
+    Reported by AgentBeast 2026-07-26 after it destroyed real content on a
+    first live run: two writers raced on a fresh key, BOTH got 200, and both
+    responses carried ``if_match_applied: true``.
+
+    The absence check could not be a read-then-write, because SELECT ... FOR
+    UPDATE has nothing to lock when the row does not exist yet — so both
+    writers read "absent", both passed the guard, and the second one's upsert
+    took the ON CONFLICT DO UPDATE branch straight over the first's content.
+    The row-lock that closes the update race is structurally incapable of
+    closing this one.
+
+    This is the worse half of the bug: a silent overwrite still reports the
+    positive signal callers were told to trust.
+    """
+    base = {"namespace": "test", "key": "mem4/create-race", "scope": "machine",
+            "user_id": "probe"}
+    await client.post("/memory/forget", json=base)
+
+    results = await asyncio.gather(*(
+        client.post("/memory/set", json={**base, "value": f"writer-{i}", "if_match": ""})
+        for i in range(8)
+    ))
+    codes = [r.status_code for r in results]
+    assert codes.count(200) == 1, f"exactly one create may win, got {codes}"
+    assert codes.count(409) == 7
+
+    # and the winner's content must be what is actually stored
+    winner = [r for r in results if r.status_code == 200][0]
+    assert winner.json()["created"] is True
+    got = await client.post("/memory/get", json=base)
+    assert got.json()["memory"]["value"].startswith("writer-")
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
+async def test_a_losing_create_never_claims_it_was_guarded(client):
+    """`if_match_applied` must never report true on a write that was applied
+    unguarded — that is the signal callers gate their merges on."""
+    base = {"namespace": "test", "key": "mem4/create-signal", "scope": "machine",
+            "user_id": "probe"}
+    await client.post("/memory/forget", json=base)
+
+    results = await asyncio.gather(*(
+        client.post("/memory/set", json={**base, "value": f"w{i}", "if_match": ""})
+        for i in range(6)
+    ))
+    for r in results:
+        if r.status_code == 200:
+            # a successful conditional create is a genuine create, never a
+            # silent overwrite wearing a create's response
+            assert r.json()["created"] is True, (
+                "created=false on if_match='' means the key existed and the "
+                "guard failed open"
+            )
+    await client.post("/memory/forget", json=base)
+
+
+@pytest.mark.asyncio
 async def test_omitting_if_match_is_unconditional(client):
     """Back-compat: every existing caller keeps today's behavior exactly."""
     base = {"namespace": "test", "key": "mem4/compat", "scope": "machine",
