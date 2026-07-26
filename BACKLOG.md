@@ -28,6 +28,14 @@
   co-working path is the one that breaks. Decide whether a runtime seat
   should be registered with the server (so continuity returns it) or
   whether the tool should refuse when a launcher already seated the session.
+  **Related hazard, same file:** seat files SURVIVE teardown, and the file
+  outranks `ENGRAM_INBOX_IDENTITY`. So a stale file left by a dead session
+  silently seats any future session that reuses that `session_key` — at
+  whatever the corpse was called — until the first claim overwrites it.
+  Confirmed live 2026-07-26: a relaunch resolved a dead session's
+  `-opus5` name from the leftover file and was corrected ~7s later by the
+  claim. Harmless only because the claim is prompt. Teardown should remove
+  the seat file, or the file should carry the nonce it was written for.
 
 - **ID-1** An unconfigured session silently becomes `admin` for ADDRESSING,
   because engram answers "what project is this?" with two resolvers of
