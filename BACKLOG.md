@@ -7,26 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **SEAT-9** The seat RATCHET, and it needs a decision rather than a patch.
-  A fast respawn — kill and relaunch in the same slot — leaves the dead
-  predecessor's seat row inside the 600s live window, so the successor's
-  claim is read as "two processes sharing one key" and is pushed to an
-  ordinal. A launcher that injects a stable key AND an explicit identity
-  still gets an address neither it nor its own watcher expects. Observed
-  2026-07-26 on two of three live sessions at once; it is what made a huddle
-  invite land in two dead mailboxes, delivered, waking nobody.
-  **No liveness signal can close this at claim time** — seconds after death
-  the predecessor's seat row, presence row and watcher all still read fresh,
-  so `watcher_alive` has nothing to say yet. The non-deterministic lookup
-  underneath it is FIXED (8a804c0): an address no longer moves once
-  assigned. What remains is that it can still be assigned wrong.
-  **Recommendation on the table:** newest claim wins (handover), because
-  session_key is now slot-exclusive by construction (tmux slot, or ppid +
-  parent start time), so the guard defends a class the key scheme already
-  prevents and charges a daily breakage for it. Gated on AB confirming a key
-  can never be held by two live processes even briefly, and on the owner,
-  since it changes what an address means during a restart.
-
 - **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
   **silently and permanently**: one unresolvable session key latches a
   per-session flag that is never cleared, and every other failure is
