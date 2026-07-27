@@ -13,6 +13,7 @@ from engram_mcp.client import MemoryClient
 from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import (
     INBOX_IDENTITY_ENV,
+    admin_was_fallback,
     compute_identity,
     current_seat,
     derive_project_name,
@@ -233,7 +234,7 @@ def _append_guidance(body: str, result: dict) -> str:
     server-side without forcing an MCP/Claude restart.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
-    alert = _seat_collision_banner() + _seat_revert_banner()
+    alert = _seat_collision_banner() + _seat_revert_banner() + _admin_fallback_banner()
     if not guidance:
         return alert + body
     return f"{alert}{body}\n\n---\n{guidance}"
@@ -250,6 +251,45 @@ def _seat_revert_banner() -> str:
         f"Your bridge and watcher were reverted to the registered seat so all "
         f"three agree. To re-address this session, call memory_take_seat with "
         f"a DIFFERENT name (check memory_roster for what is taken).\n\n"
+    )
+
+
+# ID-1: shown once per session, then never again — a fact stated, not a nag.
+_ADMIN_FALLBACK_ANNOUNCED = False
+
+
+def _admin_fallback_banner() -> str:
+    """ID-1: a session that BECAME admin by fallthrough is told so, once.
+
+    An unconfigured directory silently adopts the administrator's identity
+    for addressing (deliberate for ~/maintenance and home-dir work), and the
+    admin seat-exemption suppresses the seat row that would otherwise show
+    it. Legitimate admin sessions read one line and move on; a session that
+    was MEANT to be a project gets the signal that was missing when a peer's
+    probe was nearly misfiled as a different bug. Session identity overrides
+    (env/seat/cfg) silence it — an explicitly-addressed session is not
+    wearing admin's name.
+    """
+    global _ADMIN_FALLBACK_ANNOUNCED
+    if _ADMIN_FALLBACK_ANNOUNCED:
+        return ""
+    try:
+        from engram_mcp.identity import resolve_session_identity
+        # The session pin, same as compute_identity — a raw None here would
+        # read "no directory" and misfire for every pinned project session.
+        pinned = remember_project_dir(None)
+        if resolve_session_identity(pinned) or not admin_was_fallback(pinned):
+            return ""
+    except Exception:
+        return ""
+    _ADMIN_FALLBACK_ANNOUNCED = True
+    return (
+        "ℹ️ ADDRESSING: this session resolved to the shared 'admin' identity "
+        "because its directory declares no project (no .engram.cfg, not under "
+        "/projects/). Fine for maintenance/scratch work — but if this IS a "
+        "project, mail meant for you is going to the machine-wide admin "
+        "address. Fix: memory_declare_identity (writes .engram.cfg), or "
+        "relaunch with ENGRAM_INBOX_IDENTITY=<name>.\n\n"
     )
 
 

@@ -695,3 +695,56 @@ def test_inbox_render_carries_a_timestamp_and_age():
     assert "30m ago" in fresh
     assert "STALE" not in fresh
     assert fresh != stale, "a 2-day-old message rendered identically to a fresh one"
+
+
+@pytest.mark.asyncio
+async def test_admin_fallback_is_announced_once_then_quiet(monkeypatch, tmp_path):
+    """ID-1: a session that BECAME admin by fallthrough is told so — once.
+
+    The fallback stays (home-dir and maintenance sessions share admin on
+    purpose, and an unconfigured session must still heartbeat); the silence
+    goes. One line on the first tool result, nothing after: a fact stated,
+    not a nag. Sessions with an explicit identity override are not wearing
+    admin's name and stay quiet.
+    """
+    from engram_mcp import identity, server as srv
+
+    monkeypatch.setattr(srv, "_ADMIN_FALLBACK_ANNOUNCED", False)
+    identity.reset_session_pin()
+    identity.remember_project_dir(str(tmp_path))  # scratch dir → fallback admin
+    try:
+        first = srv._admin_fallback_banner()
+        assert "shared 'admin' identity" in first
+        assert "memory_declare_identity" in first, (
+            "the banner must carry the fix, not just the fact"
+        )
+        assert srv._admin_fallback_banner() == "", "once means once"
+    finally:
+        identity.reset_session_pin()
+
+
+@pytest.mark.asyncio
+async def test_admin_fallback_banner_silent_for_project_and_seated_sessions(
+    monkeypatch, tmp_path
+):
+    from engram_mcp import identity, server as srv
+
+    # A pinned PROJECT session never sees it.
+    monkeypatch.setattr(srv, "_ADMIN_FALLBACK_ANNOUNCED", False)
+    identity.reset_session_pin()
+    identity.remember_project_dir("/Users/x/projects/widget")
+    try:
+        assert srv._admin_fallback_banner() == ""
+    finally:
+        identity.reset_session_pin()
+
+    # An admin-fallback dir WITH an explicit seat is precisely addressed —
+    # it is not wearing admin's name, so nothing to announce.
+    monkeypatch.setattr(srv, "_ADMIN_FALLBACK_ANNOUNCED", False)
+    identity.remember_project_dir(str(tmp_path))
+    identity.take_seat("scratch-probe")
+    try:
+        assert srv._admin_fallback_banner() == ""
+    finally:
+        identity.clear_seat()
+        identity.reset_session_pin()

@@ -483,6 +483,32 @@ def is_admin_context(project_dir: str | None) -> bool:
     return derive_project_name(project_dir) == ADMIN_NAME
 
 
+def admin_was_fallback(project_dir: str | None) -> bool:
+    """True when ``admin`` was reached by FALLING THROUGH, not by declaration.
+
+    ID-1: engram answers "what project is this?" with two resolvers of
+    different strictness. Memory operations go through the strict one, which
+    RAISES on an unconfigured directory so the tool layer can interrogate the
+    user. Addressing goes through ``derive_project_name``, which silently
+    falls back to ``admin`` — so a directory engram REFUSES to guess about
+    for memory quietly adopts the administrator's identity for addressing,
+    and the admin seat-exemption suppresses the one signal (a seat row) that
+    would have shown it. A peer's probe session was nearly misfiled as a
+    different bug because of exactly this.
+
+    The fallback itself is CORRECT — home-dir and ``~/maintenance`` sessions
+    share the admin identity on purpose, and an unconfigured session must
+    still be able to heartbeat. What was wrong is the silence. This predicate
+    is how the tool layer makes the fact visible: fallback admin (this
+    returns True) gets announced once; declared admin (a cfg that says
+    ``admin``, a ``/projects/admin/`` path) is a choice and stays quiet.
+    """
+    if derive_project_name(project_dir) != ADMIN_NAME:
+        return False
+    declared = resolve_project_name(project_dir)
+    return not declared
+
+
 def resolve_channels() -> list[str]:
     """Coalition channels this session subscribes to, from ``ENGRAM_CHANNELS``.
 

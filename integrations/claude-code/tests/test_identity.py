@@ -588,3 +588,30 @@ class TestAutoSessionKey:
                 fh.write(seat + "\n")
 
         assert identity.read_seat_file() == "near-seat"
+
+
+class TestAdminFallbackVisibility:
+    """ID-1: 'admin' by declaration is a choice; 'admin' by fallthrough is a
+    fact that must be visible. Two resolvers of different strictness answer
+    "what project is this?" — memory raises on an unconfigured dir, addressing
+    silently adopted the administrator's identity. The predicate below is how
+    the tool layer tells the two apart."""
+
+    def test_scratch_dir_is_fallback(self, tmp_path):
+        from engram_mcp.identity import admin_was_fallback
+        assert admin_was_fallback(str(tmp_path)) is True
+
+    def test_no_dir_is_fallback(self):
+        from engram_mcp.identity import admin_was_fallback, reset_session_pin
+        reset_session_pin()
+        assert admin_was_fallback(None) is True
+
+    def test_projects_path_is_not_admin_at_all(self):
+        from engram_mcp.identity import admin_was_fallback
+        assert admin_was_fallback("/Users/x/projects/widget") is False
+
+    def test_declared_admin_is_a_choice_not_a_fallback(self, tmp_path):
+        from engram_mcp.identity import admin_was_fallback, derive_project_name
+        (tmp_path / ".engram.cfg").write_text("project = admin\n")
+        assert derive_project_name(str(tmp_path)) == "admin"
+        assert admin_was_fallback(str(tmp_path)) is False

@@ -7,38 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **ID-1** An unconfigured session silently becomes `admin` for ADDRESSING,
-  because engram answers "what project is this?" with two resolvers of
-  different strictness. Memory operations go through
-  `ensure_project_identity`, which RAISES on a genuinely-unconfigured
-  directory so the tool layer can interrogate the user — deliberate, per
-  SU-1's "interrogate, don't default". The seat path goes through
-  `derive_project_name`, which silently falls back to `admin`. So a
-  directory engram REFUSES to guess about for memory, it quietly calls
-  `admin` for addressing — and since `admin` is seat-exempt (deliberate
-  role-sharing), no seat row is created and nothing surfaces. A throwaway
-  session in a scratch dir does not merely lack a seat: it adopts the
-  administrator's identity, with the exemption suppressing any signal.
-  Observed 2026-07-26 when a peer's probe session got no seat and was
-  nearly filed as a BRIDGE-1 sighting; it was this instead. Decide whether
-  the seat path should adopt the strict resolver, or whether the `admin`
-  fallback should be visible rather than silent. Same shape as the rest of
-  the day: two paths answering one question differently, permissive one
-  winning quietly.
-  **Not just scratch dirs — production ones.** Rung 2 is a `/projects/`
-  path segment, so everything under `~/projects` is safe without a cfg.
-  `/opt/srv` satisfies neither rung 1 nor rung 2, and it is a configured
-  launcher root. Audited 2026-07-26 — under `/opt/srv`, these carry a real
-  cfg: AgentBeast, FleetBackup, FleetVault, engram. These do NOT and would
-  resolve to `admin` if a session were launched in them: `ProjectTracker`,
-  `claude-memory-mcp`, `engram-backups`, `ha-semantic-memory`. Latent only —
-  no session runs in any of them today. Of the four, three are dead weight
-  (two archived repos, plus the stale manual dump dir already proposed for
-  deletion), so `ProjectTracker` is the sole live concern. The launcher-side
-  half is AgentBeast's (warn when a target would resolve to `admin`,
-  exempting `~/maintenance` where shared identity is the point) — and
-  writing `.engram.cfg` into another project's tree is NOT the fix.
-
 - **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
   **silently and permanently**: one unresolvable session key latches a
   per-session flag that is never cleared, and every other failure is
