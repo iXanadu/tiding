@@ -74,31 +74,6 @@
   exempting `~/maintenance` where shared identity is the point) — and
   writing `.engram.cfg` into another project's tree is NOT the fix.
 
-- **MSG-9** The bridge heartbeat **destroys `watcher_last_seen`**, so the
-  BUSIEST session looks the most dead — the exact inversion MSG-5 was built
-  to prevent. Two writers, one field, no signal:
-  · the watcher beats every 45s via `jsonb_set` (merges, preserves
-    everything) — `memory_service.py:890`
-  · the bridge heartbeat builds a FRESH metadata dict with a fixed key set
-    that does not include `watcher_last_seen`, and writes it WHOLESALE
-    (`metadata = $2::jsonb`) — `memory_service.py:789-803`
-  So every bridge beat wipes the field and the watcher restores it on its
-  next poll. Since the bridge beat rides TOOL CALLS, an active session
-  overwrites far more often than the watcher restores, and its
-  `watcher_alive` reads null essentially forever. An idle session keeps the
-  field and looks healthy.
-  **Consequence:** `watcher_alive` — the positive death signal introduced by
-  MSG-5, and the one a peer's roster consumes — inverts under load. A
-  session hammering tool calls (i.e. demonstrably alive) advertises itself
-  as NOT LISTENING. Reproduced 2026-07-27 on this very session: three peers
-  showed fresh watcher beats, `presence/engram-claude` showed none, while it
-  was provably waking on mail throughout.
-  **Fix is small:** carry `watcher_last_seen` forward from `prior_md` — the
-  same row is already read for the `sessions` nonce map a few lines above.
-  Add a test that a bridge beat following a watcher beat preserves it.
-  Same family as SEAT-12 and MERGE-1: a field with two writers where one
-  silently clobbers, and nothing reports the loss.
-
 - **SEAT-12** The seat-collision detector **false-positives on every
   restart**, and the fix now exists. `_fresh_sessions` keeps any nonce seen
   within `SEAT_COLLISION_WINDOW_SECONDS` (300), so a restarted session's
