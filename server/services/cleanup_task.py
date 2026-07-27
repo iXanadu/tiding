@@ -3,6 +3,7 @@ import logging
 
 from server.config import settings
 from server.services.admin_service import cleanup_expired
+from server.services.audit_service import audit
 from server.services.memory_service import inbox_autoresolve_stale
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,11 @@ async def expiration_cleanup_loop() -> None:
                 deleted = await cleanup_expired(batch_size=settings.cleanup_batch_size)
                 if deleted:
                     logger.info(f"Scheduled cleanup removed {deleted} expired memories")
+                    # AUDIT-1: system deletes belong in the same trail as
+                    # everyone else's — a summary row per sweep, only when
+                    # something was actually removed.
+                    await audit("system.expiration_sweep", None,
+                                {"deleted": deleted})
             except asyncio.CancelledError:
                 raise
             except Exception:

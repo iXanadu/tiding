@@ -41,6 +41,7 @@ from server.models import (
     RosterRequest,
     RosterResponse,
 )
+from server.services.audit_service import audit
 from server.services.identity import autocorrect_address, validate_listen_set
 from server.services.session_registry import SEAT_SCOPE
 from server.services.inbox_guidance import (
@@ -131,6 +132,13 @@ async def set_memory(req: MemorySetRequest, request: Request):
             owner=owner,
             if_match=req.if_match,
         )
+        # AUDIT-1: the write trail. Overwrites matter most — "created": false
+        # is the overwrite that no backup window could reconstruct.
+        await audit("memory.set", principal, {
+            "namespace": req.namespace, "key": req.key, "scope": req.scope,
+            "user_id": req.user_id, "project": req.project,
+            "created": created,
+        })
         banner = None
         if req.listen_set:
             try:
@@ -275,7 +283,8 @@ async def search_memory(req: MemorySearchRequest, request: Request):
 async def forget_memory(req: MemoryForgetRequest, request: Request):
     logger.debug(f"FORGET ns={req.namespace} key={req.key} scope={req.scope} user_id={req.user_id}")
     _reject_reserved_scope(req.scope)
-    check_namespace_access(get_current_principal(request), req.namespace, "write")
+    principal = get_current_principal(request)
+    check_namespace_access(principal, req.namespace, "write")
     try:
         deleted = await memory_forget(
             namespace=req.namespace,
@@ -285,6 +294,15 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
             project=req.project,
         )
         status = "ok" if deleted else "not_found"
+        # AUDIT-1: deletes are the rows the trail exists for — this exact
+        # call was provable but undatable during the 2026-07-25 incident.
+        # Misses are recorded too: an attempted delete of a key that is not
+        # there is forensically interesting in its own right.
+        await audit("memory.forget", principal, {
+            "namespace": req.namespace, "key": req.key, "scope": req.scope,
+            "user_id": req.user_id, "project": req.project,
+            "deleted": deleted,
+        })
         return MemoryForgetResponse(status=status, key=req.key)
     except Exception as e:
         logger.exception("memory_forget failed")

@@ -137,16 +137,6 @@
   only a correct guard does. Decide whether the operational cost of WAL
   archiving is worth closing the remaining window.
 
-- **AUDIT-1** `audit_log` has **zero rows** — the table ships with the
-  principals work and nothing ever writes to it. So there is no write trail:
-  the store cannot answer "who wrote what, when." Proven costly on
-  2026-07-24, when "did a shut-down agent store its findings?" needed three
-  inferential DB queries by hand instead of one lookup against an append-only
-  log, and still could not fully rule out an overwrite. Compounding factors:
-  there is no `updated_at` column, and `last_used_at` bumps on **reads**, so
-  it is useless as a write signal. Decide what to record (writes at minimum:
-  principal, key, scope, project, timestamp) and its retention.
-
 ## Needs decision
 
 - **SEC-7** Decide whether `/memory/set` should reject unknown fields

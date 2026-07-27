@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.config import settings
 from server.dependencies import admin_or_open
+from server.services.audit_service import audit
 from server.models import (
     BulkDeleteRequest,
     BulkDeleteResponse,
@@ -219,6 +220,13 @@ async def bulk_delete_endpoint(
             f"BULK DELETE EXECUTED ns={req.namespace} prefix={req.key_prefix} "
             f"deleted={deleted}"
         )
+        # AUDIT-1: the largest-blast-radius write in the API. Executed
+        # deletes only — dry runs destroy nothing and would bury the trail.
+        await audit("admin.bulk_delete", _caller, {
+            "namespace": req.namespace, "key_prefix": req.key_prefix,
+            "scope": req.scope, "user_id": req.user_id,
+            "older_than_days": req.older_than_days, "deleted": deleted,
+        })
         return BulkDeleteResponse(
             status="ok",
             deleted_count=deleted,
