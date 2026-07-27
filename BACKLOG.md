@@ -175,8 +175,37 @@
   watcher dies with it, so `watcher_alive` flipping to `false` is now the
   positive death signal `is_stale` never had — what remains is acting on it
   (correcting the stale `running`, and a retention horizon for the rows).
+  **THE FIRST ATTEMPT SHIPPED AND WAS FALSIFIED THE SAME DAY (`3ced53e`,
+  13:00; power outage 17:24Z).** It corrected a corpse's `running` when
+  `watcher_alive=false`, on the premise that "a watcher that HAS beaten and
+  then stopped is a process that exited." **That premise is false across a
+  RESTART BOUNDARY.** `watcher_last_seen` survives on a presence row that the
+  next generation reclaims through SEAT-9 continuity, so generation N's
+  watcher evidence gets applied to generation N+1's state. Verified in the DB
+  seven minutes after boot, not inferred:
+  · `watcher_last_seen` 17:23:53Z — 37s BEFORE the power died, dead generation
+  · `last_seen` 17:28:34Z — post-boot, live generation
+  · roster rendered `presumed-dead`; the process was alive and running
+  The session was genuinely DEAF (its watcher had not been re-armed yet) but
+  not dead — and the render self-contradicted, state saying `presumed-dead`
+  while the banner below said `running`. **Control case proving the rule is
+  not simply broken:** a peer with a 15-hour-old presence beat was correctly
+  marked. The inversion fires ONLY when the presence beat is FRESHER than the
+  watcher beat — i.e. exactly the post-restart window, which is the normal
+  path (the watcher arms a minute or two into `/startup`), and which a power
+  outage triggers fleet-wide at once. **Third instance of one shape** (MSG-9,
+  SEAT-12, this): two writers on one row, no generational guard, loser never
+  told — and again the registry was wrong where process-ancestry was right.
+  The discriminator is already in the row (a watcher beat older than the
+  holder's own presence beat cannot speak for that holder), but the guard we
+  actually trust is the NONCE, not a clock — SEAT-9 already records
+  `superseded_nonces`. **Fix deliberately NOT shipped**, pending the
+  ownership question below: patching a premise may be wasted work if the
+  death signal is moving to process-ancestry.
   **REDIRECTED 2026-07-27 — the fix is a TOMBSTONE ON EXIT, not better
-  polling.** A phantom seat was measured lasting ~4.5 minutes against a
+  polling.** *(And an outage is precisely the case where no tombstone is ever
+  written — so the falsification above is also evidence about how much weight
+  the tombstone design can carry on its own.)* A phantom seat was measured lasting ~4.5 minutes against a
   known-good count of one live process: the dead generation's row simply
   aged out on its own TTL because a graceful exit never invalidated it.
   Polling cannot beat a stale row nobody retracted. And per MSG-8 it must
