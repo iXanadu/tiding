@@ -880,8 +880,34 @@ async def presence_update(
         # NOT LISTENING. That is the inversion MSG-5 exists to prevent, and it
         # matters because watcher liveness is the ONE death signal that does not
         # degrade when a session is head-down (SEAT-4/MSG-8).
+        #
+        # SEAT-4 REFINEMENT (2026-07-27, after a power outage falsified the
+        # first version within four hours): carry it forward only WITHIN A
+        # GENERATION. `watcher_last_seen` describes the process that armed that
+        # watcher. It survives on a row the NEXT generation reclaims through
+        # SEAT-9 continuity, so after a restart the dead generation's evidence
+        # was being read as the live one's state and the roster called a
+        # running session presumed-dead.
+        #
+        # The generational fact is the NONCE, not a clock. A timestamp
+        # comparison ("is the watcher beat older than this beat") would work in
+        # the window observed and depends on clocks being sane across a boot —
+        # which is the one moment they least are, and the exact moment this
+        # fires. A nonce absent from the prior map is a process we have not
+        # seen before: a new generation, whose watcher has said nothing yet.
+        #
+        # Dropping the field yields None (NO BASIS), never False (dead) — the
+        # three-valued discipline holds, and the new generation's own watcher
+        # restores truth on its next poll. Only a LIVE session's beat can clear
+        # it, so a genuine corpse (no beats at all) still ages to
+        # presumed-dead exactly as SEAT-4 intended.
+        #
+        # Legacy clients send no nonce and cannot be generation-checked; they
+        # keep the unconditional carry-forward, i.e. today's behaviour.
+        prior_sessions = prior_md.get("sessions") or {}
+        new_generation = bool(session_nonce) and session_nonce not in prior_sessions
         watcher_seen = prior_md.get("watcher_last_seen")
-        if watcher_seen:
+        if watcher_seen and not new_generation:
             metadata["watcher_last_seen"] = watcher_seen
         value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
         # Heartbeat timestamp rides last_used_at (no updated_at column).

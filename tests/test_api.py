@@ -736,6 +736,116 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_a_restarted_session_is_not_presumed_dead_by_its_predecessors_watcher(client, db_pool):
+    """SEAT-4 REFINEMENT — the defect a power outage found four hours after ship.
+
+    `watcher_last_seen` describes the process that armed that watcher, but it
+    survives on a presence row the NEXT generation reclaims through SEAT-9
+    continuity. So after a restart the DEAD generation's watcher evidence was
+    applied to the LIVE generation's state, and the roster reported a running
+    process as presumed-dead. Measured live 2026-07-27: watcher beat 37s before
+    the power cut, presence beat four minutes after boot, roster said dead.
+
+    The guard is the NONCE, not a clock — a timestamp comparison has to be
+    right about time across a boot, which is when it is least trustworthy and
+    exactly when this fires. A new nonce means a process we have not seen, so
+    its predecessor's watcher cannot speak for it.
+    """
+    ident, proj = "restarted", "restartproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    # generation 1 comes up and arms a watcher
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen1"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+
+    # the power dies. gen1's watcher beat is now stale — old enough that, left
+    # in place, it reads as a positive death signal.
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '3 hours')::text), true)
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{ident}")
+
+    # the box reboots and generation 2 claims the same identity. Its watcher
+    # has not armed yet — that happens a few minutes into /startup.
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen2"})
+
+    r = await client.post("/memory/roster", json={"project": proj})
+    entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
+    assert entry["watcher_alive"] is None, (
+        "the predecessor's watcher beat is still being read as evidence about "
+        "the live generation"
+    )
+    assert entry["presumed_dead"] is False
+    assert entry["state"] == "running", (
+        "a LIVE session was declared dead by its own predecessor's watcher — "
+        "this is what the roster said about a running process seven minutes "
+        "after the 2026-07-27 outage"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
+async def test_same_generation_still_preserves_watcher_last_seen(client, db_pool):
+    """The generational guard must not undo MSG-9.
+
+    Carrying `watcher_last_seen` forward is correct WITHIN a generation — that
+    is the whole of MSG-9, and without it the busiest sessions lose the field
+    on every tool call. Only a nonce we have never seen may clear it.
+    """
+    ident, proj = "samegen", "samegenproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen1"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+
+    async with db_pool.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT metadata->>'watcher_last_seen' FROM memories "
+            "WHERE scope='presence' AND user_id=$1 AND key=$2",
+            proj, f"presence/{ident}")
+    assert before
+
+    # the SAME process beats again, as it does on every tool call
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen1"})
+
+    async with db_pool.acquire() as conn:
+        after = await conn.fetchval(
+            "SELECT metadata->>'watcher_last_seen' FROM memories "
+            "WHERE scope='presence' AND user_id=$1 AND key=$2",
+            proj, f"presence/{ident}")
+    assert after == before, (
+        "the generational guard fired on the same generation and re-introduced "
+        "MSG-9 — a live listening session now reads as NOT LISTENING"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
 async def test_roster_corrects_a_corpses_running_using_watcher_truth(client, db_pool):
     """SEAT-4: a dead session never retracts its own 'running'.
 

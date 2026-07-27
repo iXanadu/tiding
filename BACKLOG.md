@@ -7,6 +7,36 @@
 
 ## Now (blocking or next up)
 
+- **TEST-1** **The test suite can silently validate a DIFFERENT CHECKOUT than
+  the one you are editing.** Dev (`~/projects/engram`) and prod
+  (`/opt/srv/engram`) are both `pip install -e` into the same pyenv
+  virtualenv, so `server.*` resolves to whichever was installed last. On
+  2026-07-27 that was prod: `pytest` reported **255 passed** while importing
+  `/opt/srv/engram/server/services/memory_service.py`, and edits to the
+  working tree had no effect on the run whatsoever.
+  **Why this is worse than a stale import:** it defeats the falsification
+  step this project relies on. A fix was written, the guard test was run
+  against the code with the fix stashed (failed) and again with it restored
+  (failed) — and that identical result was initially read as "the test does
+  not exercise the fix" only because the failure was inspected. Had the
+  pre-existing code happened to satisfy the new test, the sequence would have
+  read as a clean PASS for a change that was never loaded. **Green tests for
+  code you did not write is the failure mode**, and nothing in the run says
+  which tree it used.
+  Caught by writing a debug line to a file and finding the file never
+  created — i.e. by proving absence directly, after two rounds of reasoning
+  about the logic produced nothing. `CLAUDE.md` documents the collision and
+  the remedy (`pip install -e .` from the dev dir), but documentation cannot
+  fix a silent failure: the remedy has to be applied BEFORE you know you
+  needed it.
+  **Fix options:** have `conftest.py` assert that the imported `server`
+  package resolves under the repo root and fail loudly otherwise (cheapest,
+  catches it on every run); or stop sharing one virtualenv between dev and
+  prod. The assert is a few lines and would have turned today's silent hour
+  into an immediate error. Same family as the rest of this ledger: two
+  sources answering one question, permissive one winning quietly, loser
+  never told.
+
 - **ID-2** `memory_take_seat` is **silently reverted** on launcher-spawned
   sessions. The tool exists so a session can be re-addressed mid-flight when
   someone decides two agents are co-working in one folder; it sets the
@@ -213,9 +243,16 @@
   The discriminator is already in the row (a watcher beat older than the
   holder's own presence beat cannot speak for that holder), but the guard we
   actually trust is the NONCE, not a clock — SEAT-9 already records
-  `superseded_nonces`. **Fix deliberately NOT shipped**, pending the
-  ownership question below: patching a premise may be wasted work if the
-  death signal is moving to process-ancestry.
+  `superseded_nonces`. **The inversion is now FIXED** (nonce guard): the
+  presence beat carries `watcher_last_seen` forward only WITHIN a generation,
+  and a nonce absent from the prior map clears it — yielding `None` (no
+  basis), never `False` (dead), so the three-valued discipline holds and the
+  new generation's own watcher restores truth on its next poll. A genuine
+  corpse receives no beats at all, so it still ages to `presumed-dead`
+  exactly as intended. AgentBeast confirmed nothing had changed on seat
+  ownership and endorsed the nonce over a clock: a guard whose correctness
+  depends on time being sane is worthless across a boot, which is precisely
+  when it fires.
   **REDIRECTED 2026-07-27 — the fix is a TOMBSTONE ON EXIT, not better
   polling.** *(And an outage is precisely the case where no tombstone is ever
   written — so the falsification above is also evidence about how much weight
