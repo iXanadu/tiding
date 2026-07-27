@@ -621,3 +621,32 @@ async def test_a_runtime_seat_is_silently_reverted_by_the_next_claim(
         "the next heartbeat silently overwrote the seat the agent just took"
     )
     identity.clear_seat()
+
+
+def test_inbox_render_carries_a_timestamp_and_age():
+    """Durable messages have no liveness dimension unless the render adds one.
+
+    "Standing by" from two days ago must not render identically to "standing
+    by" from two minutes ago. An agent read twenty present-tense messages and
+    divided work with a peer dead 42 hours; the server had always sent
+    created_at/age_hours/is_stale and this render dropped all three.
+    """
+    from engram_mcp.server import _format_inbox_message
+
+    stale = _format_inbox_message({
+        "id": "inbox/x", "to": "me", "from_": "peer", "subject": "standing by",
+        "body": "waiting on you", "created_at": "2026-07-25T02:13:57Z",
+        "age_hours": 50.2, "is_stale": True,
+    })
+    assert "2026-07-25 02:13:57 UTC" in stale
+    assert "2d ago" in stale
+    assert "STALE" in stale
+
+    fresh = _format_inbox_message({
+        "id": "inbox/y", "to": "me", "from_": "peer", "subject": "standing by",
+        "body": "waiting on you", "created_at": "2026-07-27T18:40:00Z",
+        "age_hours": 0.5, "is_stale": False,
+    })
+    assert "30m ago" in fresh
+    assert "STALE" not in fresh
+    assert fresh != stale, "a 2-day-old message rendered identically to a fresh one"

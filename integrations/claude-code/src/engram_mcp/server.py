@@ -902,9 +902,37 @@ def _format_inbox_message(m: dict) -> str:
     intent = f"\nIntent: {m['intent']}" if m.get("intent") else ""
     header = (
         f"**{m['id']}**{thread}\nFrom: {sender}{badge}  →  {m['to']}"
-        f"\nSubject: {subject}{intent}"
+        f"\nSubject: {subject}{intent}{_age_line(m)}"
     )
     return f"{header}\n\n{_fence_body(m.get('body', ''))}"
+
+
+def _age_line(m: dict) -> str:
+    """When it was sent — the dimension durable messages don't have.
+
+    A message says "standing by" in the present tense forever. Rendered
+    without a timestamp, one written two minutes ago is indistinguishable
+    from one written two days ago, and a screenful of them manufactures the
+    impression of peers actively waiting on you. An agent read twenty such
+    messages and divided work with a counterparty that had been dead 42
+    hours; every artifact it consulted was phrased in the present tense and
+    none carried a date.
+
+    The server has always sent `created_at`/`age_hours`/`is_stale`; this
+    render simply dropped them.
+    """
+    stamp = str(m.get("created_at") or "")[:19].replace("T", " ")
+    age = m.get("age_hours")
+    if age is None:
+        return f"\nSent: {stamp} UTC" if stamp else ""
+    if age < 1:
+        rel = f"{int(age * 60)}m ago"
+    elif age < 48:
+        rel = f"{age:.1f}h ago"
+    else:
+        rel = f"{int(age // 24)}d ago"
+    warn = "  ⚠️ STALE — verify before acting on it" if m.get("is_stale") else ""
+    return f"\nSent: {stamp} UTC ({rel}){warn}"
 
 
 @mcp.tool()
