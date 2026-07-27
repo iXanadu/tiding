@@ -586,3 +586,97 @@ async def test_a_misspelled_if_match_fails_closed(client):
         "a typo'd guard field must report that no guard ran"
     )
     await client.post("/memory/forget", json=base)
+
+
+# --- Per-sender unread summary (session-card badge) ----------------------
+
+def _mk_inbox(client, to, body, from_, thread_id=None, participants=None):
+    payload = {"to": to, "body": body, "from": from_}
+    if thread_id:
+        payload["thread_id"] = thread_id
+    return client.post("/memory/send", json=payload)
+
+
+@pytest.mark.asyncio
+async def test_unread_summary_counts_direct_mail_per_sender(client, db_pool):
+    """The badge question: which agent has something for me that I haven't read."""
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser'")
+
+    await client.post("/memory/send", json={
+        "to": "badgeuser", "body": "one", "from_": "alpha-claude"})
+    await client.post("/memory/send", json={
+        "to": "badgeuser", "body": "two", "from_": "alpha-claude"})
+    await client.post("/memory/send", json={
+        "to": "badgeuser", "body": "three", "from_": "beta-claude"})
+
+    r = await client.post("/memory/inbox/unread-summary", json={
+        "listen_set": ["badgeuser"], "reader_identity": "badgeuser@host"})
+    assert r.status_code == 200
+    body = r.json()
+    counts = {s["from"]: s["unread"] for s in body["senders"]}
+    assert counts["alpha-claude"] == 2
+    assert counts["beta-claude"] == 1
+    assert body["total"] == 3
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser'")
+
+
+@pytest.mark.asyncio
+async def test_unread_summary_excludes_group_traffic(client, db_pool):
+    """DIRECT ONLY. A group message is not waiting on any one reader, so
+    counting it against a single card would misreport a shared conversation
+    as a personal obligation. Both group shapes must be excluded: engram's
+    native fan-out (participants set) and a relay's `huddle/...` thread."""
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser2'")
+
+    # direct — counts
+    await client.post("/memory/send", json={
+        "to": "badgeuser2", "body": "direct", "from_": "alpha-claude"})
+    # native fan-out (>1 recipient mints a participants set) — must NOT count
+    await client.post("/memory/send", json={
+        "to": "badgeuser2, someone-else", "body": "fanout", "from_": "alpha-claude"})
+    # relay huddle thread — must NOT count
+    await client.post("/memory/send", json={
+        "to": "badgeuser2", "body": "huddle relay", "from_": "alpha-claude",
+        "thread_id": "huddle/ABC123"})
+
+    r = await client.post("/memory/inbox/unread-summary", json={
+        "listen_set": ["badgeuser2"], "reader_identity": "badgeuser2@host"})
+    body = r.json()
+    assert body["total"] == 1, f"group traffic leaked into the badge: {body}"
+    assert body["senders"][0]["unread"] == 1
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id IN ('badgeuser2','someone-else')")
+
+
+@pytest.mark.asyncio
+async def test_unread_summary_drops_to_zero_once_acked(client, db_pool):
+    """The badge must clear when the human actually reads. This is the whole
+    contract: a surface that renders without acking shows a climbing count
+    against a correspondent the user is current with."""
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser3'")
+
+    sent = await client.post("/memory/send", json={
+        "to": "badgeuser3", "body": "read me", "from_": "alpha-claude"})
+    j = sent.json()
+    msg_id = (j.get("ids") or [j["id"]])[0]
+
+    before = await client.post("/memory/inbox/unread-summary", json={
+        "listen_set": ["badgeuser3"], "reader_identity": "badgeuser3@host"})
+    assert before.json()["total"] == 1
+
+    await client.post(f"/memory/inbox/{msg_id}/ack",
+                      json={"reader_identity": "badgeuser3@host"})
+
+    after = await client.post("/memory/inbox/unread-summary", json={
+        "listen_set": ["badgeuser3"], "reader_identity": "badgeuser3@host"})
+    assert after.json()["total"] == 0, "badge did not clear after the reader acked"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser3'")

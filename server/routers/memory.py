@@ -17,6 +17,9 @@ from server.models import (
     InboxBanner,
     InboxListRequest,
     InboxListResponse,
+    InboxUnreadSender,
+    InboxUnreadSummaryRequest,
+    InboxUnreadSummaryResponse,
     InboxResolveRequest,
     InboxSendRequest,
     InboxSendResponse,
@@ -54,6 +57,7 @@ from server.services.memory_service import (
     inbox_archive,
     inbox_banner,
     inbox_counts,
+    inbox_unread_by_sender,
     inbox_list,
     inbox_resolve,
     inbox_send,
@@ -415,6 +419,52 @@ async def list_inbox(req: InboxListRequest, request: Request):
         )
     except Exception as e:
         logger.exception("inbox_list failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/inbox/unread-summary", response_model=InboxUnreadSummaryResponse)
+async def inbox_unread_summary(req: InboxUnreadSummaryRequest, request: Request):
+    """Who has DIRECT mail waiting for this reader, and how much.
+
+    Built for a per-correspondent badge ("this agent has something for you").
+    DIRECT ONLY — fan-out threads and `huddle/...` relay threads are excluded,
+    because "unread" does not mean one thing in a multi-party conversation.
+
+    Deliberately server-side: "unread" is a DEFINITION. Assembled separately
+    by each surface it drifts into meaning something different in each one,
+    which is precisely how a field with two authors ends up disagreeing with
+    itself. One query, one meaning, every client.
+    """
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    try:
+        listen_set = validate_listen_set(req.listen_set)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    try:
+        rows = await inbox_unread_by_sender(
+            listen_set=listen_set,
+            reader_identity=req.reader_identity,
+        )
+        senders = [
+            InboxUnreadSender(
+                **{"from": r["from"], "unread": r["unread"], "latest": r["latest"]}
+            )
+            for r in rows
+        ]
+        return InboxUnreadSummaryResponse(
+            status="ok",
+            senders=senders,
+            total=sum(s.unread for s in senders),
+            guidance=(
+                "Counts DIRECT unread mail only — fan-out and huddle threads are "
+                "excluded, because a group message is not waiting on any one "
+                "reader. This number is only truthful if your surface ACKS what "
+                "it displays: render without acking and the badge climbs forever "
+                "against someone the user is fully current with."
+            ),
+        )
+    except Exception as e:
+        logger.exception("inbox_unread_summary failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 

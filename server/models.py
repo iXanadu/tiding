@@ -517,6 +517,35 @@ class InboxListResponse(BaseModel):
     guidance: str | None = None
 
 
+# --- Per-sender unread summary (session-card badge) -----------------------
+
+class InboxUnreadSummaryRequest(BaseModel):
+    """Who has DIRECT mail waiting for this reader, and how much.
+
+    ``reader_identity`` is required (unlike InboxListRequest, where it is
+    optional): the whole answer is "unread BY THIS READER", so without it
+    there is no question to answer — and defaulting it would silently return
+    somebody else's count.
+    """
+    listen_set: list[str] = Field(max_length=MAX_LIST)
+    reader_identity: str = Field(max_length=MAX_ADDR)
+
+
+class InboxUnreadSender(BaseModel):
+    from_: str = Field(alias="from")
+    unread: int
+    latest: datetime | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class InboxUnreadSummaryResponse(BaseModel):
+    status: str
+    senders: list[InboxUnreadSender]
+    total: int
+    guidance: str | None = None
+
+
 # --- Inbox long-poll wait (any-harness wake primitive) --------------------
 
 class InboxWaitRequest(BaseModel):

@@ -615,6 +615,79 @@ async def inbox_send(
     return msg_id
 
 
+async def inbox_unread_by_sender(
+    listen_set: list[str],
+    reader_identity: str,
+) -> list[dict]:
+    """Per-sender count of DIRECT mail this reader has not read.
+
+    Answers exactly one question, for a badge on a session card: "does this
+    agent have something for me that I have not read yet?"
+
+    DIRECT ONLY — group traffic is excluded on purpose, two ways:
+
+      * rows carrying a ``participants`` set (engram's native fan-out), and
+      * rows whose ``thread_id`` is a ``huddle/...`` relay thread.
+
+    Both are excluded because "unread" does not mean one clean thing in a
+    multi-party thread: a message addressed to five agents is not waiting on
+    any particular one, so counting it against a single card would misreport
+    a group conversation as a personal obligation.
+
+    Why this lives on the server rather than in each client: "unread" is a
+    definition, not a datum. Assembled per-surface it would quietly come to
+    mean three different things — which is the shape of most of the liveness
+    bugs found on 2026-07-26/27, where a field with more than one author
+    disagreed with itself. One query, one meaning.
+
+    NOTE the reader is the HUMAN here, so this count is only truthful if the
+    surface displaying it ACKS what it shows. A client that renders mail
+    without acking will show a monotonically climbing badge against a
+    correspondent the user is fully current with — the same failure an agent
+    hit at 56 unread while having read every message by another path.
+    """
+    listen_set = [addr.lower() for addr in listen_set]
+    if not listen_set or not reader_identity:
+        return []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT COALESCE(metadata->>'from', '(unknown)') AS sender,
+                   count(*) AS unread,
+                   max(created_at) AS latest
+            FROM memories
+            WHERE namespace = $1
+              AND scope = $2
+              AND user_id = ANY($3::text[])
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $4) = $4
+              AND NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
+              -- jsonb_array_length() ERRORS on a non-array, and `participants`
+              -- is absent on most rows and has been seen carrying a scalar.
+              -- Type-check before measuring: a malformed row must fall through
+              -- as "not a group", never take the whole query down with it.
+              AND COALESCE(
+                    CASE WHEN jsonb_typeof(metadata->'participants') = 'array'
+                         THEN jsonb_array_length(metadata->'participants')
+                         ELSE 0 END, 0) = 0
+              AND COALESCE(metadata->>'thread_id', '') NOT LIKE 'huddle/%'
+            GROUP BY 1
+            ORDER BY max(created_at) DESC
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, listen_set, INBOX_OPEN,
+            reader_identity.lower(),
+        )
+    return [
+        {
+            "from": r["sender"],
+            "unread": r["unread"],
+            "latest": r["latest"],
+        }
+        for r in rows
+    ]
+
+
 async def inbox_list(
     listen_set: list[str],
     reader_identity: str | None = None,
