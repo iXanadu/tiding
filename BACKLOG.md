@@ -293,21 +293,6 @@
   the last OBSERVED watchdog pass rather than a projection, and write down
   what a negative looks like before running.
 
-- **MSG-10** **Mail carries no origin-machine provenance.** Every client
-  stamps `X-Engram-Machine` on every request — the header is set in
-  `MemoryClient.__init__` from the hostname — and the send path never reads
-  it. `x-engram-machine` is consumed in `set_memory` only, so `/memory/set`
-  rows get `metadata.machine` and inbox rows do not. The one field that
-  could answer "which box did this come from" is on the wire and discarded
-  at the last step, which is the same shape as the inbox render dropping
-  `created_at` and the search count that was a page size.
-  Found 2026-07-27 while closing MSG-6: a message sent from WebOne through
-  its real bridge client stored `machine: (none)`. Not urgent — mail is
-  addressed and delivered correctly without it — but it means a
-  five-box fleet cannot attribute a message to a box after the fact, and it
-  is the natural discriminator for any future cross-machine question.
-  Cheap: one parameter through `inbox_send`, one header read at the router.
-
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
   zero failures), captured onsite and offsite, and a dump already rotated off

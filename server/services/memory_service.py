@@ -539,6 +539,7 @@ async def inbox_send(
     authority: bool = False,
     intent: str | None = None,
     participants: list[str] | None = None,
+    machine: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -560,6 +561,17 @@ async def inbox_send(
         # project token cannot forge `authority` — only an owner principal can.
         "from_principal": from_principal,
         "authority": bool(authority),
+        # MSG-10: which BOX this was sent from. Every client has always
+        # stamped X-Engram-Machine from its hostname and only `/memory/set`
+        # ever read it, so mail could not be attributed to a machine after the
+        # fact — the field was on the wire and dropped at the last step, the
+        # same shape as the render that discarded `created_at`.
+        #
+        # Client-supplied, so it is provenance and NOT proof: unlike
+        # `from_principal` it is not derived from the token and a caller could
+        # set it to anything. Useful for "where did this come from", never for
+        # a trust decision.
+        "machine": machine,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,

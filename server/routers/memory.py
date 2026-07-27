@@ -387,6 +387,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 # someone else's identity or forge owner authority (MSG-1/MSG-2).
                 from_principal=(principal or {}).get("name"),
                 authority=bool(principal and principal.get("is_admin")),
+                machine=request.headers.get("x-engram-machine"),
             )
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]

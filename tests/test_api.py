@@ -736,6 +736,43 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_mail_records_the_machine_it_was_sent_from(client, db_pool):
+    """MSG-10: every client stamped X-Engram-Machine and only /memory/set read it.
+
+    So a five-box fleet could not attribute a message to a box after the fact.
+    Found closing MSG-6: a send from WebOne through its real bridge client
+    stored `machine: (none)` while the header was on the request the whole
+    time — the same shape as the render that discarded created_at.
+
+    Provenance, NOT proof: unlike from_principal this is client-supplied and
+    a caller could set it to anything. Fine for "where did this come from",
+    never for a trust decision.
+    """
+    box = "machineprovbox"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", box)
+
+    r = await client.post(
+        "/memory/send",
+        json={"to": box, "from_": "peer", "subject": "hi", "body": "from somewhere"},
+        headers={"X-Engram-Machine": "webone"},
+    )
+    assert r.status_code == 200
+    msg_id = r.json()["id"]
+
+    async with db_pool.acquire() as conn:
+        machine = await conn.fetchval(
+            "SELECT metadata->>'machine' FROM memories WHERE key=$1", msg_id)
+    assert machine == "webone", (
+        f"mail recorded machine={machine!r} — the header was sent and dropped, "
+        "so a message cannot be attributed to a box"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", box)
+
+
+@pytest.mark.asyncio
 async def test_roster_hides_sessions_past_the_retention_horizon(client, db_pool):
     """SEAT-4 retention: a roster buried in corpses cannot do its job.
 
