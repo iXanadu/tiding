@@ -74,26 +74,6 @@
   exempting `~/maintenance` where shared identity is the point) — and
   writing `.engram.cfg` into another project's tree is NOT the fix.
 
-- **MSG-7** Mail that arrives while a session is RESTARTING is **silently
-  absorbed as history**, not delivered as a directive. The next session's
-  `/startup` sweep reads the inbox and drains it — the queued message is
-  acked/resolved and becomes prior context, so it never surfaces to the
-  running agent as "you have mail" and is never acted on. Observed
-  2026-07-27 on a restarted probe whose pane read `Inbox: empty (3
-  previously-open, 1 resolved, all hidden/closed)`, found by a peer who
-  sent into a restart window by accident and then checked the pane instead
-  of assuming the send was harmless.
-  **Why it is not merely "a weaker result":** queued-while-down and
-  delivered-to-a-live-session are DIFFERENT OUTCOMES, not degrees of one.
-  Any manager/driver pattern that restarts a worker and then instructs it
-  hits this — the instruction is read as history instead of obeyed, with
-  no error on either side. The sender sees a successful send; the worker
-  sees context. Compounding: `intent=action` currently survives into the
-  startup read but carries no "this was addressed to your predecessor"
-  marker, so the reader cannot tell a live directive from drained backlog.
-  Decide whether startup should leave `intent=action` mail UNACKED (so it
-  still wakes the new process), or mark restart-window mail distinctly.
-
 - **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
   **silently and permanently**: one unresolvable session key latches a
   per-session flag that is never cleared, and every other failure is

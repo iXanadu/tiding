@@ -92,6 +92,67 @@ def _emit(msg: dict) -> None:
     )
 
 
+# Intents whose queued presence at watcher start is worth one summary wake.
+# fyi is deliberately absent (informational, never wakes — MSG-3); an omitted
+# intent is legacy default and DOES wake live, but seeding past legacy mail is
+# the pre-MSG-7 status quo and most of it is chatter — the summary is for mail
+# that states its own urgency.
+_DIRECTIVE_INTENTS = {"action", "proceed", "escalate", "authority-directive"}
+
+
+def _emit_queued_directives(backlog: list) -> None:
+    """MSG-7: surface directives that were queued while no watcher was armed.
+
+    Returns the number of queued directives (0 when the line was not emitted),
+    so one-shot mode can treat a non-empty summary as its wake.
+
+    Mail that arrives during a restart window is delivered but wakes nobody —
+    and the next session's /startup sweep reads it as HISTORY, so a directive
+    sent to the predecessor becomes context instead of an instruction. The
+    sender saw a successful send; the reader saw background. Neither errored.
+
+    The seed still swallows the backlog (a startup watcher must not firehose
+    the mail the session already saw at /startup) — but unacked directive-
+    intent mail gets ONE summary line. The ack is the discriminator, and it is
+    the right one: mail the previous session actually HANDLED is acked and
+    does not appear here; mail it merely read past is still open and does.
+    One line, not one per message: a week-old unacked backlog must not turn
+    watcher-arm into thirty wakes.
+    """
+    queued = [
+        m for m in backlog
+        if (m.get("intent") or "").strip().lower() in _DIRECTIVE_INTENTS
+    ]
+    if not queued:
+        return 0
+    print(
+        json.dumps(
+            {
+                "event": "queued-directives",
+                "note": (
+                    "these arrived while no watcher was armed (e.g. during a "
+                    "restart) and woke nobody — read them as DIRECTIVES, not "
+                    "history; handle via memory_inbox"
+                ),
+                "count": len(queued),
+                "messages": [
+                    {
+                        "id": m.get("id"),
+                        "from": m.get("from") or m.get("from_"),
+                        "subject": m.get("subject", ""),
+                        "intent": m.get("intent"),
+                        "created_at": m.get("created_at"),
+                    }
+                    for m in queued[:10]
+                ],
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    return len(queued)
+
+
 def _own_addresses(reader_identity: str | None) -> set:
     """The set of addresses that identify THIS watcher's own session.
 
@@ -187,10 +248,18 @@ async def _run(args) -> int:
         # Default: only wake on mail that arrives AFTER the watcher starts — a
         # startup watcher shouldn't immediately fire on the backlog the session
         # already saw at /startup. --include-existing opts into the backlog too.
+        #
+        # MSG-7 exception: unacked DIRECTIVE-intent mail in that backlog gets
+        # one summary line. Queued-while-down and delivered-live are different
+        # outcomes, not degrees of one — a directive sent into a restart window
+        # otherwise becomes history nobody acts on, with no error on either
+        # side. See _emit_queued_directives.
         seen: set = set()
         if not args.include_existing:
             try:
-                await _poll(client, listen_set, reader_identity, seen)
+                backlog = await _poll(client, listen_set, reader_identity, seen)
+                if _emit_queued_directives(backlog) and not args.follow:
+                    return 0  # one-shot: queued directives ARE the wake
             except Exception as e:  # seeding failure is non-fatal — start clean
                 if _auth_error_code(e):
                     print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)

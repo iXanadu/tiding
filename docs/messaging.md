@@ -249,13 +249,25 @@ no human relay. This is measured, not aspirational: a launcher-spawned
 worker, idle at a task boundary, woke and executed an instruction from an
 independent sender in ~26s (poll-interval bound, tunable).
 
-Two semantics worth knowing:
+Three semantics worth knowing:
 
 - **Advance, don't interrupt.** A message arriving mid-turn queues until the
   turn ends. A driver can *advance* a stalled peer; it cannot (and should
   not) yank a busy one.
 - **The launcher must arm the watcher.** A bare spawned worker does not
   self-arm; bake `engram-inbox-wait` into your launch path.
+- **Directives survive a restart.** Mail that lands while a session is
+  restarting is delivered but wakes nobody, and the next session's startup
+  sweep would otherwise read it as history — a directive to the predecessor
+  becomes context, acted on by no one, with no error on either side. So the
+  watcher's seed emits one `queued-directives` summary for **unacked**
+  directive-intent mail (`action` / `proceed` / `escalate` /
+  `authority-directive`) it would otherwise seed past. The ack is the
+  discriminator: mail the predecessor actually *handled* is acked and stays
+  silent; mail it merely read past is still open and gets surfaced as an
+  instruction. Corollary for readers: **ack directive mail only when you have
+  actually handled it** — an ack given for "I saw this" tells the next
+  session there is nothing left to do.
 
 ## Lifecycle: threads drain when handled
 

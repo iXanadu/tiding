@@ -95,7 +95,7 @@ So this session wakes on *any* inbound message for its whole lifetime — not ju
   bridge and watcher must resolve one identity. (A bare launch needs no
   prefix; both inherit the same environment.)
 
-- Run it under the **Monitor** tool (each stdout JSON line = one wake). It seeds on the current backlog and only emits mail that arrives *after* it starts, so it won't re-surface what you just read in step 4.
+- Run it under the **Monitor** tool (each stdout JSON line = one wake). It seeds on the current backlog and only emits mail that arrives *after* it starts, so it won't re-surface what you just read in step 4 — with ONE exception (MSG-7): unacked directive-intent mail (`action`/`proceed`/`escalate`/`authority-directive`) in that backlog gets a single `queued-directives` summary line. Treat those as live instructions addressed to this session, not history — they arrived while no watcher was armed (e.g. during the restart that produced you) and woke nobody. Corollary for step 4: **ack directive mail only when you have actually handled it** — an ack for "I saw this" tells the watcher, and your successor, that nothing is left to do.
 - Auth comes from `~/.config/engram/identity` (a bare shell process doesn't inherit the bridge's `~/.claude.json` env — the token must be in that file).
 - Best-effort: if the `engram-inbox-wait` entrypoint isn't installed (older bridge) or Monitor is unavailable, skip and proceed — it's an enhancement, not a gate. Session-lifetime only: it dies with the session (the cron inbox-sweep is the backstop for "reply arrives tomorrow").
 

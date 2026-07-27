@@ -6,7 +6,7 @@ import httpx
 import respx
 
 from engram_mcp.client import MemoryClient
-from engram_mcp.inbox_wait import _emit, _poll, _run
+from engram_mcp.inbox_wait import _emit, _emit_queued_directives, _poll, _run
 
 
 def _msg(i, **kw):
@@ -171,6 +171,82 @@ async def test_run_seeds_backlog_then_wakes_only_on_new(respx_mock, capsys):
     # only the message that arrived AFTER start, never the seeded backlog
     out = capsys.readouterr().out.strip()
     assert json.loads(out)["id"] == "inbox/2"
+
+
+# --- MSG-7: directives queued across a restart must not drain as history ---
+
+def test_queued_directives_summary_counts_only_directive_intents(capsys):
+    """MSG-7: mail sent into a restart window is delivered but wakes nobody,
+    and /startup reads it as history. The seed emits ONE summary for unacked
+    directive-intent mail — the ack is the discriminator between "handled by
+    the predecessor" (acked, absent here) and "read past as context" (open).
+    Legacy no-intent mail is the pre-MSG-7 status quo and stays swallowed.
+    """
+    backlog = [
+        _msg(1, intent="action"),
+        _msg(2, intent="escalate"),
+        _msg(3, intent="proceed"),
+        _msg(4, intent="authority-directive"),
+        _msg(5),                    # legacy, no intent → not in the summary
+        _msg(6, intent="fyi"),      # informational → never
+    ]
+    n = _emit_queued_directives(backlog)
+    assert n == 4
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1, "one summary line, never a firehose"
+    obj = json.loads(lines[0])
+    assert obj["event"] == "queued-directives"
+    assert obj["count"] == 4
+    assert {m["id"] for m in obj["messages"]} == {
+        "inbox/1", "inbox/2", "inbox/3", "inbox/4"}
+
+
+def test_queued_directives_silent_when_none(capsys):
+    assert _emit_queued_directives([_msg(1), _msg(2, intent="fyi")]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_queued_directives_detail_caps_at_ten(capsys):
+    backlog = [_msg(i, intent="action") for i in range(15)]
+    assert _emit_queued_directives(backlog) == 15
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["count"] == 15, "the COUNT is the truth"
+    assert len(obj["messages"]) == 10, "the detail list is a preview, capped"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_oneshot_wakes_immediately_on_queued_directive(respx_mock, capsys):
+    """One-shot mode: a directive already queued at start IS the wake — the
+    watcher must not sit waiting for the NEXT message while an unhandled
+    instruction sits in the backlog it just seeded past."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            _msg(1, intent="action")]})
+    )
+    rc = await _run(_Args(include_existing=False))
+    assert rc == 0
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["event"] == "queued-directives"
+    assert obj["messages"][0]["id"] == "inbox/1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_follow_emits_summary_then_new_mail(respx_mock, capsys):
+    """Follow mode: the summary lands first, then the watcher keeps watching —
+    the seeded directive is never re-emitted individually."""
+    route = respx_mock.post("/memory/inbox")
+    route.side_effect = [
+        httpx.Response(200, json={"status": "ok", "messages": [
+            _msg(1, intent="action")]}),                              # seed
+        httpx.Response(200, json={"status": "ok", "messages": [
+            _msg(1, intent="action"), _msg(2)]}),                     # poll: NEW inbox/2
+    ]
+    rc = await _run(_Args(include_existing=False, follow=True, timeout=0.001))
+    assert rc == 0
+    lines = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
+    assert lines[0]["event"] == "queued-directives"
+    assert lines[1]["id"] == "inbox/2"
+    assert len(lines) == 2, "the seeded directive must not fire twice"
 
 
 @respx.mock(base_url="http://localhost:8920")
