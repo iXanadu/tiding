@@ -193,7 +193,21 @@
   marked. The inversion fires ONLY when the presence beat is FRESHER than the
   watcher beat — i.e. exactly the post-restart window, which is the normal
   path (the watcher arms a minute or two into `/startup`), and which a power
-  outage triggers fleet-wide at once. **Third instance of one shape** (MSG-9,
+  outage triggers fleet-wide at once.
+  **Window measured: ~5 minutes, and it closed by itself.** Session up
+  17:28:18Z, its watcher armed 17:33:16Z (process start time, authoritative)
+  — the entry then read `running 👂 listening` again. The self-heal is real
+  and needs no intervention: `/startup` step 4b arms the watcher a few
+  minutes in, and the first beat corrects the record.
+  **Structural residual, NOT demonstrated here:** nothing *causes* that beat
+  except a session reaching 4b, so a session that never arms a watcher would
+  stay falsely dead for its whole life. That remains an inference — every
+  session observed on this box did arm one.
+  *(An earlier revision of this entry claimed ~41 minutes and "ends only when
+  a human intervenes." Both were wrong: the 18:09:35Z figure was the latest
+  beat read off the row, not the first, and the row cannot show a first beat.
+  The error is the same one the entry is about — stale evidence asserted as
+  current state — and it was caught by a peer's pushback, not by review.)* **Third instance of one shape** (MSG-9,
   SEAT-12, this): two writers on one row, no generational guard, loser never
   told — and again the registry was wrong where process-ancestry was right.
   The discriminator is already in the row (a watcher beat older than the
