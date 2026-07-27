@@ -152,6 +152,15 @@ async def set_memory(req: MemorySetRequest, request: Request):
                 )
                 if banner_dict:
                     banner = InboxBanner(**banner_dict)
+        # SEC-7 (warn, locked 2026-07-27): unknown request fields are almost
+        # always a misspelled option. The write went through WITHOUT them —
+        # say so, by name, instead of letting the caller debug a guard that
+        # silently never runs.
+        extras = sorted((req.model_extra or {}).keys())
+        warning = (
+            f"unknown fields ignored: {', '.join(extras)} — check spelling "
+            f"(e.g. the concurrency guard is 'if_match')"
+        ) if extras else None
         return MemorySetResponse(
             status="ok",
             key=key,
@@ -163,6 +172,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             # predates MEM-4 this field is simply absent, which is precisely
             # the case that would otherwise pass unguarded while looking safe.
             if_match_applied=req.if_match is not None,
+            warning=warning,
             inbox_banner=banner,
         )
     except VersionConflict as e:

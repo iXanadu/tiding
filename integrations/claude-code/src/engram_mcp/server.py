@@ -612,6 +612,10 @@ async def memory_store(
     if result.get("created") is False:
         verb = "Stored (REPLACED an existing value)"
     head = f"{verb} memory '{result['key']}' (namespace: {stored_ns}, scope: {resolved_scope}, user_id: {user_id}{proj_suffix})"
+    # SEC-7: the server reports fields it ignored (almost always a typo'd
+    # option). One visible line here is the whole point of the feature.
+    if result.get("warning"):
+        head = f"⚠ {result['warning']}\n{head}"
     return banner_text + head if banner_text else head
 
 

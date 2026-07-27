@@ -169,3 +169,36 @@ def test_uvicorn_handlers_gain_a_timestamp_without_losing_their_formatter():
         assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", line), line
     finally:
         access.handlers, default.handlers = saved
+
+
+# --- SEC-7 (locked "warn", 2026-07-27): typos are named, never swallowed ----
+
+@pytest.mark.asyncio
+async def test_unknown_fields_are_warned_about_by_name(client, db_pool):
+    """A misspelled option used to vanish silently — the write proceeded
+    without it and the caller debugged a guard that never ran. Rejecting
+    would break shipped clients on a public API; warning names the typo at
+    the first response read. Unanimous huddle vote, Rob locked W."""
+    r = await client.post("/memory/set", json={
+        "namespace": "sectest", "key": "warn/typo", "value": "v",
+        "if_matched": "abc123",       # the canonical typo
+        "expiry_days": 5,             # a second stray, also named
+    })
+    assert r.status_code == 200, "warn, not reject — the write must succeed"
+    body = r.json()
+    assert body["warning"] is not None
+    assert "if_matched" in body["warning"]
+    assert "expiry_days" in body["warning"]
+    assert "if_match" in body["warning"], "the hint should point at the real field"
+    assert body["if_match_applied"] is False, (
+        "the typo'd guard must still honestly report it did not run"
+    )
+
+    clean = await client.post("/memory/set", json={
+        "namespace": "sectest", "key": "warn/clean", "value": "v"})
+    assert clean.json().get("warning") is None, "no stray fields, no warning"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE namespace = 'sectest'")
+        await conn.execute(
+            "DELETE FROM audit_log WHERE detail::jsonb ->> 'namespace' = 'sectest'")

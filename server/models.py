@@ -40,6 +40,18 @@ class _NamespacedRequest(BaseModel):
 # --- Request models (match original Pyscript tool interface) ---
 
 class MemorySetRequest(_NamespacedRequest):
+    # SEC-7 (locked "warn", 2026-07-27, unanimous): unknown fields are
+    # ACCEPTED and REPORTED, not rejected and not silently dropped. A
+    # misspelled option (`if_matched` for `if_match`) used to vanish in
+    # pydantic's default extra=ignore — the write proceeded unguarded and
+    # only the absence of `if_match_applied: true` hinted why. Rejecting
+    # (extra=forbid) would name the typo instantly but break any shipped
+    # client sending a stray field — engram is public, and a fielded app
+    # binary cannot be hotfixed. So: extra="allow" captures them, and the
+    # handler surfaces `warning: "unknown fields ignored: …"` in the
+    # response. Non-breaking; the typo is visible at the first read.
+    model_config = {"extra": "allow"}
+
     namespace: str
     key: str = Field(max_length=MAX_KEY)
     value: str = Field(max_length=MAX_VALUE)
@@ -178,6 +190,11 @@ class MemorySetResponse(BaseModel):
     # server emits and an old one cannot: absence of `true` here means the
     # guard did NOT run. Never read a missing field as success.
     if_match_applied: bool | None = None
+    # SEC-7: set when the request carried fields this server does not know —
+    # almost always a misspelled option (`if_matched`). The write succeeded
+    # WITHOUT those fields; this line is what turns "why do my merges never
+    # happen" into a one-glance answer.
+    warning: str | None = None
     inbox_banner: InboxBanner | None = None
 
 

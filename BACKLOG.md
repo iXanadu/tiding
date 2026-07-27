@@ -99,19 +99,6 @@
 
 ## Needs decision
 
-- **SEC-7** Decide whether `/memory/set` should reject unknown fields
-  (`extra="forbid"`, as `/admin/bulk-delete` already does). **This is
-  ergonomics, not a safety gap** — an earlier version of this line overstated
-  it. A misspelled guard field (`if_matched`) is ignored, so the write is
-  unconditional and `if_match_applied` correctly reports `false`; a caller
-  checking that signal fails closed and declines to merge (pinned by test).
-  So the typo degrades to "merges never happen, loudly" rather than
-  "unguarded write reported as safe." What `extra="forbid"` would add is
-  turning a mysterious never-merges into an immediate 422 at the call site —
-  worth real debugging time, not a correctness hole. **Against:** engram is
-  public and this is a breaking change; any adopter's client sending a stray
-  field starts getting 422 on upgrade.
-
 - **MEM-2** Key-prefix enumeration — a deterministic "list every key under
   `wip/`" that returns ALL matches in key order with no embedding involved.
   `memory_get` is exact-match, `memory_search` is semantic, and there is
