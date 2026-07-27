@@ -86,6 +86,17 @@
   only a correct guard does. Decide whether the operational cost of WAL
   archiving is worth closing the remaining window.
 
+- **MAIL-1** Rob's ruling 2026-07-27 (huddle kgKq6dH9), pinned on his "take
+  note — no fix now": the owner-facing "Mail" surface must become either
+  (a) REMOVED, or (b) "messages DIRECT to me that I have not seen" — huddle
+  traffic belongs in the huddle, not listed in two places. Engram's half when
+  scheduled: an OPT-IN `direct_only` filter on `/memory/inbox` (exclude
+  `huddle/`-threaded rows; unread-only already exists via read-state). The
+  DEFAULT view must NOT change — agent watchers wake on huddle rows through
+  it, and changing the default would silently deafen the fleet. Surface half
+  (wiring Mail endpoints/tabs to the filter, or removing the tab) is
+  AB/app's. Blocked deliberately: owner said no fix now; he schedules it.
+
 ## Needs decision
 
 - **SEC-7** Decide whether `/memory/set` should reject unknown fields
