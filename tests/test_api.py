@@ -733,3 +733,79 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
     async with db_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
+async def test_roster_corrects_a_corpses_running_using_watcher_truth(client, db_pool):
+    """SEAT-4: a dead session never retracts its own 'running'.
+
+    So the roster must correct it — and the ONLY signal licensed to do that is
+    the watcher, whose beat rides its own timer rather than tool activity. A
+    session head-down in a long call goes quiet without dying (MSG-8), so
+    is_stale can never carry this; a watcher that HAS beaten and then stopped
+    is a process that exited.
+    """
+    ident, proj = "corpse", "corpseproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+
+    # the session dies: its watcher stops beating, but its last self-report
+    # ("running") stands forever because nobody is left to retract it.
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '3 hours')::text), true)
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{ident}")
+
+    r = await client.post("/memory/roster", json={"project": proj})
+    entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
+    assert entry["state"] == "presumed-dead", (
+        f"a corpse still advertises {entry['state']!r} — this is what offered "
+        "a human two dead seats to huddle with"
+    )
+    assert entry["presumed_dead"] is True
+    assert entry["reported_state"] == "running", "the original claim must stay visible"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
+async def test_a_session_with_no_watcher_is_never_presumed_dead(client, db_pool):
+    """ABSENT IS NOT DEAD — the conflation behind most of this defect class.
+
+    watcher_alive is three-valued. None means no watcher has EVER beaten for
+    this identity (older build, or none armed), which is no basis at all.
+    Coercing None to False would declare every un-watched session a corpse.
+    """
+    ident, proj = "nowatcher", "nowatcherproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    # heartbeats only — no watcher beat has ever been recorded here
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+
+    r = await client.post("/memory/roster", json={"project": proj})
+    entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
+    assert entry["watcher_alive"] is None
+    assert entry["presumed_dead"] is False
+    assert entry["state"] == "running", (
+        "a session that never armed a watcher was declared dead — absent is not dead"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)

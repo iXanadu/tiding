@@ -1063,10 +1063,35 @@ async def roster_list(
         fresh = _fresh_sessions(md, now)
         live = max(len(fresh), 1)
         watcher_alive, watcher_seen = _watcher_state(md, now)
+        # SEAT-4: correct the self-reported state using WATCHER truth.
+        #
+        # `state` is whatever the session last claimed, and a session that dies
+        # never gets to retract it — so a corpse reports "running" forever.
+        # That is what offered a human two dead seats to huddle with on
+        # 2026-07-26, and it is why "annotate staleness, never correct it" was
+        # not enough.
+        #
+        # The watcher is the ONLY signal licensed to override it. Its beat
+        # rides its own poll timer rather than tool activity, so unlike
+        # `is_stale` it does NOT degrade when a session is head-down in a long
+        # call (MSG-8: a busy agent and a dead one are otherwise
+        # indistinguishable). A watcher that HAS beaten and then stopped is a
+        # process that exited — the positive death signal `is_stale` never had.
+        #
+        # watcher_alive is deliberately THREE-valued and only False overrides.
+        # None means no watcher ever beat here (older build, or none armed) —
+        # no basis, so the session keeps its own word. Coercing None to False
+        # would declare every un-watched session dead, which is the exact
+        # absent-vs-negative conflation that has caused most of this class.
+        presumed_dead = watcher_alive is False and state != "done"
+        if presumed_dead:
+            state = "presumed-dead"
         entries.append({
             "identity": ident,
             "project": r["user_id"],
             "state": state,
+            "presumed_dead": presumed_dead,
+            "reported_state": md.get("state") or "running",
             "provider": md.get("provider"),
             "overlays": md.get("overlays") or [],
             "channels": md.get("channels") or [],

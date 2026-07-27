@@ -636,6 +636,15 @@ class RosterEntry(BaseModel):
     # is_stale=False with watcher_alive=False: running, addressable, and deaf.
     watcher_alive: bool | None = None
     watcher_last_seen: datetime | None = None
+    # SEAT-4: the server corrected `state` because this session's watcher HAD
+    # beaten and then stopped — a process that exited. A dying session never
+    # retracts its own "running", so without this a corpse advertises itself
+    # as live forever. Only watcher_alive=False triggers it; None (no watcher
+    # ever seen) leaves the session's own word alone.
+    presumed_dead: bool = False
+    # What the session last claimed, preserved so a consumer can see that a
+    # correction happened rather than silently receiving a different answer.
+    reported_state: str | None = None
 
 
 class RosterRequest(BaseModel):
