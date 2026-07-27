@@ -1260,6 +1260,16 @@ async def memory_reply(
         thread_id=thread_id,
         intent=effective_intent or None,
         project_dir=project_dir or None,
+        # ADDR-1, reply half: memory_send has always forwarded this and
+        # memory_reply never did, though it computes the same value a few
+        # lines above. Without it the server falls back to splitting the
+        # identity string, which cannot recover the project group address or
+        # channel subscriptions — so a reply reported a 3-address listen_set
+        # marked "approximate" where a send reported the real 5. Agents read
+        # that field to decide whether a group address reaches them, so the
+        # short answer is not merely less precise, it is misleading about
+        # reachability.
+        listen_set=listen_set,
     )
     await _client.inbox_ack(
         message_id=message_id,
@@ -1323,6 +1333,58 @@ async def memory_resolve(
     except Exception as e:
         return f"Resolve failed: {e}"
     head = f"Resolved {result['id']} as {reader_identity}"
+    return _append_guidance(head, result)
+
+
+@mcp.tool()
+async def memory_resolve_thread(
+    thread_id: str,
+    project_dir: str = "",
+) -> str:
+    """Drain a whole thread at once — a closed room, a finished exchange.
+
+    Use this when a conversation is OVER: the huddle was closed, the work
+    shipped, the question was answered. Resolving one message at a time is
+    fine for a single loose end, but a room with twenty turns in it needs
+    twenty calls, so in practice nobody drains anything and the backlog grows
+    until the inbox stops being read at all.
+
+    This matters more than it sounds. A closed room whose mail is still `open`
+    keeps reading as a LIVE conversation — every message in it is phrased in
+    the present tense ("standing by", "I won't race you") and none of them
+    says the room is over. An agent read exactly that and divided work with a
+    counterparty that had been dead for 42 hours.
+
+    Only YOUR copies are touched. A fan-out lands one row per recipient, so
+    resolving is a statement about your handling of the thread, not a claim
+    over everyone else's inbox — your peers must drain their own. Resolved
+    mail is kept and stays retrievable via memory_inbox(include_resolved=True).
+
+    Idempotent: an unknown or already-drained thread returns 0, so it is safe
+    to call without checking first.
+
+    Args:
+        thread_id: The thread to drain (e.g. "huddle/0z9CvL3p" or "inbox/abc-123").
+            Shown as `[thread: ...]` in memory_inbox output.
+        project_dir: Your working directory path (required for identity)
+    """
+    reader_identity, listen_set = compute_identity(project_dir or None)
+    try:
+        result = await _client.inbox_resolve_thread(
+            thread_id=thread_id,
+            listen_set=listen_set,
+            reader_identity=reader_identity,
+            project_dir=project_dir or None,
+        )
+    except Exception as e:
+        return f"Resolve-thread failed: {e}"
+    n = result.get("resolved", 0)
+    head = (
+        f"Resolved {n} message(s) in {result.get('thread_id', thread_id)} as {reader_identity}"
+        if n
+        else f"Nothing to resolve in {result.get('thread_id', thread_id)} "
+             f"(unknown thread, or already drained)"
+    )
     return _append_guidance(head, result)
 
 

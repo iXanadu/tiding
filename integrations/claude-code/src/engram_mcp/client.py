@@ -358,6 +358,24 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def inbox_resolve_thread(
+        self,
+        thread_id: str,
+        listen_set: list[str],
+        reader_identity: str | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        return await self._request(
+            "POST",
+            "/memory/inbox/resolve-thread",
+            json={
+                "thread_id": thread_id,
+                "listen_set": listen_set,
+                "reader_identity": reader_identity,
+            },
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def forget(
         self,
         key: str,

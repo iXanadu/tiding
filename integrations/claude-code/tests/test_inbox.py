@@ -848,3 +848,47 @@ async def test_lone_participant_falls_back_to_sender(respx_mock):
     await _reply_as_engram(message_id="inbox/hud-parent", body="alone")
     payload = json.loads(send.calls.last.request.read())
     assert payload["to"] == "owner1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_forwards_its_listen_set(respx_mock):
+    """ADDR-1, reply half: memory_send always forwarded listen_set; reply never did.
+
+    The server cannot rebuild a listen_set from the identity string once a
+    session holds a seat — it carries neither the project group address nor
+    channel subscriptions — so it falls back to a short "approximate" answer.
+    Agents read that field to decide whether a group address reaches them, so
+    a shrunken one is misleading about reachability, not merely less precise.
+    memory_reply computes the real value a few lines above the send call.
+    """
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={
+            "status": "ok",
+            "messages": [{
+                "id": "inbox/m1", "to": "engram", "from_": "projgamma@macbook",
+                "subject": "original", "body": "b", "thread_id": None,
+                "read_by": [], "archived": False,
+                "created_at": "2026-04-14T00:00:00Z",
+            }],
+        })
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/reply-1"})
+    )
+    respx_mock.post("/memory/inbox/inbox/m1/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/m1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(
+            message_id="inbox/m1", body="ack",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    import json as _json
+    sent = _json.loads(send_route.calls.last.request.content)
+    assert "listen_set" in sent, (
+        "memory_reply dropped its listen_set — the server will fall back to "
+        "splitting the identity string and report an approximate one"
+    )
+    assert "engram" in sent["listen_set"], "the project group address is missing"
+    assert len(sent["listen_set"]) >= 3
