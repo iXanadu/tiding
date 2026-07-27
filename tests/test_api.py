@@ -680,3 +680,56 @@ async def test_unread_summary_drops_to_zero_once_acked(client, db_pool):
 
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id='badgeuser3'")
+
+
+@pytest.mark.asyncio
+async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
+    """MSG-9: the bridge beat must not destroy the watcher's liveness field.
+
+    Two writers, one row. The watcher merges (jsonb_set); the bridge replaces
+    metadata wholesale. Before this fix the bridge wiped `watcher_last_seen`
+    on every beat — and because the bridge beat rides TOOL CALLS while the
+    watcher polls on its own timer, the busiest sessions lost the field
+    permanently and advertised themselves as NOT LISTENING while demonstrably
+    alive. That inverts the one death signal that survives a session being
+    head-down, so it must be pinned.
+    """
+    ident, proj = "msg9probe", "msg9proj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    # a session heartbeat creates the row
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    assert r.status_code == 200
+
+    # the watcher beats — merges watcher_last_seen in
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+    assert r.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        seen_before = await conn.fetchval(
+            "SELECT metadata->>'watcher_last_seen' FROM memories "
+            "WHERE scope='presence' AND user_id=$1 AND key=$2",
+            proj, f"presence/{ident}")
+    assert seen_before, "watcher beat did not record watcher_last_seen"
+
+    # now the session beats again, as it does on every tool call
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+
+    async with db_pool.acquire() as conn:
+        seen_after = await conn.fetchval(
+            "SELECT metadata->>'watcher_last_seen' FROM memories "
+            "WHERE scope='presence' AND user_id=$1 AND key=$2",
+            proj, f"presence/{ident}")
+    assert seen_after == seen_before, (
+        "the bridge heartbeat destroyed watcher_last_seen — a live, listening "
+        "session now reads as NOT LISTENING, and the busier it is the worse it gets"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)

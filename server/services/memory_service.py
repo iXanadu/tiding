@@ -868,6 +868,21 @@ async def presence_update(
             "last_seen": now.isoformat(),
             "sessions": sessions,
         }
+        # MSG-9: this write REPLACES metadata wholesale, so any field owned by
+        # another writer must be carried forward explicitly or it is destroyed.
+        #
+        # `watcher_last_seen` is written by the WATCHER (presence_watcher_beat,
+        # which merges with jsonb_set and so never had the reciprocal problem).
+        # Because this beat rides TOOL CALLS while the watcher polls on its own
+        # timer, an ACTIVE session overwrote the field far more often than the
+        # watcher restored it — so `watcher_alive` read null for exactly the
+        # sessions doing the most work, and a busy session advertised itself as
+        # NOT LISTENING. That is the inversion MSG-5 exists to prevent, and it
+        # matters because watcher liveness is the ONE death signal that does not
+        # degrade when a session is head-down (SEAT-4/MSG-8).
+        watcher_seen = prior_md.get("watcher_last_seen")
+        if watcher_seen:
+            metadata["watcher_last_seen"] = watcher_seen
         value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
         # Heartbeat timestamp rides last_used_at (no updated_at column).
         updated = await conn.execute(
