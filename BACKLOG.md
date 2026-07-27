@@ -150,44 +150,59 @@
   watcher dies with it, so `watcher_alive` flipping to `false` is now the
   positive death signal `is_stale` never had — what remains is acting on it
   (correcting the stale `running`, and a retention horizon for the rows).
+  **REDIRECTED 2026-07-27 — the fix is a TOMBSTONE ON EXIT, not better
+  polling.** A phantom seat was measured lasting ~4.5 minutes against a
+  known-good count of one live process: the dead generation's row simply
+  aged out on its own TTL because a graceful exit never invalidated it.
+  Polling cannot beat a stale row nobody retracted. And per MSG-8 it must
+  not try: a busy agent in a long tool call is silent exactly like a dead
+  one, so any TTL-based liveness will age out a session that is working
+  normally. Those are the same defect in two hats — the answer is for a
+  departing session to say so, not for observers to guess harder.
 
-- **MSG-6** Three properties of the transport are UNTESTED — not lightly
-  tested, never exercised — and all are engram's rail rather than a client's:
-  (a) **mid-job interrupt wake.** Every wake proven to date is of a session
-  dormant BETWEEN turns. Whether inbound mail reaches a session stalled
-  mid-task has never been tried, and any "keep a worker moving" pattern rests
-  entirely on it. (b) **cross-machine delivery.** Clients on other boxes point
-  at this server; nothing has been verified across that boundary.
-  (c) **huddle delivery across a participant restart.** SEAT-9 proved a
-  restarted session keeps its ADDRESS; it did not prove a huddle formed
-  BEFORE the restart still delivers to that participant AFTER it. Different
-  mechanisms — the seat versus the participant list fixed at send time.
-  Cheap and interpretable today.
-  Until they run, all three are assumptions wearing the costume of facts.
-  **(a) has a designed, agreed protocol — do not run the naive version.**
-  "Message a busy agent and see if it answers" is UNFALSIFIABLE here: the
-  launcher does not log prompt sends, so an autonomous wake and a prompted
-  turn leave identical traces. (A peer's ledger carried this as PROVEN for a
-  day on exactly that inference, retracted 2026-07-26 —
-  `shared:lesson/a-proven-backlog-entry-is-the-most-dangerous-object-in-a-repo`.)
-  Instead put the discriminator in the WORKER'S OWN ORDERED OUTPUT: give it a
-  strictly sequential task with one observable step per second, instruct it to
-  append a marker the instant mail arrives, and read the marker's POSITION.
-  Position inside a sequence is positive evidence; a missing log line never
-  is. Confound to instrument rather than dodge: the launcher's watchdog
-  perturbs every pane every 300s, so compare the marker's position against
-  BOTH the send time and the watchdog cadence — matching the send proves the
-  message woke it, matching the cadence catches the confound. Probe must be
-  launched with remote-control disabled (`remote_control: false` on the
-  launcher API) — but note that only removes the injected-keystroke path;
-  the pane is still captured and repainted every pass, which is why the
-  control is still needed. Have the worker stamp WALL-CLOCK time beside each
-  step, so position-in-sequence and elapsed time cross-check each other and a
-  stalled or drifting task shows up instead of being silently reinterpreted.
-  Time off the last OBSERVED pass, never a projected one. **Write down what a
-  negative looks like before running:** no marker before the end means
-  mid-job delivery does not work — a finding, not a disappointment, and it
-  gets reported as loudly as a pass.
+- **MSG-8** **Mid-job wake DOES NOT WORK — measured 2026-07-27 — and the
+  obvious repair is UNVERIFIED.** A session has no execution context while a
+  tool call is in flight, so inbound mail is not seen until the call
+  returns. Measured on a probe genuinely head-down in one blocking 90s call:
+  sent 02:13:57Z (in-window), first observable to the agent 02:15:26Z — 89s
+  deaf, with a healthy watcher that had captured the message correctly.
+  **Not an engram defect:** delivery, addressing and the watcher all worked.
+  Latency equals the remaining runtime of the blocking tool, bounded only by
+  the harness ceiling — a worker in a 9-minute build is deaf for 9 minutes.
+  **THE CONSEQUENCE, which is the load-bearing part:** a BUSY agent and a
+  DEAD agent are indistinguishable from outside — both are silence. So you
+  cannot interrupt a working agent, AND any liveness check that reads
+  silence as death will kill working agents mid-task. Any manager/driver
+  design must account for both directions.
+  **OPEN QUESTION, and the driver pattern rests on it:** does chunking work
+  — i.e. does splitting long work into sub-10s tool calls let wake land at a
+  chunk boundary? This is INFERRED, NOT MEASURED. "No context during a tool
+  call" explains the failure but does not establish that short calls
+  deliver; the event could be coalesced or need a boundary a tight loop
+  never produces. Test 3 designed and agreed: same ~90s chunked into ~10
+  short calls, mail sent mid-run and timestamped from the server clock,
+  measure WHERE detection lands. Next-boundary ⇒ chunking is a real
+  mitigation and the pattern is buildable with a documented worker
+  discipline. End-of-all-chunks ⇒ chunking does not help and the pattern
+  needs a different mechanism. Awaiting owner's go.
+  Method notes worth keeping for any rerun: the naive "message a busy agent
+  and see if it answers" is UNFALSIFIABLE (the launcher does not log prompt
+  sends, so an autonomous wake and a prompted turn leave identical traces —
+  a peer's ledger carried this as PROVEN for a day on that inference; see
+  `shared:lesson/a-proven-backlog-entry-is-the-most-dangerous-object-in-a-repo`).
+  Put the discriminator in the WORKER'S OWN ORDERED OUTPUT, stamp wall-clock
+  beside each step, launch the probe with `remote_control: false`, time off
+  the last OBSERVED watchdog pass rather than a projection, and write down
+  what a negative looks like before running.
+
+- **MSG-6** **Cross-machine delivery is UNTESTED.** Clients on other boxes
+  point at this server; nothing has ever been verified across that
+  boundary — every test to date has been macmini→macmini. A single
+  deliberate test. Until it runs it is an assumption wearing the costume of
+  a fact. (The other two properties once listed here are now answered:
+  mid-job wake → MSG-8, measured negative; huddle delivery across a
+  participant restart → PASSED 2026-07-27, participant sets survive, which
+  is what AgentBeast's HUD-4 migration target needed.)
 
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
