@@ -829,10 +829,24 @@ SEAT_EXEMPT_IDENTITIES = {"admin"}
 WATCHER_STALE_AFTER_SECONDS = 300
 
 
-def _fresh_sessions(md: dict, now: datetime) -> dict:
-    """Return the still-fresh entries of a presence row's nonce map."""
+def _fresh_sessions(
+    md: dict, now: datetime, superseded: set[str] | None = None
+) -> dict:
+    """Return the still-fresh entries of a presence row's nonce map.
+
+    SEAT-12: a nonce that has been DISPLACED from its seat is not a rival, it
+    is a corpse. Without that distinction the detector fired on every restart
+    — the dead predecessor stayed inside the freshness window for five minutes
+    and got counted as a second live session, so a session that had merely
+    been restarted was reported as a seat collision. The code carried a
+    comment conceding it, because until SEAT-9 recorded `superseded_nonces`
+    nothing could tell a corpse from a rival.
+    """
+    superseded = superseded or set()
     fresh = {}
     for nonce, info in (md.get("sessions") or {}).items():
+        if nonce in superseded:
+            continue
         try:
             seen = datetime.fromisoformat(info.get("last_seen"))
         except (TypeError, ValueError):
@@ -840,6 +854,19 @@ def _fresh_sessions(md: dict, now: datetime) -> dict:
         if (now - seen).total_seconds() < SEAT_COLLISION_WINDOW_SECONDS:
             fresh[nonce] = info
     return fresh
+
+
+def _superseded_from_seat(md: dict | str | None) -> set[str]:
+    """The displaced-nonce set recorded on a seat row by SEAT-9's one-way door."""
+    if not md:
+        return set()
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except (TypeError, ValueError):
+            return set()
+    raw = md.get("superseded_nonces") or []
+    return {n for n in raw if isinstance(n, str)}
 
 
 async def presence_update(
@@ -879,9 +906,23 @@ async def presence_update(
             prior_md = prior["metadata"]
             if isinstance(prior_md, str):
                 prior_md = json.loads(prior_md)
+        # SEAT-12: nonces this identity's seat has already displaced are
+        # corpses, not rivals. Read them here so the collision check below
+        # cannot count a restarted session's dead predecessor as a second live
+        # session — the false positive that fired on EVERY restart.
+        seat_row = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND key = $5
+            """,
+            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+            project, f"seat/{identity}",
+        )
+        superseded = _superseded_from_seat(seat_row["metadata"] if seat_row else None)
         # Merge this beat into the pruned nonce map. Legacy clients (no nonce)
         # don't participate in collision tracking but keep normal presence.
-        sessions = _fresh_sessions(prior_md, now)
+        sessions = _fresh_sessions(prior_md, now, superseded)
         if session_nonce:
             sessions[session_nonce] = {
                 "last_seen": now.isoformat(),
@@ -1102,6 +1143,23 @@ async def roster_list(
             PRESENCE_NAMESPACE, PRESENCE_SCOPE,
             project.lower() if project else None,
         )
+        # SEAT-12: same displaced-nonce exclusion the heartbeat applies, so the
+        # roster and the presence response cannot disagree about whether an
+        # identity is colliding. One query for every seat in scope rather than
+        # one per entry.
+        seat_rows = await conn.fetch(
+            """
+            SELECT key, metadata FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND ($4::text IS NULL OR project = $4)
+            """,
+            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+            project.lower() if project else None,
+        )
+    superseded_by_ident = {
+        r["key"].removeprefix("seat/"): _superseded_from_seat(r["metadata"])
+        for r in seat_rows
+    }
     now = datetime.now(timezone.utc)
     entries = []
     for r in rows:
@@ -1123,7 +1181,7 @@ async def roster_list(
         if age >= PRESENCE_RETENTION_SECONDS and not include_expired:
             continue
         ident = r["key"].removeprefix("presence/")
-        fresh = _fresh_sessions(md, now)
+        fresh = _fresh_sessions(md, now, superseded_by_ident.get(ident))
         live = max(len(fresh), 1)
         watcher_alive, watcher_seen = _watcher_state(md, now)
         # SEAT-4: correct the self-reported state using WATCHER truth.

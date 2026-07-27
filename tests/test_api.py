@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from server.services.memory_service import PRESENCE_NAMESPACE
+
 
 @pytest.mark.asyncio
 async def test_health(client):
@@ -733,6 +735,67 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
     async with db_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
+async def test_a_displaced_nonce_is_not_counted_as_a_rival_session(client, db_pool):
+    """SEAT-12: the collision detector fired on every restart.
+
+    A restarted session's dead predecessor stays inside the 300s freshness
+    window, so it was counted as a second live session and the identity was
+    flagged as colliding — for a session that had merely been restarted. The
+    code conceded it in a comment, because until SEAT-9 recorded
+    `superseded_nonces` nothing could tell a corpse from a rival. It can now,
+    and the detector simply never consulted the field.
+
+    Reproduced live 2026-07-27: a probe reported "2 live sessions" for an
+    identity that process truth showed had exactly one bridge.
+    """
+    ident, proj = "seat12probe", "seat12proj"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='seat' AND project=$1", proj)
+
+    # generation 1 beats, then generation 2 replaces it seconds later
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "session_nonce": "gen1"})
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "session_nonce": "gen2"})
+    assert r.status_code == 200
+    # both nonces are inside the freshness window: today that reads as a collision
+    assert r.json().get("collision"), (
+        "precondition failed — expected two fresh nonces to look like a collision"
+    )
+
+    # SEAT-9's one-way door records gen1 as displaced. It is a corpse, not a rival.
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id, project,
+                                  tags, tags_search, metadata)
+            VALUES ($1, $2, 'seat', 'seat', 'global', $3, '', '',
+                    jsonb_build_object('superseded_nonces', jsonb_build_array('gen1')))
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+              SET metadata = EXCLUDED.metadata
+            """,
+            PRESENCE_NAMESPACE, f"seat/{ident}", proj,
+        )
+
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "session_nonce": "gen2"})
+    assert not r.json().get("collision"), (
+        "a displaced predecessor is still counted as a rival — the detector "
+        "false-positives on every restart"
+    )
+
+    r = await client.post("/memory/roster", json={"project": proj})
+    entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
+    assert entry["collision"] is False, "roster and heartbeat disagree about the collision"
+    assert entry["live_sessions"] == 1
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='seat' AND project=$1", proj)
 
 
 @pytest.mark.asyncio
