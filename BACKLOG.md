@@ -74,6 +74,25 @@
   exempting `~/maintenance` where shared identity is the point) — and
   writing `.engram.cfg` into another project's tree is NOT the fix.
 
+- **SEAT-12** The seat-collision detector **false-positives on every
+  restart**, and the fix now exists. `_fresh_sessions` keeps any nonce seen
+  within `SEAT_COLLISION_WINDOW_SECONDS` (300), so a restarted session's
+  dead predecessor counts as a second live session for five minutes and the
+  identity is flagged as colliding. The code comment concedes it — "a bridge
+  restart mid-session can look like a collision for at most this long" — and
+  it was an accepted cost because nothing could distinguish a corpse from a
+  rival. **SEAT-9 changed that:** the seat row now records
+  `superseded_nonces`, and a displaced nonce is by definition not a rival.
+  The detector simply never consults the field. Excluding superseded nonces
+  from the fresh set retires the false positive outright.
+  Reproduced live 2026-07-27: a probe reported "2 live sessions" for an
+  identity that process truth showed had exactly ONE bridge. It was raised by
+  the probe itself as a caveat against its own passing result — correct
+  instinct, wrong facts — and only a peer's process-tree check kept two
+  experiments interpretable. Worked example of why the two liveness sources
+  (registry claim vs process ancestry) are both needed: the registry was the
+  one that was wrong.
+
 - **MSG-7** Mail that arrives while a session is RESTARTING is **silently
   absorbed as history**, not delivered as a directive. The next session's
   `/startup` sweep reads the inbox and drains it — the queued message is
