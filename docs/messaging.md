@@ -197,7 +197,7 @@ is actually there, and names it back to you:
 ```json
 {"status": "ok", "id": "inbox/…",
  "recipient_warnings": [
-   "peer-claude: presumed-dead, last heartbeat 42.0h ago — delivered and
+   "peer-claude: last heartbeat 42.0h ago, watcher silent — delivered and
     stored, but do not expect a reply. Check memory_roster before dividing
     work or handing off."]}
 ```

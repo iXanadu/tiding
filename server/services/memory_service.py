@@ -951,13 +951,13 @@ async def presence_update(
         # matters because watcher liveness is the ONE death signal that does not
         # degrade when a session is head-down (SEAT-4/MSG-8).
         #
-        # SEAT-4 REFINEMENT (2026-07-27, after a power outage falsified the
+        # GENERATIONAL GUARD (2026-07-27, after a power outage falsified the
         # first version within four hours): carry it forward only WITHIN A
         # GENERATION. `watcher_last_seen` describes the process that armed that
         # watcher. It survives on a row the NEXT generation reclaims through
         # SEAT-9 continuity, so after a restart the dead generation's evidence
-        # was being read as the live one's state and the roster called a
-        # running session presumed-dead.
+        # was being attributed to the live one — a fact about process N served
+        # as a fact about process N+1.
         #
         # The generational fact is the NONCE, not a clock. A timestamp
         # comparison ("is the watcher beat older than this beat") would work in
@@ -969,8 +969,8 @@ async def presence_update(
         # Dropping the field yields None (NO BASIS), never False (dead) — the
         # three-valued discipline holds, and the new generation's own watcher
         # restores truth on its next poll. Only a LIVE session's beat can clear
-        # it, so a genuine corpse (no beats at all) still ages to
-        # presumed-dead exactly as SEAT-4 intended.
+        # it, so a genuine corpse (no beats at all) keeps its last watcher beat
+        # on the row, correctly attributed, for consumers to judge.
         #
         # Legacy clients send no nonce and cannot be generation-checked; they
         # keep the unconditional carry-forward, i.e. today's behaviour.
@@ -1184,35 +1184,23 @@ async def roster_list(
         fresh = _fresh_sessions(md, now, superseded_by_ident.get(ident))
         live = max(len(fresh), 1)
         watcher_alive, watcher_seen = _watcher_state(md, now)
-        # SEAT-4: correct the self-reported state using WATCHER truth.
-        #
-        # `state` is whatever the session last claimed, and a session that dies
-        # never gets to retract it — so a corpse reports "running" forever.
-        # That is what offered a human two dead seats to huddle with on
-        # 2026-07-26, and it is why "annotate staleness, never correct it" was
-        # not enough.
-        #
-        # The watcher is the ONLY signal licensed to override it. Its beat
-        # rides its own poll timer rather than tool activity, so unlike
-        # `is_stale` it does NOT degrade when a session is head-down in a long
-        # call (MSG-8: a busy agent and a dead one are otherwise
-        # indistinguishable). A watcher that HAS beaten and then stopped is a
-        # process that exited — the positive death signal `is_stale` never had.
-        #
-        # watcher_alive is deliberately THREE-valued and only False overrides.
-        # None means no watcher ever beat here (older build, or none armed) —
-        # no basis, so the session keeps its own word. Coercing None to False
-        # would declare every un-watched session dead, which is the exact
-        # absent-vs-negative conflation that has caused most of this class.
-        presumed_dead = watcher_alive is False and state != "done"
-        if presumed_dead:
-            state = "presumed-dead"
+        # FACTS, NEVER VERDICTS (decision/roster-should-report-facts-not-
+        # judgments, ratified 2026-07-27). `state` is whatever the session
+        # last claimed, uncorrected — a corpse's stale "running" is the
+        # CLAIM on record, and rendering it as anything else is a liveness
+        # verdict, which is orchestration's call (AgentBeast owns process
+        # truth), not the store's. Every signal available here is a
+        # heuristic — a busy agent and a dead one are both silent (MSG-8),
+        # and a machine cannot write its own goodbye — so any verdict
+        # computed from this row has a failure mode; the shipped
+        # `presumed-dead` override was falsified by a power cut the same
+        # day it landed. The roster serves what it can attest: the address
+        # exists, when the session last spoke, when its watcher last beat.
+        # Consumers judge.
         entries.append({
             "identity": ident,
             "project": r["user_id"],
             "state": state,
-            "presumed_dead": presumed_dead,
-            "reported_state": md.get("state") or "running",
             "provider": md.get("provider"),
             "overlays": md.get("overlays") or [],
             "channels": md.get("channels") or [],
@@ -1274,12 +1262,11 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
         last_seen = r["last_used_at"] or now
         age = (now - last_seen).total_seconds()
         watcher_alive, _ = _watcher_state(md, now)
+        # Facts only, same discipline as the roster: `state` is the
+        # session's own last claim, never corrected here. The caller
+        # composing a warning gets watcher_alive and age and decides what
+        # they mean — the store attests, it does not judge.
         state = md.get("state") or "running"
-        # Same correction the roster applies, for the same reason: a corpse
-        # never retracts its own "running". Only False overrides; None is no
-        # basis (SEAT-4, and its nonce-guard refinement).
-        if watcher_alive is False and state != "done":
-            state = "presumed-dead"
         out[ident] = {
             "state": state,
             "age_seconds": round(age, 1),

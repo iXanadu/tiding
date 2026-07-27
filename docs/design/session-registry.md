@@ -196,9 +196,14 @@ it at its next claim: its `session_key` no longer holds the row, so it re-claims
 and gets `is_new: true` plus a warning, and its watcher follows via the seat
 file. Compare this to today, where the failure mode is quiet by construction.
 
-**Roster lifecycle** (the same disease, smaller): mark entries past grace
-`presumed-dead` rather than showing a 2.8-day-old row as `running`, and let the
-existing cleanup task drop presence rows past a retention horizon.
+**Roster lifecycle** — *superseded 2026-07-27.* The `presumed-dead` marking
+described here shipped and was falsified by a power outage the same day (a
+dead generation's watcher beat was read as evidence about the live generation
+that reclaimed the row). The resolution was a retreat, not a better heuristic:
+the roster reports **facts only** (address exists, last-spoke, watcher-beat,
+plus a >48h retention horizon that hides — never deletes — silent rows), and
+liveness *verdicts* belong to the orchestration layer, which has process
+truth. See `decision/roster-should-report-facts-not-judgments`.
 
 ## Who does what
 
@@ -213,7 +218,10 @@ existing cleanup task drop presence rows past a retention horizon.
 - **Phase 1** (shipped) — bridge claims at startup; env seat becomes a
   preference; watcher ancestor-walk; launcher readback; the `derive_listen_set`
   guidance fix (ADDR-1). *This is the phase that closes Rob's three-Claude case.*
-- **Phase 2** — roster lifecycle (`presumed-dead`, reaping).
+- **Phase 2** — roster lifecycle. *Resolved differently than designed:* the
+  retention horizon shipped (rows silent >48h hidden by default), but the
+  `presumed-dead` marking was shipped, falsified, and withdrawn — the roster
+  serves facts, consumers judge (see the superseded note above).
 
 Phase 1 is the whole payload. Phase 2 is hygiene.
 

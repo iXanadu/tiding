@@ -423,13 +423,21 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         if (req.intent or "").lower() != "fyi":
             live = await recipient_liveness([t for t, _ in corrected])
             for addr, info in live.items():
-                if info["state"] == "presumed-dead" or info["is_stale"]:
+                # Facts, not verdicts (the store attests, consumers judge):
+                # warn on a stale heartbeat or a watcher that beat and then
+                # went quiet. Both are stated as observations — the sender
+                # decides what silence means, because the store cannot
+                # (MSG-8: a busy agent and a dead one are both silent).
+                if info["is_stale"] or info["watcher_alive"] is False:
                     hrs = info["age_seconds"] / 3600.0
                     age = f"{hrs:.1f}h" if hrs >= 1 else f"{int(info['age_seconds'])}s"
+                    facts = f"last heartbeat {age} ago"
+                    if info["watcher_alive"] is False:
+                        facts += ", watcher silent"
                     warnings.append(
-                        f"{addr}: {info['state']}, last heartbeat {age} ago — "
-                        "delivered and stored, but do not expect a reply. "
-                        "Check memory_roster before dividing work or handing off."
+                        f"{addr}: {facts} — delivered and stored, but do not "
+                        "expect a reply. Check memory_roster before dividing "
+                        "work or handing off."
                     )
         return InboxSendResponse(
             status="ok",

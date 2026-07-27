@@ -1026,7 +1026,11 @@ async def test_action_intent_to_a_dead_recipient_warns_the_sender(client, db_poo
         "success — this is the send that cost a peer a turn of duplicated work"
     )
     assert ident in warnings[0]
-    assert "presumed-dead" in warnings[0]
+    # Facts, not verdicts: the warning states what was observed (heartbeat
+    # age, watcher silence) and lets the sender judge what silence means.
+    assert "last heartbeat" in warnings[0]
+    assert "watcher silent" in warnings[0]
+    assert "presumed-dead" not in warnings[0]
 
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
@@ -1140,20 +1144,23 @@ async def test_banner_unread_count_is_a_count_not_a_page_size(client, db_pool):
 
 
 @pytest.mark.asyncio
-async def test_a_restarted_session_is_not_presumed_dead_by_its_predecessors_watcher(client, db_pool):
-    """SEAT-4 REFINEMENT — the defect a power outage found four hours after ship.
+async def test_a_restarted_session_does_not_inherit_its_predecessors_watcher_beat(client, db_pool):
+    """The generational guard — the defect a power outage found within hours.
 
     `watcher_last_seen` describes the process that armed that watcher, but it
     survives on a presence row the NEXT generation reclaims through SEAT-9
     continuity. So after a restart the DEAD generation's watcher evidence was
-    applied to the LIVE generation's state, and the roster reported a running
-    process as presumed-dead. Measured live 2026-07-27: watcher beat 37s before
-    the power cut, presence beat four minutes after boot, roster said dead.
+    attributed to the LIVE generation — a fact about process N served as a
+    fact about process N+1. Measured live 2026-07-27: watcher beat 37s before
+    the power cut, presence beat four minutes after boot.
 
     The guard is the NONCE, not a clock — a timestamp comparison has to be
     right about time across a boot, which is when it is least trustworthy and
     exactly when this fires. A new nonce means a process we have not seen, so
-    its predecessor's watcher cannot speak for it.
+    its predecessor's watcher cannot speak for it. The roster no longer
+    renders verdicts from this field, but the FACT itself must still be
+    attributed to the right generation — a consumer judging liveness off
+    watcher_alive inherits any misattribution we serve.
     """
     ident, proj = "restarted", "restartproj"
     async with db_pool.acquire() as conn:
@@ -1191,11 +1198,9 @@ async def test_a_restarted_session_is_not_presumed_dead_by_its_predecessors_watc
         "the predecessor's watcher beat is still being read as evidence about "
         "the live generation"
     )
-    assert entry["presumed_dead"] is False
     assert entry["state"] == "running", (
-        "a LIVE session was declared dead by its own predecessor's watcher — "
-        "this is what the roster said about a running process seven minutes "
-        "after the 2026-07-27 outage"
+        "the session's own claim was altered — the roster reports facts, "
+        "and the only fact about state is what the session last said"
     )
 
     async with db_pool.acquire() as conn:
@@ -1250,14 +1255,19 @@ async def test_same_generation_still_preserves_watcher_last_seen(client, db_pool
 
 
 @pytest.mark.asyncio
-async def test_roster_corrects_a_corpses_running_using_watcher_truth(client, db_pool):
-    """SEAT-4: a dead session never retracts its own 'running'.
+async def test_roster_serves_a_corpses_stale_claim_uncorrected_with_the_facts_beside_it(client, db_pool):
+    """FACTS, NEVER VERDICTS — the retreat that collapsed SEAT-4.
 
-    So the roster must correct it — and the ONLY signal licensed to do that is
-    the watcher, whose beat rides its own timer rather than tool activity. A
-    session head-down in a long call goes quiet without dying (MSG-8), so
-    is_stale can never carry this; a watcher that HAS beaten and then stopped
-    is a process that exited.
+    A dead session never retracts its own 'running', and the roster serves
+    that stale claim AS the claim, uncorrected. The shipped correction
+    ("a watcher that beat and then stopped is a process that exited") was
+    falsified by a power cut the day it landed — the premise fails across a
+    restart boundary, and every replacement premise is another heuristic
+    with another failure mode (MSG-8: a busy agent and a dead one are both
+    silent). Liveness verdicts belong to the orchestrator with process
+    truth; the store attests what it can: the claim, when the session last
+    spoke, when its watcher last beat. The facts must be there for the
+    consumer to judge — that is the half this test pins.
     """
     ident, proj = "corpse", "corpseproj"
     async with db_pool.acquire() as conn:
@@ -1283,12 +1293,17 @@ async def test_roster_corrects_a_corpses_running_using_watcher_truth(client, db_
 
     r = await client.post("/memory/roster", json={"project": proj})
     entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
-    assert entry["state"] == "presumed-dead", (
-        f"a corpse still advertises {entry['state']!r} — this is what offered "
-        "a human two dead seats to huddle with"
+    assert entry["state"] == "running", (
+        f"got {entry['state']!r} — the roster judged. It must serve the "
+        "session's own claim untouched and leave the verdict to consumers"
     )
-    assert entry["presumed_dead"] is True
-    assert entry["reported_state"] == "running", "the original claim must stay visible"
+    assert entry["watcher_alive"] is False, (
+        "the fact the consumer needs to judge liveness — a watcher that beat "
+        "and went quiet — was not served"
+    )
+    assert entry["watcher_last_seen"] is not None
+    assert "presumed_dead" not in entry, "the verdict field is gone, not defaulted"
+    assert "reported_state" not in entry, "state IS the reported state now"
 
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -1296,12 +1311,13 @@ async def test_roster_corrects_a_corpses_running_using_watcher_truth(client, db_
 
 
 @pytest.mark.asyncio
-async def test_a_session_with_no_watcher_is_never_presumed_dead(client, db_pool):
+async def test_a_session_with_no_watcher_reads_no_basis_not_false(client, db_pool):
     """ABSENT IS NOT DEAD — the conflation behind most of this defect class.
 
     watcher_alive is three-valued. None means no watcher has EVER beaten for
     this identity (older build, or none armed), which is no basis at all.
-    Coercing None to False would declare every un-watched session a corpse.
+    Coercing None to False would hand every consumer judging off this fact a
+    corpse verdict about every un-watched session.
     """
     ident, proj = "nowatcher", "nowatcherproj"
     async with db_pool.acquire() as conn:
@@ -1315,9 +1331,8 @@ async def test_a_session_with_no_watcher_is_never_presumed_dead(client, db_pool)
     r = await client.post("/memory/roster", json={"project": proj})
     entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
     assert entry["watcher_alive"] is None
-    assert entry["presumed_dead"] is False
     assert entry["state"] == "running", (
-        "a session that never armed a watcher was declared dead — absent is not dead"
+        "a session that never armed a watcher had its claim altered — absent is not dead"
     )
 
     async with db_pool.acquire() as conn:
