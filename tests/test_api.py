@@ -736,6 +736,158 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_action_intent_to_a_dead_recipient_warns_the_sender(client, db_pool):
+    """The failure: a peer divided work with a counterparty 42 hours dead.
+
+    The roster would have answered in one call. Nobody made the call, because
+    making it is a step you have to remember. The data is one query away at
+    the exact moment of the mistake, so the send response is where it belongs.
+    """
+    ident, proj = "deadpeer", "deadpeerproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+    # its watcher stops: the positive death signal
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '42 hours')::text), true),
+                last_used_at = NOW() - interval '42 hours'
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{ident}")
+
+    r = await client.post("/memory/send", json={
+        "to": ident, "from_": "planner", "intent": "action",
+        "subject": "you take the second half", "body": "splitting the work"})
+    assert r.status_code == 200
+    warnings = r.json().get("recipient_warnings")
+    assert warnings, (
+        "an intent=action message to a 42h-dead recipient reported plain "
+        "success — this is the send that cost a peer a turn of duplicated work"
+    )
+    assert ident in warnings[0]
+    assert "presumed-dead" in warnings[0]
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+
+@pytest.mark.asyncio
+async def test_fyi_to_a_dead_recipient_is_silent(client, db_pool):
+    """Queued mail is a FEATURE, not an error — the owner's own correction.
+
+    Sending to a session that is not running is legitimate and frequent; that
+    is how a message waits for the next session to start. The distinction is
+    PURPOSE, which `intent` already carries, so liveness alone must never
+    trigger the warning.
+    """
+    ident, proj = "quietpeer", "quietpeerproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '42 hours')::text), true),
+                last_used_at = NOW() - interval '42 hours'
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{ident}")
+
+    r = await client.post("/memory/send", json={
+        "to": ident, "from_": "narrator", "intent": "fyi",
+        "subject": "for the record", "body": "no reply needed"})
+    assert r.status_code == 200
+    assert not r.json().get("recipient_warnings"), (
+        "fyi to a dormant session warned — queued mail is the feature, and "
+        "warning on it trains the reader to ignore the warning"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+
+@pytest.mark.asyncio
+async def test_never_warns_about_an_address_with_no_presence_row(client, db_pool):
+    """ABSENT IS NOT DEAD — the conflation behind most of this defect class.
+
+    A session that has never heartbeated has no presence row. Rendering that
+    as "dead" would flag every brand-new address, which is exactly the case
+    that must stay silent. Enforced by omission: no row, no entry, no warning.
+    """
+    ident = "neverseenpeer"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+    r = await client.post("/memory/send", json={
+        "to": ident, "from_": "planner", "intent": "action",
+        "subject": "start when you wake", "body": "queued for a future session"})
+    assert r.status_code == 200
+    assert not r.json().get("recipient_warnings"), (
+        "an address with no presence row was reported as dead — absent is not dead"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+
+@pytest.mark.asyncio
+async def test_banner_unread_count_is_a_count_not_a_page_size(client, db_pool):
+    """The banner reported the size of its own preview window as the total.
+
+    `inbox_banner` fetched `LIMIT preview_limit + 1` and returned `len(msgs)`,
+    so "unread" could never exceed 6 no matter how much mail was waiting. A
+    session on 130 open messages was told 6 — small enough to read as a real
+    answer rather than an obvious truncation, which is what made it dangerous.
+    A peer reported seeing three different numbers for one mailbox (banner 6,
+    listing 20, digest 130) and concluded it could trust none of them.
+    """
+    reader = "counter"
+    addr = "countbox"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", addr)
+
+    for i in range(9):
+        r = await client.post("/memory/send", json={
+            "to": addr, "from_": "sender", "subject": f"msg {i}", "body": "x"})
+        assert r.status_code == 200
+
+    # the banner rides any store/search call
+    r = await client.post("/memory/search", json={
+        "namespace": "test", "query": "anything", "limit": 1,
+        "listen_set": [addr], "reader_identity": reader})
+    assert r.status_code == 200
+    banner = r.json().get("inbox_banner")
+    assert banner is not None, "nine unread messages produced no banner"
+    assert banner["unread_count"] == 9, (
+        f"banner reported {banner['unread_count']} unread for 9 messages — "
+        "this is the preview window size being presented as a total"
+    )
+    assert len(banner["preview"]) <= 5, "preview must stay short"
+    assert banner.get("shown") == len(banner["preview"])
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", addr)
+
+
+@pytest.mark.asyncio
 async def test_a_restarted_session_is_not_presumed_dead_by_its_predecessors_watcher(client, db_pool):
     """SEAT-4 REFINEMENT — the defect a power outage found four hours after ship.
 

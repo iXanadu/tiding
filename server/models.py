@@ -131,8 +131,14 @@ class MemoryItem(BaseModel):
 
 
 class InboxBanner(BaseModel):
+    # The TRUE number of unread messages, not the length of `preview`. These
+    # were the same field until 2026-07-27, which capped the reported count at
+    # the preview window and told a session with 130 unread that it had 6.
     unread_count: int
-    preview: list[str]  # ≤5 one-line previews of unread messages
+    preview: list[str]  # ≤5 one-line previews, newest first
+    # How many of `unread_count` the preview actually lists, so a renderer can
+    # say "6 of 130" rather than presenting a page size as a total.
+    shown: int | None = None
 
 
 class MemorySetResponse(BaseModel):
@@ -500,6 +506,12 @@ class InboxSendResponse(BaseModel):
     ids: list[str] | None = None  # all ids when 'to' was a list (fan-out)
     corrected_from: str | None = None
     guidance: str | None = None
+    # Recipients that have a presence row and look dead/stale, when the intent
+    # was one that expects to WAKE somebody. Delivery still succeeded — the
+    # message is stored and will be read whenever that address next runs — so
+    # this is a warning, never an error. Empty/absent when every recipient
+    # looks live or has no presence row at all (absent is not dead).
+    recipient_warnings: list[str] | None = None
 
 
 class InboxListRequest(BaseModel):

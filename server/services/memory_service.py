@@ -1133,30 +1133,145 @@ async def roster_list(
     return entries
 
 
+async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
+    """Liveness for each address that HAS a presence row. Absence is omitted.
+
+    Used to warn a sender at the moment of the mistake: a message whose whole
+    purpose is coordination (``intent=action|proceed|escalate``) sent to a
+    session that stopped heartbeating two days ago cannot achieve that
+    purpose, and today the send reports plain success. A peer spent a turn
+    dividing work with a counterparty that had been dead 42 hours; the roster
+    would have said so in one call, and the call was never made. Putting the
+    answer in the send response removes the need to remember to ask.
+
+    Deliberately NOT a check on ``intent=fyi``. Sending to a not-yet-running
+    session is legitimate and frequent — queued mail is a feature, and the
+    owner has said so explicitly. The distinction is PURPOSE, which the
+    ``intent`` field already carries.
+
+    ABSENT IS NOT DEAD, enforced here by omission: an address with no presence
+    row simply does not appear in the result, so callers cannot render "no
+    row" as "dead". That conflation is the root of most of this defect class,
+    and a brand-new session that has never heartbeated is exactly the case
+    that must not be flagged.
+    """
+    addresses = [a.lower() for a in addresses if a]
+    if not addresses:
+        return {}
+    keys = [f"presence/{a}" for a in addresses]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, user_id, metadata, last_used_at
+            FROM memories
+            WHERE namespace = $1 AND scope = $2 AND key = ANY($3::text[])
+            """,
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, keys,
+        )
+    now = datetime.now(timezone.utc)
+    out: dict[str, dict] = {}
+    for r in rows:
+        md = r["metadata"] or {}
+        if isinstance(md, str):
+            md = json.loads(md)
+        ident = r["key"].removeprefix("presence/")
+        last_seen = r["last_used_at"] or now
+        age = (now - last_seen).total_seconds()
+        watcher_alive, _ = _watcher_state(md, now)
+        state = md.get("state") or "running"
+        # Same correction the roster applies, for the same reason: a corpse
+        # never retracts its own "running". Only False overrides; None is no
+        # basis (SEAT-4, and its nonce-guard refinement).
+        if watcher_alive is False and state != "done":
+            state = "presumed-dead"
+        out[ident] = {
+            "state": state,
+            "age_seconds": round(age, 1),
+            "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
+            "watcher_alive": watcher_alive,
+        }
+    return out
+
+
+async def inbox_unread_count(
+    listen_set: list[str],
+    reader_identity: str | None,
+) -> int:
+    """How many open messages this reader has not acked. A COUNT, not a page.
+
+    Deliberately mirrors ``inbox_list``'s unread predicate exactly — same
+    archived/status/read_by clauses — so the number and the listing can never
+    describe different sets. It does NOT reuse
+    ``inbox_unread_by_sender``: that one excludes group traffic on purpose
+    (a fan-out message is not a personal obligation, so it must not sit on a
+    per-sender badge), whereas the banner answers "is there mail here at all",
+    for which huddle and fan-out mail plainly counts.
+
+    Exists because the banner used to report ``len(msgs)`` from a list fetched
+    with ``LIMIT preview_limit + 1``, so its "unread" was structurally
+    incapable of exceeding 6 — a page size wearing a count's clothes. A
+    session sitting on 130 open messages was told it had 6, and 6 is small
+    enough to look like a real answer rather than an obvious truncation.
+    Reported by a peer who saw three different numbers for one mailbox
+    (banner 6, listing 20, digest 130) and concluded it could trust none of
+    them.
+    """
+    listen_set = [addr.lower() for addr in listen_set]
+    if not listen_set:
+        return 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            SELECT count(*)
+            FROM memories
+            WHERE namespace = $1
+              AND scope = $2
+              AND user_id = ANY($3::text[])
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $4) = $4
+              AND (
+                  $5::text IS NULL
+                  OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
+              )
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, listen_set, INBOX_OPEN,
+            reader_identity.lower() if reader_identity else None,
+        )
+
+
 async def inbox_banner(
     listen_set: list[str],
     reader_identity: str | None,
     preview_limit: int = 5,
 ) -> dict | None:
-    """Return ``{unread_count, preview}`` if there are unread messages, else None."""
+    """Return ``{unread_count, shown, preview}`` if there is unread mail.
+
+    ``unread_count`` is the TRUE total; ``shown`` is how many of them the
+    preview lists. Keeping both means a caller can say "6 of 130" instead of
+    silently presenting the window size as the total.
+    """
     listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
+        return None
+    total = await inbox_unread_count(listen_set, reader_identity)
+    if not total:
         return None
     msgs = await inbox_list(
         listen_set=listen_set,
         reader_identity=reader_identity,
         unread_only=True,
-        limit=preview_limit + 1,
+        limit=preview_limit,
+        newest_first=True,
     )
-    if not msgs:
-        return None
     preview = []
     for m in msgs[:preview_limit]:
         sender = m.from_ or "unknown"
         subject = m.subject or (m.body[:60] + ("…" if len(m.body) > 60 else ""))
         stale = f" ⚠️ STALE ({int(m.age_hours // 24)}d — verify)" if m.is_stale else ""
         preview.append(f"{sender} → {m.to}: {subject}{stale}")
-    return {"unread_count": len(msgs), "preview": preview}
+    return {"unread_count": total, "shown": len(preview), "preview": preview}
 
 
 async def inbox_ack(message_id: str, reader_identity: str) -> bool:

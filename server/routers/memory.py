@@ -67,6 +67,7 @@ from server.services.memory_service import (
     memory_set,
     presence_update,
     presence_watcher_beat,
+    recipient_liveness,
     roster_list,
 )
 
@@ -373,12 +374,35 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 f"Fan-out: delivered to {len(corrected)} recipients "
                 f"({', '.join(t for t, _ in corrected)}). Each got its own message id."
             )
+        # Tell the sender NOW if a recipient that expects to be woken is not
+        # there. The data has always been one query away at exactly this
+        # moment; nothing looked. A peer divided work with a counterparty
+        # 42 hours dead and started building its half — the roster would have
+        # said so, and asking it is a step you have to remember to take.
+        #
+        # Scoped by INTENT, not liveness alone. Sending to a session that is
+        # not running yet is legitimate and common (queued mail is a feature),
+        # so `fyi` is silent by design; only a message whose purpose is
+        # coordination is broken by a dead recipient.
+        warnings: list[str] = []
+        if (req.intent or "").lower() != "fyi":
+            live = await recipient_liveness([t for t, _ in corrected])
+            for addr, info in live.items():
+                if info["state"] == "presumed-dead" or info["is_stale"]:
+                    hrs = info["age_seconds"] / 3600.0
+                    age = f"{hrs:.1f}h" if hrs >= 1 else f"{int(info['age_seconds'])}s"
+                    warnings.append(
+                        f"{addr}: {info['state']}, last heartbeat {age} ago — "
+                        "delivered and stored, but do not expect a reply. "
+                        "Check memory_roster before dividing work or handing off."
+                    )
         return InboxSendResponse(
             status="ok",
             id=ids[0],
             ids=ids if len(ids) > 1 else None,
             corrected_from=first_corrected,
             guidance=guidance,
+            recipient_warnings=warnings or None,
         )
     except Exception as e:
         logger.exception("inbox_send failed")
