@@ -531,7 +531,7 @@ async def test_seat_claim_refreshes_and_does_not_stop_after_the_first(monkeypatc
     from engram_mcp import server as srv
 
     monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
-    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
     monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-testkey")
     monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
     monkeypatch.setattr(srv, "compute_identity", lambda _d: ("proj-claude@host", []))
@@ -555,26 +555,73 @@ async def test_seat_claim_refreshes_and_does_not_stop_after_the_first(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_no_session_key_stops_claiming_permanently(monkeypatch):
-    """The one case that SHOULD latch: nothing to key a claim on."""
+async def test_no_session_key_retries_instead_of_latching(monkeypatch):
+    """BRIDGE-1: an unresolvable key is a failure to RETRY, not a life
+    sentence. The old permanent latch meant one transient resolution failure
+    silenced the claim path forever — and the server cannot tell "never
+    claimed" from "not running"; both are an absence. The probe costs one
+    process lookup per heartbeat, so retrying is nearly free."""
     from engram_mcp import server as srv
 
     monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
-    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
+    monkeypatch.setattr(srv, "_SEAT_LAST_CLAIM_ERROR", None)
     monkeypatch.setattr(srv, "resolve_session_key", lambda: None)
 
     calls = []
 
     async def _fake_claim(**kw):
         calls.append(kw)
-        return {}
+        return {"seat": "proj-claude", "is_new": False}
 
     monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
 
     await srv._claim_seat("/tmp/proj")
     await srv._claim_seat("/tmp/proj")
-    assert calls == [], "with no session key there is nothing to claim"
-    assert srv._SEAT_UNCLAIMABLE is True
+    assert calls == [], "with no session key there is nothing to claim yet"
+    assert srv._SEAT_CLAIM_FAILURES == 2, "failures are counted, not latched"
+
+    # the key becomes resolvable (env injected late, transient ps failure
+    # cleared) — the next heartbeat must claim, not stay silenced
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-latekey")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity", lambda _d: ("proj-claude@host", []))
+    await srv._claim_seat("/tmp/proj")
+    assert len(calls) == 1, "a recovered key must resume claiming"
+    assert srv._SEAT_CLAIM_FAILURES == 0, "success resets the streak"
+
+
+@pytest.mark.asyncio
+async def test_persistent_claim_failure_surfaces_once(monkeypatch):
+    """BRIDGE-1's other half: the streak must SPEAK. Below the threshold,
+    silence (blips are normal); at it, one banner; never a nag."""
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
+    monkeypatch.setattr(srv, "_SEAT_LAST_CLAIM_ERROR", None)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_BANNER_SHOWN", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-k")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity", lambda _d: ("proj-claude@host", []))
+
+    async def _broken_claim(**kw):
+        raise RuntimeError("server exploded")
+
+    monkeypatch.setattr(srv._client, "session_claim", _broken_claim)
+
+    await srv._claim_seat("/tmp/proj")
+    await srv._claim_seat("/tmp/proj")
+    assert srv._seat_claim_health_banner() == "", (
+        "two blips must not alarm anyone"
+    )
+    await srv._claim_seat("/tmp/proj")
+    banner = srv._seat_claim_health_banner()
+    assert "SEAT CLAIM FAILING" in banner
+    assert "RuntimeError: server exploded" in banner, (
+        "the bare except used to swallow the reason; the banner must carry it"
+    )
+    assert srv._seat_claim_health_banner() == "", "once means once"
 
 
 @pytest.mark.asyncio
@@ -602,7 +649,7 @@ async def test_a_runtime_seat_is_declared_and_the_server_grant_keeps_it(
     monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
     monkeypatch.setenv("ENGRAM_SESSION_KEY", "claude-ab-proj")
     monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
-    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
 
     # The agent deliberately re-seats itself mid-session.
     identity.take_seat("proj-claude-opus5")
@@ -646,7 +693,7 @@ async def test_a_refused_runtime_seat_reverts_loudly_not_silently(
     monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
     monkeypatch.setenv("ENGRAM_SESSION_KEY", "claude-ab-proj")
     monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
-    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
     monkeypatch.setattr(srv, "_SEAT_REVERT_NOTICE", None)
 
     identity.take_seat("proj-claude-opus5")

@@ -7,25 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **BRIDGE-1** (hardening, not urgent) The bridge's seat-claim path fails
-  **silently and permanently**: one unresolvable session key latches a
-  per-session flag that is never cleared, and every other failure is
-  swallowed by a bare `except: pass`. A session could go its whole life
-  never claiming and emit nothing, and the server cannot tell "never
-  claimed" from "not running" — both are an absence. Best-effort was the
-  right call for AVAILABILITY (a session must not fail to start because the
-  address service is down), but silent and permanent are separable from
-  best-effort; conflating them is the defect. Needs a signal in tool
-  guidance and a retrying latch. Bridge change — lands at each session's
-  next start.
-  **Not observed firing.** Raised 2026-07-26 as the explanation for a peer
-  whose seat looked stuck; that turned out to be the peer's own
-  arbitrary-pick bug manufacturing the symptom, and their bridge had been
-  claiming correctly throughout. The shape is still worth fixing on its own
-  merits, but nothing has yet been traced to it. Named BRIDGE-1 rather than
-  SEAT-N deliberately: it is a bridge item, and the SEAT-N space is shared
-  with AgentBeast's ledger where the numbers already mean other things.
-
 - **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the

@@ -234,7 +234,8 @@ def _append_guidance(body: str, result: dict) -> str:
     server-side without forcing an MCP/Claude restart.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
-    alert = _seat_collision_banner() + _seat_revert_banner() + _admin_fallback_banner()
+    alert = (_seat_collision_banner() + _seat_revert_banner()
+             + _admin_fallback_banner() + _seat_claim_health_banner())
     if not guidance:
         return alert + body
     return f"{alert}{body}\n\n---\n{guidance}"
@@ -360,9 +361,20 @@ _last_heartbeat = 0.0
 
 # SEAT-3: has this session claimed its allocated address yet?
 _SEAT_CLAIMED = False
-# True only when there is nothing to key a claim on (no session key). Permanent
-# for the session — distinct from _SEAT_CLAIMED, which must NOT stop re-claims.
-_SEAT_UNCLAIMABLE = False
+# BRIDGE-1: claim health. Best-effort was the right call for AVAILABILITY (a
+# session must not fail to start because the address service is down), but
+# silent and permanent are separable from best-effort. The old shape latched
+# a permanent "unclaimable" flag on the first unresolvable session key and
+# swallowed every other failure in a bare except — a session could go its
+# whole life never claiming and emit nothing, and the server cannot tell
+# "never claimed" from "not running": both are an absence. Now every
+# heartbeat retries (resolve_session_key is one process probe — cheap), the
+# failure streak and last error are tracked, and a persistent streak
+# surfaces once as a banner.
+_SEAT_CLAIM_FAILURES = 0
+_SEAT_LAST_CLAIM_ERROR: str | None = None
+_SEAT_CLAIM_BANNER_SHOWN = False
+_SEAT_CLAIM_BANNER_AFTER = 3  # consecutive failures before speaking up
 # ID-2: set when the server REFUSED to register this session's runtime seat
 # (name held by another session) and the bridge reverted to the granted seat.
 # Rendered as a banner on subsequent tool results — the refusal must be an
@@ -397,13 +409,15 @@ async def _claim_seat(project_dir: str | None) -> None:
     name). The registry is an upgrade over that fallback, never a dependency of
     it: a session must never fail to start because the address service is down.
     """
-    global _SEAT_CLAIMED
-    if _SEAT_UNCLAIMABLE:
-        return
+    global _SEAT_CLAIMED, _SEAT_CLAIM_FAILURES, _SEAT_LAST_CLAIM_ERROR
     session_key = resolve_session_key()
     if not session_key:
-        # Nothing to key on — keep the locally-resolved seat, permanently.
-        globals()["_SEAT_UNCLAIMABLE"] = True
+        # Nothing to key on — keep the locally-resolved seat FOR NOW. Not
+        # latched: the probe costs one ps lookup per heartbeat, and a
+        # permanent flag turned one transient failure into a lifetime of
+        # silent non-claiming (BRIDGE-1).
+        _SEAT_CLAIM_FAILURES += 1
+        _SEAT_LAST_CLAIM_ERROR = "no resolvable session key"
         return
     try:
         project = derive_project_name(remember_project_dir(project_dir or None))
@@ -428,6 +442,8 @@ async def _claim_seat(project_dir: str | None) -> None:
         )
         granted = (resp.get("seat") or "").strip().lower()
         _SEAT_CLAIMED = True
+        _SEAT_CLAIM_FAILURES = 0
+        _SEAT_LAST_CLAIM_ERROR = None
         if granted and granted != preferred:
             # Writing the seat file is what carries the grant to the watcher:
             # it re-resolves identity every poll and seat-file outranks env, so
@@ -447,10 +463,37 @@ async def _claim_seat(project_dir: str | None) -> None:
             # Registration moved (or was already there) — the runtime seat is
             # now what continuity returns. Clear any stale refusal notice.
             globals()["_SEAT_REVERT_NOTICE"] = None
-    except Exception:
+    except Exception as e:
         # Best-effort: the next heartbeat retries. A transient server blip must
-        # not cost this session its address, and must not stop the refresh.
-        pass
+        # not cost this session its address, and must not stop the refresh —
+        # but it is COUNTED, not swallowed whole (BRIDGE-1): a persistent
+        # streak surfaces via _seat_claim_health_banner and memory_status.
+        _SEAT_CLAIM_FAILURES += 1
+        _SEAT_LAST_CLAIM_ERROR = f"{type(e).__name__}: {e}"
+
+
+def _seat_claim_health_banner() -> str:
+    """BRIDGE-1: a claim path that has failed every attempt says so — once.
+
+    Below the threshold nothing shows (transient blips are the normal case
+    and the next heartbeat's success resets the streak). Past it, one line:
+    the session is running fine on its locally-resolved seat, but it holds
+    no registry row, so the roster cannot vouch for its address and a
+    sibling could be allocated the same name. That is a fact the session
+    can act on; silence was the defect.
+    """
+    global _SEAT_CLAIM_BANNER_SHOWN
+    if _SEAT_CLAIM_BANNER_SHOWN or _SEAT_CLAIM_FAILURES < _SEAT_CLAIM_BANNER_AFTER:
+        return ""
+    _SEAT_CLAIM_BANNER_SHOWN = True
+    return (
+        f"⚠ SEAT CLAIM FAILING — {_SEAT_CLAIM_FAILURES} consecutive attempts "
+        f"(last: {_SEAT_LAST_CLAIM_ERROR or 'unknown'}). This session works, "
+        f"but holds NO registry row: the roster cannot vouch for its address "
+        f"and a sibling session could be allocated the same name. Retries "
+        f"continue each heartbeat; if this persists, check the server "
+        f"(/health) or report it.\n\n"
+    )
 
 
 async def _heartbeat(project_dir: str | None) -> None:
@@ -915,6 +958,18 @@ async def memory_status() -> str:
         lines = [f"Memory service: {status}", f"Server version: {VERSION}"]
         for name, ok in checks.items():
             lines.append(f"  {name}: {'ok' if ok else 'FAILED'}")
+        # BRIDGE-1: the claim path's health is part of this session's status —
+        # "never claimed" and "not running" look identical from the server, so
+        # the one place that KNOWS must say.
+        if _SEAT_CLAIMED and not _SEAT_CLAIM_FAILURES:
+            lines.append("  seat claim: ok (registered)")
+        elif _SEAT_CLAIM_FAILURES:
+            lines.append(
+                f"  seat claim: FAILING ({_SEAT_CLAIM_FAILURES} consecutive; "
+                f"last: {_SEAT_LAST_CLAIM_ERROR or 'unknown'})"
+            )
+        else:
+            lines.append("  seat claim: not yet attempted")
         return "\n".join(lines)
     except Exception as e:
         return f"Memory service unreachable: {e}\nServer version: {VERSION}"
