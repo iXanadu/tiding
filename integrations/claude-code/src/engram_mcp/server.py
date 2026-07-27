@@ -552,6 +552,17 @@ async def memory_search(
         listen_set=listen_set,
         reader_identity=reader_identity,
         project_dir=project_dir or None,
+        # Search is for FINDING. A startup sweep runs several searches and the
+        # big handoff notes match most of them, so the same 1,200-word text
+        # arrived three times in one orientation — a large slice of a context
+        # window spent re-reading what was already in it.
+        #
+        # The cap is generous on purpose: almost every memory is shorter than
+        # this and comes back whole, so only the genuinely large ones are
+        # trimmed, which is exactly the population causing the problem. The
+        # server states the omission and names the memory_get call that
+        # returns the rest, so nothing is silently lost.
+        snippet_lines=SEARCH_SNIPPET_LINES,
     )
 
     banner_text = _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
@@ -851,6 +862,12 @@ async def memory_whoami() -> str:
 # peer counterfeit an owner directive into a reading agent's context. The real
 # badge is emitted by THIS function from the server-verified `authority` field;
 # these helpers make sure sender-supplied text can't reproduce it.
+# How many lines of a memory a SEARCH hit returns before the server truncates
+# it (with an explicit marker + the memory_get call for the rest). Generous by
+# design: most memories fit under it and are unaffected; only the large ones —
+# the ones that were arriving three times per startup sweep — get trimmed.
+SEARCH_SNIPPET_LINES = 60
+
 _HEADER_LINE_RE = _re.compile(r"(?mi)^(\s*)(\*\*inbox/|From:|Subject:|Intent:|📬)")
 _ZWSP = "​"
 

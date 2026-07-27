@@ -128,6 +128,7 @@ class MemoryClient:
         listen_set: list[str] | None = None,
         reader_identity: str | None = None,
         project_dir: str | None = None,
+        snippet_lines: int | None = None,
     ) -> dict:
         body: dict = {
             "query": query,
@@ -135,6 +136,8 @@ class MemoryClient:
             "user_id": user_id,
             "limit": limit,
         }
+        if snippet_lines:
+            body["snippet_lines"] = snippet_lines
         if project is not None:
             body["project"] = project
         if namespaces:
