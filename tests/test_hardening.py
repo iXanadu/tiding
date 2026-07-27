@@ -115,3 +115,57 @@ async def test_500_detail_is_generic(client, monkeypatch):
     assert r.status_code == 500
     assert "secret_table" not in r.text
     assert r.json()["detail"] == "internal error — see server logs"
+
+
+# --- OBS-1: every uvicorn log line carries a date ---------------------------
+
+def test_uvicorn_handlers_gain_a_timestamp_without_losing_their_formatter():
+    """OBS-1: 840k+ access-log lines, not one of them datable.
+
+    The fix prepends %(asctime)s to uvicorn's EXISTING formatters — including
+    the AccessFormatter subclass that interpolates client/status fields —
+    rather than replacing them, and must be idempotent (a reload must not
+    stack timestamps).
+    """
+    import logging
+
+    from uvicorn.logging import AccessFormatter, DefaultFormatter
+
+    from server.main import timestamp_uvicorn_handlers
+
+    access = logging.getLogger("uvicorn.access")
+    default = logging.getLogger("uvicorn")
+    saved = (access.handlers[:], default.handlers[:])
+    try:
+        # Reproduce uvicorn's own setup: its formatters, no asctime.
+        ah = logging.StreamHandler()
+        ah.setFormatter(AccessFormatter(
+            '%(levelprefix)s %(client_addr)s - "%(request_line)s" '
+            "%(status_code)s", use_colors=False))
+        access.handlers = [ah]
+        dh = logging.StreamHandler()
+        dh.setFormatter(DefaultFormatter(
+            "%(levelprefix)s %(message)s", use_colors=False))
+        default.handlers = [dh]
+
+        timestamp_uvicorn_handlers()
+        timestamp_uvicorn_handlers()  # idempotent — no double stamp
+
+        assert ah.formatter._fmt.startswith("%(asctime)s ")
+        assert ah.formatter._fmt.count("%(asctime)s") == 1
+        assert dh.formatter._fmt.startswith("%(asctime)s ")
+
+        # The stamped AccessFormatter still renders a real access record —
+        # subclass behaviour (client/status interpolation) intact, date first.
+        # uvicorn's access formatter unpacks args as a 5-tuple:
+        # (client_addr, method, full_path, http_version, status_code)
+        record = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("127.0.0.1:1234", "GET", "/health", "1.1", 200), None)
+        line = ah.formatter.format(record)
+        assert '127.0.0.1:1234 - "GET /health HTTP/1.1" 200' in line
+        import re
+        assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", line), line
+    finally:
+        access.handlers, default.handlers = saved

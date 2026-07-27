@@ -30,6 +30,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def timestamp_uvicorn_handlers() -> None:
+    """OBS-1: put a date on every uvicorn log line.
+
+    basicConfig above only covers loggers that PROPAGATE to root. Uvicorn
+    installs its own handlers (uvicorn, uvicorn.access, uvicorn.error) with
+    propagate=False and formatters that carry no %(asctime)s — so the access
+    log grew to 840k+ lines of which not one could be placed in time. That
+    turned a one-lookup question ("when was /memory/forget called?") into
+    unanswerable forensics during a reported data loss: the log proved the
+    call happened and could not say when.
+
+    Prepends %(asctime)s to each uvicorn handler's EXISTING formatter rather
+    than replacing it — uvicorn's AccessFormatter subclass interpolates
+    %(client_addr)s / %(status_code)s and colorizes; swapping it for a plain
+    Formatter would trade the timestamp gap for a formatting regression.
+    Mutating _style._fmt is stooping to a private attribute, but it is the
+    documented shape of logging.Formatter since 3.2 and the alternative is
+    shipping a parallel uvicorn log-config file that must be kept in sync
+    with the launchd invocation on every box.
+
+    Idempotent (skips handlers already stamped), and safe when uvicorn has
+    not configured logging at all (test client, plain import): no handlers,
+    no work.
+    """
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        for handler in logging.getLogger(name).handlers:
+            fmt = handler.formatter
+            style = getattr(fmt, "_style", None)
+            if style is None or "%(asctime)s" in style._fmt:
+                continue
+            style._fmt = "%(asctime)s " + style._fmt
+            fmt._fmt = style._fmt
+            if not fmt.datefmt:
+                fmt.datefmt = "%Y-%m-%d %H:%M:%S %z"
+
+
 async def _bootstrap_admin():
     """Auto-create _bootstrap admin principal when require_auth=true and no admins exist.
 
@@ -95,6 +131,10 @@ def check_bind_security(host: str, require_auth: bool, api_token: str,
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # First, so even the startup lines below carry a date. Runs here rather
+    # than at import because uvicorn configures its logging before loading
+    # the app — at lifespan time its handlers exist and can be stamped.
+    timestamp_uvicorn_handlers()
     logger.info("Starting engram service")
     check_bind_security(settings.host, settings.require_auth,
                         settings.api_token, settings.allow_insecure_bind)
