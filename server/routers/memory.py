@@ -726,6 +726,7 @@ async def get_roster(req: RosterRequest, request: Request):
             project=req.project,
             channel=req.channel,
             include_done=req.include_done,
+            include_expired=req.include_expired,
         )
         live = sum(1 for e in entries if not e["is_stale"])
         scope_desc = req.channel or req.project or "all projects"

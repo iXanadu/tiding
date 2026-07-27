@@ -671,6 +671,11 @@ class RosterRequest(BaseModel):
     project: str | None = None   # None = whole-box roster
     channel: str | None = None   # filter to members of a #channel
     include_done: bool = False   # done sessions hidden by default
+    # SEAT-4 retention horizon: rows silent >48h are hidden by default. They
+    # are never deleted — set this to see them. Sixteen corpses burying five
+    # live sessions made the owner's huddle picker unusable, which is what
+    # this defends against; the roster answers "who can I reach now".
+    include_expired: bool = False
 
 
 class RosterResponse(BaseModel):

@@ -736,6 +736,51 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_roster_hides_sessions_past_the_retention_horizon(client, db_pool):
+    """SEAT-4 retention: a roster buried in corpses cannot do its job.
+
+    The roster answers "who can I reach right now". With sixteen dead entries
+    around five live ones, the owner could not reach the start button in his
+    own huddle picker — a roster consumer. Hidden, never deleted.
+
+    This is NOT a liveness test and must not become one: MSG-8 measured that a
+    busy agent head-down in a long tool call is silent exactly like a dead
+    one, which is why no SHORT window may mark a session dead. That bounds how
+    short the horizon can be; it does not forbid one. No tool call runs for
+    two days.
+    """
+    proj = "horizonproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    for ident in ("freshsession", "ancientsession"):
+        await client.post("/memory/presence", json={
+            "identity": ident, "project": proj, "state": "running"})
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET last_used_at = NOW() - interval '5 days' "
+            "WHERE scope='presence' AND user_id=$1 AND key=$2",
+            proj, "presence/ancientsession")
+
+    r = await client.post("/memory/roster", json={"project": proj})
+    idents = [e["identity"] for e in r.json()["entries"]]
+    assert "freshsession" in idents
+    assert "ancientsession" not in idents, (
+        "a 5-day-silent session is still on the default roster — this is what "
+        "buried the live sessions in the picker"
+    )
+
+    # never deleted: it comes back on request
+    r = await client.post("/memory/roster", json={
+        "project": proj, "include_expired": True})
+    idents = [e["identity"] for e in r.json()["entries"]]
+    assert "ancientsession" in idents, "the row was destroyed, not hidden"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
 async def test_search_snippet_truncates_and_says_so(client, db_pool):
     """Search is for finding; memory_get is for reading.
 

@@ -785,6 +785,23 @@ SEAT_SCOPE = "seat"
 SEAT_USER_ID = "global"
 PRESENCE_STALE_AFTER_SECONDS = 600  # 10 min without a heartbeat → stale
 
+# SEAT-4 retention horizon: a presence row silent this long is dropped from
+# the default roster. It is NOT a liveness test and must not be confused with
+# one — MSG-8 measured that a busy agent head-down in a long tool call is
+# silent in exactly the way a dead one is, which is why no SHORT staleness
+# window may ever mark a session dead.
+#
+# That argument bounds how short a horizon can be. It does not forbid one.
+# No tool call runs for two days, so at this scale "silent" and "gone" stop
+# being distinguishable in any way that matters, and the cost of the two
+# errors is wildly asymmetric: hiding a two-day-silent session that somehow
+# lives costs one `include_stale=True`; showing sixteen corpses cost the owner
+# the ability to use his own huddle picker at all, because the live sessions
+# he needed were buried under dead ones still advertising "running".
+#
+# Hidden, never deleted — the rows stay queryable, same doctrine as inbox mail.
+PRESENCE_RETENTION_SECONDS = 172800  # 48h silent → off the default roster
+
 
 # Seat-collision detection (grew out of ROST-1): a session nonce is fresh for
 # this many seconds. Window ≈ 2.5× the bridge heartbeat interval (120s) — a
@@ -1053,6 +1070,7 @@ async def roster_list(
     project: str | None = None,
     channel: str | None = None,
     include_done: bool = False,
+    include_expired: bool = False,
 ) -> list[dict]:
     """Who is on a project (or channel, or the whole box) and in what state.
 
@@ -1085,6 +1103,13 @@ async def roster_list(
             continue
         last_seen = r["last_used_at"] or now
         age = (now - last_seen).total_seconds()
+        # SEAT-4 retention horizon. Rows are HIDDEN, never deleted — pass
+        # include_expired to get them back. A roster whose job is "who can I
+        # talk to right now" is actively harmful when two days of corpses bury
+        # the handful of live sessions: the owner could not reach the start
+        # button in his own huddle picker, which is a roster consumer.
+        if age >= PRESENCE_RETENTION_SECONDS and not include_expired:
+            continue
         ident = r["key"].removeprefix("presence/")
         fresh = _fresh_sessions(md, now)
         live = max(len(fresh), 1)
