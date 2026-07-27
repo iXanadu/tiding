@@ -85,6 +85,14 @@ class MemorySearchRequest(_NamespacedRequest):
     limit: int = Field(default=5, ge=1, le=MAX_SEARCH_LIMIT)
     listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
     reader_identity: str | None = Field(default=None, max_length=MAX_ADDR)
+    # Cap each result's `value` at this many lines. Search is for FINDING;
+    # reading in full is what memory_get is for. A startup sweep of four
+    # searches routinely returned the same 1,200-word handoff three times over,
+    # spending a large share of a context window re-reading identical text.
+    # Opt-in (None = unchanged, full values) because this is a public API.
+    # Truncation is always ANNOUNCED in the value — a partial read must never
+    # look like a complete one.
+    snippet_lines: int | None = Field(default=None, ge=1, le=500)
 
     @field_validator("query", mode="before")
     @classmethod

@@ -736,6 +736,41 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_search_snippet_truncates_and_says_so(client, db_pool):
+    """Search is for finding; memory_get is for reading.
+
+    A startup sweep of four searches returned the same 1,200-word handoff
+    three times over. The marker is the load-bearing part: a truncated value
+    that looks whole is a partial answer presented as a complete one, which is
+    the failure shape this whole ledger keeps rediscovering.
+    """
+    long_value = "\n".join(f"line {i}" for i in range(60))
+    await client.post("/memory/set", json={
+        "namespace": "test", "key": "snip/long", "value": long_value,
+        "scope": "shared", "user_id": "global"})
+
+    r = await client.post("/memory/search", json={
+        "namespace": "test", "query": "line", "limit": 5,
+        "scope": "shared", "user_id": "global", "snippet_lines": 10})
+    assert r.status_code == 200
+    hit = next(x for x in r.json()["results"] if x["key"] == "snip/long")
+    assert hit["value"].count("\n") <= 11, "snippet did not truncate"
+    assert "TRUNCATED" in hit["value"], "truncation was silent — a partial read must announce itself"
+    assert "memory_get" in hit["value"], "no route back to the full text"
+    assert "+50 more" in hit["value"]
+
+    # unchanged by default: this is a public API and truncation is opt-in
+    r = await client.post("/memory/search", json={
+        "namespace": "test", "query": "line", "limit": 5,
+        "scope": "shared", "user_id": "global"})
+    hit = next(x for x in r.json()["results"] if x["key"] == "snip/long")
+    assert hit["value"] == long_value, "default search stopped returning full values"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE key='snip/long'")
+
+
+@pytest.mark.asyncio
 async def test_resolve_thread_drains_a_closed_room_in_one_call(client, db_pool):
     """A closed room whose mail stays `open` reads as a live conversation.
 

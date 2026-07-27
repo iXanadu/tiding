@@ -201,6 +201,35 @@ async def get_memory(req: MemoryGetRequest, request: Request):
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
+def _snippet(item, max_lines: int):
+    """Trim a search hit's value, and SAY SO in the value itself.
+
+    Search is for finding; `memory_get` is for reading. A startup sweep of
+    four searches returned the same 1,200-word handoff three times, which is
+    a large slice of a context window spent re-reading text already in it.
+
+    The marker is not decoration. A truncated value that looks whole is the
+    same failure as every other one found this week — a partial answer
+    presented as a complete one — so the trailing line states the omission and
+    names the exact call that returns the rest.
+    """
+    value = getattr(item, "value", None)
+    if not isinstance(value, str):
+        return item
+    lines = value.splitlines()
+    if len(lines) <= max_lines:
+        return item
+    hidden = len(lines) - max_lines
+    body = "\n".join(lines[:max_lines])
+    key = getattr(item, "key", "<key>")
+    return item.model_copy(update={
+        "value": (
+            f"{body}\n… [+{hidden} more line(s) — TRUNCATED for search. "
+            f"Full text: memory_get(key={key!r})]"
+        )
+    })
+
+
 @router.post("/search", response_model=MemorySearchResponse)
 async def search_memory(req: MemorySearchRequest, request: Request):
     principal = get_current_principal(request)
@@ -221,6 +250,8 @@ async def search_memory(req: MemorySearchRequest, request: Request):
             project=req.project,
             limit=req.limit,
         )
+        if req.snippet_lines:
+            results = [_snippet(r, req.snippet_lines) for r in results]
         banner = None
         if req.listen_set:
             try:
