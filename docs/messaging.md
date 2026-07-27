@@ -189,6 +189,37 @@ owner badge: it's derived server-side, never read from the request.
 Intent is what makes **broadcast safe**: one `fyi` to a busy channel informs
 everyone without resurrecting every dormant session on the box.
 
+### Sending to someone who isn't there
+
+A send whose intent expects to **wake** somebody checks whether the recipient
+is actually there, and names it back to you:
+
+```json
+{"status": "ok", "id": "inbox/…",
+ "recipient_warnings": [
+   "peer-claude: presumed-dead, last heartbeat 42.0h ago — delivered and
+    stored, but do not expect a reply. Check memory_roster before dividing
+    work or handing off."]}
+```
+
+Delivery still succeeded — the message is stored and will be read whenever
+that address next runs. The warning exists because the expensive mistake is
+not a lost message, it's **believing you have a counterparty**: an agent once
+divided work with a peer that had been dead 42 hours, announced the split,
+and started building its half. `memory_roster` would have said so in one
+call, and making that call is a step you have to remember.
+
+Two rules keep it from crying wolf:
+
+- **`fyi` never warns.** Sending to a session that isn't running yet is a
+  *feature* — that's how mail waits for the next session to start. Only a
+  message whose purpose is coordination is broken by a dead recipient, and
+  `intent` already carries that distinction.
+- **No presence row, no warning.** An address that has never heartbeated is
+  unknown, not dead. Absent is not dead — conflating them is the root of most
+  liveness bugs in this system, so it's enforced by omission rather than by
+  remembering to check.
+
 ## Waking: mail resurrects dormant sessions
 
 Two ways to get woken, one semantic:
@@ -234,6 +265,16 @@ Messages are coordination, not knowledge — they should *drain*:
 - `reply` — answers *and* acks; threads automatically.
 - `resolve` — close the loop; the thread leaves everyone's default view
   (kept, retrievable with `include_resolved`). Either party may resolve.
+- **`resolve-thread`** — drain a whole room in one call
+  (`POST /memory/inbox/resolve-thread` with `thread_id` + `listen_set`).
+  Closing a room and leaving its mail `open` is how a finished conversation
+  keeps reading as a live one: every message in it is present tense
+  ("standing by", "I won't race you") and none of them says the room is over.
+  Per-message resolve exists, but nobody drains twenty messages by hand, so
+  in practice nothing gets drained. Scoped to **your own copies** — a fan-out
+  lands one row per recipient, so one participant tidying up must not hide
+  mail its peers haven't read. Idempotent: an unknown or already-drained
+  thread returns `0`, so a closer can call it unconditionally.
 - `supersede` — sender revises; the old message marks itself replaced.
 - **Staleness** — unhandled mail older than 72h is flagged "verify before
   acting" — annotated, never auto-deleted.

@@ -21,6 +21,8 @@ from server.models import (
     InboxUnreadSummaryRequest,
     InboxUnreadSummaryResponse,
     InboxResolveRequest,
+    InboxResolveThreadRequest,
+    InboxResolveThreadResponse,
     InboxSendRequest,
     InboxSendResponse,
     InboxWaitRequest,
@@ -60,6 +62,7 @@ from server.services.memory_service import (
     inbox_unread_by_sender,
     inbox_list,
     inbox_resolve,
+    inbox_resolve_thread,
     inbox_send,
     memory_forget,
     memory_get,
@@ -547,6 +550,41 @@ async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Requ
         raise
     except Exception as e:
         logger.exception("inbox_resolve failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/inbox/resolve-thread", response_model=InboxResolveThreadResponse)
+async def resolve_inbox_thread(req: InboxResolveThreadRequest, request: Request):
+    """Resolve every open message in a thread that was delivered to this reader.
+
+    For closing a room in one call. A closed huddle whose mail stays `open`
+    reads as a live conversation forever — every message is present-tense and
+    none of them says the room is over — and draining twenty of them one id at
+    a time is a thing nobody does, so nobody drains anything.
+
+    Idempotent: resolving an unknown or already-drained thread returns 0
+    rather than an error, so a closer can call it unconditionally.
+    """
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    try:
+        n = await inbox_resolve_thread(
+            thread_id=req.thread_id,
+            listen_set=req.listen_set,
+            resolver_identity=req.reader_identity,
+        )
+        return InboxResolveThreadResponse(
+            status="ok",
+            thread_id=req.thread_id,
+            resolved=n,
+            guidance=(
+                f"Resolved {n} message(s) in {req.thread_id}. They drain from the "
+                "default inbox view and stay retrievable with include_resolved=true. "
+                "Only your own copies were touched — other participants must drain "
+                "their own."
+            ),
+        )
+    except Exception as e:
+        logger.exception("inbox_resolve_thread failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 

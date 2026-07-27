@@ -1383,6 +1383,71 @@ async def inbox_resolve(message_id: str, resolver_identity: str | None = None) -
     return result.endswith(" 1")
 
 
+async def inbox_resolve_thread(
+    thread_id: str,
+    listen_set: list[str],
+    resolver_identity: str | None = None,
+) -> int:
+    """Resolve every open message in a thread that was delivered to this reader.
+
+    The gap this closes: a room gets closed and its mail stays ``open``
+    forever. A peer reported reading twenty present-tense messages from a
+    huddle the owner had shut days earlier — "standing by", "I will not race
+    you" — and concluded a counterparty was waiting on it. Nothing in a
+    durable message says the conversation is over, so the whole thread keeps
+    reading as live. Per-message resolve exists, but a 20-message room needs
+    20 calls and a 130-message backlog is simply not drainable by hand, so in
+    practice nobody drains anything.
+
+    SCOPED TO THE CALLER'S OWN MAIL, deliberately: ``user_id = ANY(listen_set)``
+    means this can only resolve copies addressed to you. Resolving a thread is
+    a statement about YOUR handling of it, not a claim over everyone else's
+    inbox — a fan-out lands one row per recipient, and one participant
+    declaring the room finished must not drain it out from under the others.
+
+    Returns the number of messages resolved (0 if the thread is unknown or
+    already drained — idempotent, so a closer can call it without checking).
+    """
+    listen_set = [a.lower() for a in listen_set if a]
+    if not thread_id or not listen_set:
+        return 0
+    resolved_at = datetime.now(timezone.utc).isoformat()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            UPDATE memories
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                || jsonb_build_object('status', $1::text, 'resolved_at', $2::text)
+                || CASE WHEN $3::text IS NULL THEN '{}'::jsonb
+                        ELSE jsonb_build_object('resolved_by', $3::text) END
+                || CASE
+                       WHEN $3::text IS NULL THEN '{}'::jsonb
+                       WHEN COALESCE(metadata->'read_by', '[]'::jsonb) ? $3::text
+                           THEN '{}'::jsonb
+                       ELSE jsonb_build_object(
+                           'read_by',
+                           COALESCE(metadata->'read_by', '[]'::jsonb) || to_jsonb($3::text)
+                       )
+                   END
+            WHERE namespace = $4 AND scope = $5
+              AND user_id = ANY($6::text[])
+              AND metadata->>'thread_id' = $7
+              AND COALESCE(metadata->>'status', $8) = $8
+            RETURNING key
+            """,
+            INBOX_RESOLVED,
+            resolved_at,
+            resolver_identity,
+            INBOX_NAMESPACE,
+            INBOX_SCOPE,
+            listen_set,
+            thread_id,
+            INBOX_OPEN,
+        )
+    return len(rows)
+
+
 async def inbox_autoresolve_stale(
     older_than_hours: int = INBOX_STALE_AFTER_HOURS,
     resolver: str = INBOX_STALE_SWEEP_ACTOR,

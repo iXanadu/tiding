@@ -736,6 +736,78 @@ async def test_bridge_heartbeat_preserves_watcher_last_seen(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_resolve_thread_drains_a_closed_room_in_one_call(client, db_pool):
+    """A closed room whose mail stays `open` reads as a live conversation.
+
+    Every message in it is present tense and none of them says the room is
+    over, so a reader arriving later sees twenty peers "standing by". Draining
+    them one id at a time is a thing nobody actually does, which is how a
+    backlog reaches 130 and stops being trusted at all.
+    """
+    box, thread = "roombox", "huddle/ABC123"
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", box)
+
+    for i in range(4):
+        await client.post("/memory/send", json={
+            "to": box, "from_": "peer", "thread_id": thread,
+            "subject": f"turn {i}", "body": "standing by"})
+    await client.post("/memory/send", json={
+        "to": box, "from_": "peer", "subject": "unrelated", "body": "different thread"})
+
+    r = await client.post("/memory/inbox/resolve-thread", json={
+        "thread_id": thread, "listen_set": [box], "reader_identity": box})
+    assert r.status_code == 200
+    assert r.json()["resolved"] == 4, "the closed room did not drain"
+
+    r = await client.post("/memory/inbox", json={"listen_set": [box], "unread_only": False})
+    remaining = r.json()["messages"]
+    assert len(remaining) == 1, "resolve-thread took mail outside its thread"
+    assert remaining[0]["subject"] == "unrelated"
+
+    # idempotent — a closer can call it without checking first
+    r = await client.post("/memory/inbox/resolve-thread", json={
+        "thread_id": thread, "listen_set": [box], "reader_identity": box})
+    assert r.json()["resolved"] == 0
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", box)
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_touches_only_the_callers_own_copies(client, db_pool):
+    """One participant closing a room must not drain it for the others.
+
+    A fan-out lands one row per recipient. Resolving is a statement about YOUR
+    handling of a thread, not a claim over everyone else's inbox — otherwise
+    the first agent to tidy up silently hides mail its peers have not read.
+    """
+    mine, theirs, thread = "minebox", "theirsbox", "huddle/SHARED"
+    async with db_pool.acquire() as conn:
+        for b in (mine, theirs):
+            await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", b)
+
+    await client.post("/memory/send", json={
+        "to": [mine, theirs], "from_": "convener", "thread_id": thread,
+        "subject": "room open", "body": "hello both"})
+
+    r = await client.post("/memory/inbox/resolve-thread", json={
+        "thread_id": thread, "listen_set": [mine], "reader_identity": mine})
+    assert r.json()["resolved"] == 1
+
+    r = await client.post("/memory/inbox", json={
+        "listen_set": [theirs], "unread_only": False})
+    assert len(r.json()["messages"]) == 1, (
+        "one participant's resolve drained a peer's copy — a fan-out row per "
+        "recipient is exactly what keeps their handling independent"
+    )
+
+    async with db_pool.acquire() as conn:
+        for b in (mine, theirs):
+            await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", b)
+
+
+@pytest.mark.asyncio
 async def test_action_intent_to_a_dead_recipient_warns_the_sender(client, db_pool):
     """The failure: a peer divided work with a counterparty 42 hours dead.
 

@@ -705,6 +705,32 @@ class InboxResolveRequest(BaseModel):
         return v.strip()
 
 
+class InboxResolveThreadRequest(BaseModel):
+    """Drain a whole thread — a closed room, a finished exchange.
+
+    ``listen_set`` scopes it to the caller's own copies. A fan-out lands one
+    row per recipient, and one participant declaring the room finished must
+    not drain it out from under the others.
+    """
+    thread_id: str
+    listen_set: list[str]
+    reader_identity: str | None = None
+
+    @field_validator("thread_id", mode="before")
+    @classmethod
+    def thread_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("'thread_id' must be a non-empty string")
+        return v.strip()
+
+
+class InboxResolveThreadResponse(BaseModel):
+    status: str
+    thread_id: str
+    resolved: int
+    guidance: str | None = None
+
+
 class InboxAckResponse(BaseModel):
     status: str
     id: str
