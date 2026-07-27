@@ -7,41 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **ID-2** `memory_take_seat` is **silently reverted** on launcher-spawned
-  sessions. The tool exists so a session can be re-addressed mid-flight when
-  someone decides two agents are co-working in one folder; it sets the
-  runtime seat and writes the seat file, which is what carries the change to
-  an already-running watcher. But such a session also re-claims every
-  heartbeat, and the registry answers from its own record keyed on
-  `session_key` — so it returns the seat it already holds, `_claim_seat`
-  sees `granted != preferred`, and overwrites the file the agent just set.
-  The runtime seat is undone within one heartbeat. The tool reported
-  success and handed back a re-arm command; nothing reports the reversal.
-  Two mechanisms answering "who is this session", with the loser never told
-  — the shape that ran through the whole 2026-07-26 investigation.
-  **Verified, not inferred:** pinned by a bridge test that takes a runtime
-  seat, runs one claim, and asserts the file was overwritten. Observed live
-  first — a probe session took `<proj>-claude-opus5` 71s after a restart
-  while the registry held `<proj>-claude`, and the seat-file mtime proved
-  the session itself wrote it post-restart. Matters because /startup step
-  4a-bis tells co-working sessions to take a seat, so the documented
-  co-working path is the one that breaks. Decide whether a runtime seat
-  should be registered with the server (so continuity returns it) or
-  whether the tool should refuse when a launcher already seated the session.
-  **Related hazard, same file:** seat files SURVIVE teardown, and the file
-  outranks `ENGRAM_INBOX_IDENTITY`. So a stale file left by a dead session
-  silently seats any future session that reuses that `session_key` — at
-  whatever the corpse was called — until the first claim overwrites it.
-  Confirmed live 2026-07-26: a relaunch resolved a dead session's
-  `-opus5` name from the leftover file and was corrected ~7s later by the
-  claim. Harmless only because the claim is prompt. Teardown should remove
-  the seat file, or the file should carry the nonce it was written for.
-  **Unexplained, recorded because neither side could account for it:** the
-  same probe recipe launched twice took a runtime seat on the first run and
-  not the second, so the live take_seat→revert sequence was never caught in
-  the wild despite two attempts. The constructed test carries that half
-  alone. Whatever makes the runtime seat conditional is not understood.
-
 - **ID-1** An unconfigured session silently becomes `admin` for ADDRESSING,
   because engram answers "what project is this?" with two resolvers of
   different strictness. Memory operations go through

@@ -51,6 +51,7 @@ async def claim_seat(req: SeatClaimRequest, request: Request):
             session_nonce=req.session_nonce,
             host=req.host,
             preferred_seat=req.preferred_seat,
+            runtime_seat=req.runtime_seat,
         )
     except ValueError as e:
         # Exhausted ordinals is a caller problem (a session_key that changes
@@ -69,6 +70,11 @@ async def claim_seat(req: SeatClaimRequest, request: Request):
         f"poll. This seat is your whole address; roles (tester, orchestrator) "
         f"are assigned in the huddle, not encoded here."
     )
+    if result.get("renamed_from"):
+        guidance = (
+            f"Registration MOVED from '{result['renamed_from']}' to '{seat}' "
+            f"(runtime seat). Continuity now returns '{seat}'.\n\n" + guidance
+        )
     if result.get("warning"):
         guidance = f"⛔ {result['warning']}\n\n{guidance}"
     return SeatClaimResponse(
@@ -77,6 +83,7 @@ async def claim_seat(req: SeatClaimRequest, request: Request):
         is_new=result.get("is_new", False),
         reclaimed_from=result.get("reclaimed_from"),
         warning=result.get("warning"),
+        renamed_from=result.get("renamed_from"),
         guidance=guidance,
     )
 

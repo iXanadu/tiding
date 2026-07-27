@@ -771,6 +771,12 @@ class SeatClaimRequest(BaseModel):
     # What the caller would LIKE (e.g. a launcher's "<project>-<provider>").
     # A preference, never an assignment — the server grants it when free.
     preferred_seat: str | None = Field(default=None, max_length=MAX_ADDR)
+    # ID-2: preferred_seat was chosen DELIBERATELY mid-session
+    # (memory_take_seat), so continuity must MOVE the registration to it
+    # rather than answer with the seat already held. Without this the tool
+    # and the registry fought — the runtime seat was silently reverted
+    # within one heartbeat.
+    runtime_seat: bool = False
 
     @field_validator("session_key", "project", mode="before")
     @classmethod
@@ -787,9 +793,14 @@ class SeatClaimResponse(BaseModel):
     # Set when this seat was taken over from an abandoned session — surfaced so
     # a reclaim is visible in logs rather than silent.
     reclaimed_from: str | None = None
-    # Set when the caller's session_key is provably not unique. Loud on
+    # Set when the caller's session_key is provably not unique, or when a
+    # runtime re-seat was REFUSED (name held by another session). Loud on
     # purpose: the failure it describes is otherwise silent.
     warning: str | None = None
+    # ID-2: set when this claim MOVED the registration to a runtime-declared
+    # seat — the old name, so launchers (AgentBeast) can reconcile their
+    # registry against the seat the session is actually on.
+    renamed_from: str | None = None
     guidance: str | None = None
 
 

@@ -61,6 +61,13 @@ that conversation. The seat stays pure plumbing.
   harness process). Re-claiming with it returns the *same* seat, so a bridge
   restart never moves a running session's address.
 - **`preferred_seat`** is a request, not an assignment — granted when free.
+- **`runtime_seat: true`** marks the preferred seat as a *deliberate
+  mid-session choice* (`memory_take_seat`): the registry **moves** the
+  registration to it instead of answering with the seat it already holds, so
+  continuity returns the seat the session is actually on — including across a
+  restart. If the name is held by another live session the claim refuses
+  loudly (granted seat + warning) and the client reverts to the granted seat:
+  both outcomes are consistent, neither is silent.
 - **`POST /session/release`** frees a seat immediately; otherwise it is
   reclaimed after a grace period — but **never** while undelivered mail is
   addressed to it.

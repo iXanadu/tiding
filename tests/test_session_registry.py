@@ -584,3 +584,122 @@ async def test_collapsing_duplicates_never_frees_a_seat_holding_mail(client, db_
         )
     assert still_there == 1, "a duplicate holding undelivered mail must not be freed"
     await _clear(db_pool)
+
+
+# --- ID-2: a runtime seat is REGISTERED, not fought over ---------------------
+
+@pytest.mark.asyncio
+async def test_a_runtime_seat_moves_the_registration(client, db_pool):
+    """ID-2, the fix AgentBeast asked for: REGISTER the runtime seat.
+
+    memory_take_seat used to set the seat client-side while the registry kept
+    the old record — so every heartbeat's continuity answer reverted the file
+    the agent had just written. Two mechanisms answering "who is this
+    session", the loser never told. Registering makes continuity return the
+    seat the session is ACTUALLY on.
+    """
+    await _clear(db_pool)
+    first = (await _claim(client, "cowork", session_nonce="N1")).json()
+    assert first["seat"] == f"{PROJ}-claude"
+
+    # the agent deliberately re-seats mid-session
+    moved = (await _claim(
+        client, "cowork", session_nonce="N1",
+        preferred_seat=f"{PROJ}-audit", runtime_seat=True,
+    )).json()
+    assert moved["seat"] == f"{PROJ}-audit"
+    assert moved["renamed_from"] == f"{PROJ}-claude"
+    assert moved["warning"] is None
+
+    # continuity now returns the runtime seat — this is the claim that used
+    # to revert it (an ordinary heartbeat, runtime flag still set client-side)
+    heartbeat = (await _claim(
+        client, "cowork", session_nonce="N1",
+        preferred_seat=f"{PROJ}-audit", runtime_seat=True,
+    )).json()
+    assert heartbeat["seat"] == f"{PROJ}-audit", (
+        "the next heartbeat took the runtime seat back — the revert loop"
+    )
+    assert heartbeat["renamed_from"] is None
+
+    # ...and survives a bridge restart that no longer knows it took one
+    # (process memory dies; the flag lives on the row)
+    restart = (await _claim(
+        client, "cowork", session_nonce="N2",
+        preferred_seat=f"{PROJ}-audit",
+    )).json()
+    assert restart["seat"] == f"{PROJ}-audit"
+
+    # the old name was freed — a newcomer can have it
+    fresh = (await _claim(client, "newcomer", session_nonce="X1")).json()
+    assert fresh["seat"] == f"{PROJ}-claude"
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_seat_held_by_another_session_is_refused_loudly(
+    client, db_pool
+):
+    """The other consistent outcome: refusal must be an ERROR the session can
+    act on, never a no-op — a silent split (bridge on one name, registry on
+    another) is worse than either consistent outcome."""
+    await _clear(db_pool)
+    (await _claim(client, "holder", session_nonce="H1",
+                  preferred_seat=f"{PROJ}-audit")).json()
+
+    refused = (await _claim(
+        client, "mover", session_nonce="M1",
+        preferred_seat=f"{PROJ}-audit", runtime_seat=True,
+    )).json()
+    # "mover" had no prior row, so allocation grants it a DIFFERENT name
+    # rather than the taken one
+    assert refused["seat"] != f"{PROJ}-audit"
+
+    # now mover holds a seat and tries to rename onto the taken name:
+    # continuity refuses and says so
+    still = (await _claim(
+        client, "mover", session_nonce="M1",
+        preferred_seat=f"{PROJ}-audit", runtime_seat=True,
+    )).json()
+    assert still["seat"] == refused["seat"], "must keep the registered seat"
+    assert still["warning"] and f"{PROJ}-audit" in still["warning"], (
+        "a refused rename with no warning is the silent no-op ID-2 forbids"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_rename_never_frees_a_seat_holding_undelivered_mail(
+    client, db_pool
+):
+    """R8 outranks tidiness on the rename path too: the old name keeps its
+    row while mail addressed to it is undelivered, so a stranger can never be
+    allocated an address with someone's unread mail on it."""
+    await _clear(db_pool)
+    old = (await _claim(client, "mailmove", session_nonce="R1")).json()["seat"]
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            VALUES ($1, $2, 'queued', 'inbox', $3, $4,
+                    '', '', 'queued', NULL, '{}'::jsonb)
+            """,
+            INBOX_NAMESPACE, "inbox/mailmove-pending", old, PROJ,
+        )
+
+    moved = (await _claim(
+        client, "mailmove", session_nonce="R1",
+        preferred_seat=f"{PROJ}-relabel", runtime_seat=True,
+    )).json()
+    assert moved["seat"] == f"{PROJ}-relabel"
+
+    async with db_pool.acquire() as conn:
+        kept = await conn.fetchval(
+            "SELECT count(*) FROM memories WHERE scope = 'seat' "
+            "AND project = $1 AND key = $2",
+            PROJ, f"seat/{old}",
+        )
+    assert kept == 1, "old seat with undelivered mail must age out, not free"
+    await _clear(db_pool)

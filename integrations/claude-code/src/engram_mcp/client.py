@@ -243,10 +243,14 @@ class MemoryClient:
         host: str | None = None,
         preferred_seat: str | None = None,
         project_dir: str | None = None,
+        runtime_seat: bool = False,
     ) -> dict:
         """Claim this session's unique inbox address (SEAT-3).
 
         Idempotent on ``session_key`` — safe to call on every heartbeat.
+        ``runtime_seat=True`` (ID-2) tells the server the preferred seat was
+        taken deliberately mid-session, so continuity should MOVE the
+        registration to it rather than answer with the seat already held.
         """
         return await self._request(
             "POST",
@@ -258,6 +262,7 @@ class MemoryClient:
                 "session_nonce": session_nonce,
                 "host": host,
                 "preferred_seat": preferred_seat,
+                "runtime_seat": runtime_seat,
             },
             headers=self._provenance_headers(project_dir),
         )

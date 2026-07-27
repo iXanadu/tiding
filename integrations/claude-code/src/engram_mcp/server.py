@@ -14,6 +14,7 @@ from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import (
     INBOX_IDENTITY_ENV,
     compute_identity,
+    current_seat,
     derive_project_name,
     hostname,
     reader_to_address,
@@ -232,10 +233,24 @@ def _append_guidance(body: str, result: dict) -> str:
     server-side without forcing an MCP/Claude restart.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
-    alert = _seat_collision_banner()
+    alert = _seat_collision_banner() + _seat_revert_banner()
     if not guidance:
         return alert + body
     return f"{alert}{body}\n\n---\n{guidance}"
+
+
+def _seat_revert_banner() -> str:
+    """ID-2: a refused runtime seat must surface, not vanish (see
+    _SEAT_REVERT_NOTICE). Cleared when a later claim succeeds or the agent
+    takes a different seat."""
+    if not _SEAT_REVERT_NOTICE:
+        return ""
+    return (
+        f"⛔ RUNTIME SEAT NOT REGISTERED — {_SEAT_REVERT_NOTICE}\n"
+        f"Your bridge and watcher were reverted to the registered seat so all "
+        f"three agree. To re-address this session, call memory_take_seat with "
+        f"a DIFFERENT name (check memory_roster for what is taken).\n\n"
+    )
 
 
 def _get_version() -> str:
@@ -308,6 +323,11 @@ _SEAT_CLAIMED = False
 # True only when there is nothing to key a claim on (no session key). Permanent
 # for the session — distinct from _SEAT_CLAIMED, which must NOT stop re-claims.
 _SEAT_UNCLAIMABLE = False
+# ID-2: set when the server REFUSED to register this session's runtime seat
+# (name held by another session) and the bridge reverted to the granted seat.
+# Rendered as a banner on subsequent tool results — the refusal must be an
+# error the session can act on, never a no-op.
+_SEAT_REVERT_NOTICE: str | None = None
 
 
 async def _claim_seat(project_dir: str | None) -> None:
@@ -349,6 +369,13 @@ async def _claim_seat(project_dir: str | None) -> None:
         project = derive_project_name(remember_project_dir(project_dir or None))
         reader_identity, _ = compute_identity(project_dir or None)
         preferred = reader_identity.split("@", 1)[0]
+        # ID-2: a runtime seat (memory_take_seat) is a DECLARATION, not a
+        # preference — the server moves the registration to it, so continuity
+        # returns the seat this session is actually on instead of the one it
+        # used to hold. Without the flag, the registry answered with the old
+        # seat and the branch below reverted the file the agent just wrote —
+        # the tool and the heartbeat fighting, with the loser never told.
+        runtime = current_seat() is not None
         resp = await _client.session_claim(
             session_key=session_key,
             project=project,
@@ -357,6 +384,7 @@ async def _claim_seat(project_dir: str | None) -> None:
             host=hostname(),
             preferred_seat=preferred,
             project_dir=project_dir or None,
+            runtime_seat=runtime,
         )
         granted = (resp.get("seat") or "").strip().lower()
         _SEAT_CLAIMED = True
@@ -365,6 +393,20 @@ async def _claim_seat(project_dir: str | None) -> None:
             # it re-resolves identity every poll and seat-file outranks env, so
             # a watcher armed BEFORE this claim converges without a restart.
             take_seat(granted)
+            if runtime:
+                # The server REFUSED the runtime name (held by another live
+                # session) and we just reverted to the granted seat so bridge,
+                # watcher and registry agree. Consistent — but it must never
+                # be silent: surface it on the next tool result.
+                globals()["_SEAT_REVERT_NOTICE"] = (
+                    resp.get("warning")
+                    or f"runtime seat was not registered; reverted to "
+                       f"'{granted}'."
+                )
+        elif runtime and granted == preferred:
+            # Registration moved (or was already there) — the runtime seat is
+            # now what continuity returns. Clear any stale refusal notice.
+            globals()["_SEAT_REVERT_NOTICE"] = None
     except Exception:
         # Best-effort: the next heartbeat retries. A transient server blip must
         # not cost this session its address, and must not stop the refresh.
@@ -697,6 +739,41 @@ async def memory_take_seat(
     except ValueError as e:
         return f"Error: {e}"
 
+    # ID-2: register the runtime seat with the server NOW, synchronously —
+    # not on the next heartbeat. Before this, the tool set the seat locally
+    # and the next heartbeat's claim got the OLD seat back from continuity
+    # and reverted the file the agent just wrote: the tool reported success,
+    # the registry undid it within one heartbeat, and nothing reported the
+    # reversal. Claiming here (with the runtime flag) makes the registry
+    # move the registration, so continuity returns THIS seat from now on —
+    # and a refusal surfaces in this very response instead of never.
+    globals()["_SEAT_CLAIMED"] = False
+    await _claim_seat(project_dir or None)
+    final = current_seat() or seat
+    if final != seat:
+        # Server refused the name (held by another live session) and the
+        # bridge reverted so bridge, watcher and registry agree. Loud, and
+        # actionable — never a silent no-op.
+        return (
+            f"⛔ SEAT NOT TAKEN — '{seat}' is unavailable "
+            f"({_SEAT_REVERT_NOTICE or 'held by another session'}).\n"
+            f"You remain addressed as '{final}'. Check memory_roster for "
+            f"taken names and call memory_take_seat with a different one."
+        )
+    if _SEAT_CLAIMED:
+        registration = (
+            "✅ Registered server-side — the registry moved your record, so "
+            "continuity returns this seat from now on (heartbeats confirm "
+            "it rather than reverting it).\n"
+        )
+    else:
+        registration = (
+            "⚠ Seat set locally; server registration PENDING (no session key "
+            "or server unreachable). The next heartbeat retries — if a "
+            "launcher-spawned sibling holds this name, the registry may "
+            "still refuse it then, and a banner will say so.\n"
+        )
+
     reader_identity, listen_set = compute_identity(project_dir or None)
     project = derive_project_name(remember_project_dir(project_dir or None))
     seat_file = seat_file_path()
@@ -731,6 +808,7 @@ async def memory_take_seat(
         )
     return (
         f"Seat taken: you are now addressed as '{reader_identity}'.\n"
+        f"{registration}"
         f"Listening on: {', '.join(listen_set)}\n"
         f"  • '{seat}' — your private address (DMs from peers land here)\n"
         f"  • '{project}' — the shared project group (broadcasts still reach you)\n"

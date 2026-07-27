@@ -230,7 +230,8 @@ async def _try_takeover(conn, seat: str, project: str, meta: dict,
 
 
 def _meta(session_key: str, session_nonce: str | None, provider: str,
-          host: str | None, superseded: list[str] | None = None) -> dict:
+          host: str | None, superseded: list[str] | None = None,
+          runtime: bool = False) -> dict:
     return {
         "kind": "seat",
         "session_key": session_key,
@@ -242,6 +243,11 @@ def _meta(session_key: str, session_nonce: str | None, provider: str,
         # seat. A claim bearing one of these never gets the seat back — see
         # seat_claim for why a dying predecessor makes that necessary.
         "superseded_nonces": list(superseded or [])[-MAX_SUPERSEDED_NONCES:],
+        # ID-2: this seat name was chosen DELIBERATELY at runtime
+        # (memory_take_seat), not allocated. Continuity must prefer it over
+        # any lower-ordinal row the same session still holds — the seat the
+        # session is ACTUALLY on is the fact continuity exists to return.
+        "runtime": runtime,
     }
 
 
@@ -252,6 +258,7 @@ async def seat_claim(
     session_nonce: str | None = None,
     host: str | None = None,
     preferred_seat: str | None = None,
+    runtime_seat: bool = False,
 ) -> dict:
     """Allocate (or re-confirm) this session's unique inbox address.
 
@@ -264,7 +271,21 @@ async def seat_claim(
     displaced from a seat can never take it back. Both rules are explained at
     the point of decision below.
 
-    Returns ``{seat, is_new, reclaimed_from, warning}``.
+    ``runtime_seat=True`` (ID-2) declares that ``preferred_seat`` was chosen
+    DELIBERATELY mid-session (memory_take_seat), not resolved from launch
+    config — so continuity must MOVE the registration to it rather than
+    answer with the seat it already holds. Without this, the registry and the
+    tool fought: take_seat moved the bridge, the next heartbeat's claim
+    returned the old seat, and the bridge reverted the file the agent had
+    just written — two mechanisms answering "who is this session", the loser
+    never told. Registering was AgentBeast's call and the right one: a silent
+    split is worse than either consistent outcome, and after registration
+    continuity returns the seat the session is ACTUALLY on. If the requested
+    name is unavailable the claim REFUSES loudly (seat + warning) instead of
+    quietly keeping the old name — the caller reverts to the granted seat and
+    surfaces the refusal, so both outcomes are consistent and told.
+
+    Returns ``{seat, is_new, reclaimed_from, warning, renamed_from}``.
     """
     project = (project or "").strip().lower()
     provider = (provider or "claude").strip().lower()
@@ -284,7 +305,6 @@ async def seat_claim(
     now = datetime.now(timezone.utc)
     live_cutoff = now - timedelta(seconds=SEAT_LIVE_SECONDS)
     grace_cutoff = now - timedelta(seconds=SEAT_GRACE_SECONDS)
-    meta = _meta(session_key, session_nonce, provider, host)
 
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -327,9 +347,15 @@ async def seat_claim(
         warning = None
         if held_rows:
             base = f"{project}-{provider}"
+            # A runtime-taken seat outranks any allocated row this session
+            # still holds (ID-2): _seat_ordinal sorts non-base names LAST, so
+            # without this a renamed session's next claim would find its old
+            # ordinal first and hand the old name back — the revert loop this
+            # flag exists to end.
             ordered = sorted(
                 held_rows,
-                key=lambda r: (_seat_ordinal(r["key"].removeprefix("seat/"), base),
+                key=lambda r: (not _md(r).get("runtime"),
+                               _seat_ordinal(r["key"].removeprefix("seat/"), base),
                                r["key"]),
             )
             mine = [
@@ -392,6 +418,74 @@ async def seat_claim(
                 seat = held["key"].removeprefix("seat/")
                 if not same_process and held_nonce:
                     superseded.append(held_nonce)
+                held_runtime = bool(held_md.get("runtime"))
+
+                # ID-2 RE-SEAT: a runtime-declared name that differs from the
+                # held seat MOVES the registration instead of losing to it.
+                # Same-process only — a successor inheriting a key does not
+                # inherit its predecessor's in-flight rename request.
+                if (runtime_seat and preferred and preferred != seat
+                        and same_process):
+                    new_meta = _meta(session_key, session_nonce, provider,
+                                     host, superseded, runtime=True)
+                    moved = await _try_insert(conn, preferred, project, new_meta)
+                    if not moved:
+                        # The name exists. Ours already (a prior re-seat, a
+                        # race with our own heartbeat) → refresh it and treat
+                        # as moved. Anyone else's → refuse; never evict for a
+                        # rename, whatever its age — allocation's reclaim
+                        # rules exist for allocation, and a deliberate rename
+                        # can simply pick another name.
+                        other = await conn.fetchrow(
+                            """
+                            SELECT metadata FROM memories
+                            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                              AND project = $4 AND key = $5
+                            """,
+                            SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+                            project, f"seat/{preferred}",
+                        )
+                        if (other is not None
+                                and _md(other).get("session_key") == session_key):
+                            await conn.execute(
+                                """
+                                UPDATE memories
+                                SET metadata = $1::jsonb, last_used_at = NOW()
+                                WHERE namespace = $2 AND scope = $3
+                                  AND user_id = $4 AND project = $5 AND key = $6
+                                """,
+                                json.dumps(new_meta),
+                                SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+                                project, f"seat/{preferred}",
+                            )
+                            moved = True
+                    if moved:
+                        # Free the old name — unless it still holds
+                        # undelivered mail (R8: never hand a stranger a seat
+                        # with mail; the row ages out instead, and the
+                        # duplicate-collapse below cleans it once drained).
+                        if not await _has_undelivered_mail(conn, seat):
+                            await conn.execute(
+                                """
+                                DELETE FROM memories
+                                WHERE namespace = $1 AND scope = $2
+                                  AND user_id = $3 AND project = $4 AND key = $5
+                                """,
+                                SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+                                project, held["key"],
+                            )
+                        return {"seat": preferred, "is_new": False,
+                                "reclaimed_from": None, "warning": None,
+                                "renamed_from": seat}
+                    # REFUSED — loudly, per the ID-2 ruling: an error the
+                    # session can act on, never a no-op. The caller reverts to
+                    # the granted seat so bridge, watcher and registry agree.
+                    warning = (
+                        f"runtime seat {preferred!r} is unavailable (held by "
+                        f"another session); still registered as {seat!r}. "
+                        f"Pick a different name, or keep this one."
+                    )
+
                 await conn.execute(
                     """
                     UPDATE memories SET metadata = $1::jsonb, last_used_at = NOW()
@@ -400,7 +494,14 @@ async def seat_claim(
                     """,
                     json.dumps(
                         _meta(session_key, session_nonce, provider, host,
-                              superseded)
+                              superseded,
+                              # A registered runtime seat stays runtime across
+                              # ordinary refreshes — including from a restarted
+                              # bridge that no longer knows it took one (the
+                              # flag lives here precisely because process
+                              # memory does not survive).
+                              runtime=held_runtime or (runtime_seat
+                                                       and preferred == seat))
                     ),
                     SEAT_NAMESPACE, SEAT_SCOPE,
                     SEAT_USER_ID, project, held["key"],
@@ -431,10 +532,16 @@ async def seat_claim(
                         project, row["key"],
                     )
                 return {"seat": seat, "is_new": False,
-                        "reclaimed_from": None, "warning": None}
+                        "reclaimed_from": None, "warning": warning,
+                        "renamed_from": None}
 
         # 2-5. Allocate: first free candidate, then first reclaimable one.
         for seat in seat_candidates(project, provider, preferred):
+            # The runtime flag marks a DELIBERATELY-CHOSEN name. It applies
+            # only when the granted candidate IS the requested name — a
+            # fallback to base/ordinal is an allocation, not a choice.
+            meta = _meta(session_key, session_nonce, provider, host,
+                         runtime=runtime_seat and seat == preferred)
             if await _try_insert(conn, seat, project, meta):
                 return {"seat": seat, "is_new": True,
                         "reclaimed_from": None, "warning": warning}

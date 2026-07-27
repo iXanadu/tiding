@@ -578,25 +578,24 @@ async def test_no_session_key_stops_claiming_permanently(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_runtime_seat_is_silently_reverted_by_the_next_claim(
+async def test_a_runtime_seat_is_declared_and_the_server_grant_keeps_it(
     monkeypatch, tmp_path
 ):
-    """ID-2 (2026-07-26): take_seat and the registry fight, and nobody is told.
+    """ID-2, fixed: the claim DECLARES the runtime seat instead of losing to
+    continuity.
 
-    `memory_take_seat` exists so a session can be re-addressed mid-flight when
-    someone decides two agents are co-working in one folder. It sets the
-    runtime seat AND writes the seat file, which is what carries the change to
-    the already-running watcher.
+    The defect this test used to pin: a launcher-spawned session re-claims on
+    every heartbeat, and the registry answered from its record keyed on
+    session_key — so it handed back the OLD seat, `_claim_seat` saw granted
+    != preferred, and overwrote the file the agent had just set. The runtime
+    seat was reverted within one heartbeat, silently. (Observed live
+    2026-07-26: a session took `<proj>-claude-opus5` 71s after a restart
+    while the registry held `<proj>-claude`.)
 
-    But a launcher-spawned session also re-claims on every heartbeat, and the
-    registry answers that claim from its OWN record keyed on session_key — so
-    it hands back the seat it already holds, `_claim_seat` sees granted !=
-    preferred, and overwrites the file the agent just set. The runtime seat is
-    reverted within one heartbeat, silently: the tool reported success and
-    returned a re-arm command, and the session is quietly moved back.
-
-    Observed on a live probe 2026-07-26: a session took `<proj>-claude-opus5`
-    71 seconds after a restart while the registry held `<proj>-claude`.
+    Now the claim carries runtime_seat=True, the server moves the
+    registration and grants the runtime name, and the bridge leaves the file
+    alone — bridge, watcher and registry agree on the seat the session is
+    actually on.
     """
     from engram_mcp import identity, server as srv
 
@@ -610,16 +609,62 @@ async def test_a_runtime_seat_is_silently_reverted_by_the_next_claim(
     assert identity.current_seat() == "proj-claude-opus5"
     assert identity.read_seat_file() == "proj-claude-opus5"
 
-    # The registry knows nothing of that name; continuity returns its own seat.
+    calls = []
+
     async def _fake_claim(**kw):
-        return {"seat": "proj-claude", "is_new": False}
+        calls.append(kw)
+        # A post-ID-2 server registers the runtime seat and grants it.
+        return {"seat": kw["preferred_seat"], "is_new": False,
+                "renamed_from": "proj-claude"}
 
     monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
     await srv._claim_seat(str(tmp_path))
 
-    assert identity.read_seat_file() == "proj-claude", (
-        "the next heartbeat silently overwrote the seat the agent just took"
+    assert calls[0]["runtime_seat"] is True, (
+        "the claim must DECLARE the runtime seat, or the server cannot "
+        "distinguish a deliberate re-seat from launch config"
     )
+    assert calls[0]["preferred_seat"] == "proj-claude-opus5"
+    assert identity.read_seat_file() == "proj-claude-opus5", (
+        "the heartbeat overwrote the seat the agent just took — the revert "
+        "loop ID-2 closed"
+    )
+    assert srv._SEAT_REVERT_NOTICE is None
+    identity.clear_seat()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_runtime_seat_reverts_loudly_not_silently(
+    monkeypatch, tmp_path
+):
+    """The other consistent outcome: when the server refuses the runtime name
+    (held by another live session), the bridge reverts to the granted seat so
+    bridge, watcher and registry agree — and SAYS SO via the banner. A silent
+    split was the original defect; a silent revert would be its twin."""
+    from engram_mcp import identity, server as srv
+
+    monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv("ENGRAM_SESSION_KEY", "claude-ab-proj")
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_UNCLAIMABLE", False)
+    monkeypatch.setattr(srv, "_SEAT_REVERT_NOTICE", None)
+
+    identity.take_seat("proj-claude-opus5")
+
+    async def _refusing_claim(**kw):
+        return {"seat": "proj-claude", "is_new": False,
+                "warning": "runtime seat 'proj-claude-opus5' is unavailable "
+                           "(held by another session); still registered as "
+                           "'proj-claude'."}
+
+    monkeypatch.setattr(srv._client, "session_claim", _refusing_claim)
+    await srv._claim_seat(str(tmp_path))
+
+    assert identity.read_seat_file() == "proj-claude", (
+        "on refusal the bridge must converge to the registered seat"
+    )
+    assert srv._SEAT_REVERT_NOTICE and "unavailable" in srv._SEAT_REVERT_NOTICE
+    assert "RUNTIME SEAT NOT REGISTERED" in srv._seat_revert_banner()
     identity.clear_seat()
 
 
