@@ -7,36 +7,6 @@
 
 ## Now (blocking or next up)
 
-- **TEST-1** **The test suite can silently validate a DIFFERENT CHECKOUT than
-  the one you are editing.** Dev (`~/projects/engram`) and prod
-  (`/opt/srv/engram`) are both `pip install -e` into the same pyenv
-  virtualenv, so `server.*` resolves to whichever was installed last. On
-  2026-07-27 that was prod: `pytest` reported **255 passed** while importing
-  `/opt/srv/engram/server/services/memory_service.py`, and edits to the
-  working tree had no effect on the run whatsoever.
-  **Why this is worse than a stale import:** it defeats the falsification
-  step this project relies on. A fix was written, the guard test was run
-  against the code with the fix stashed (failed) and again with it restored
-  (failed) — and that identical result was initially read as "the test does
-  not exercise the fix" only because the failure was inspected. Had the
-  pre-existing code happened to satisfy the new test, the sequence would have
-  read as a clean PASS for a change that was never loaded. **Green tests for
-  code you did not write is the failure mode**, and nothing in the run says
-  which tree it used.
-  Caught by writing a debug line to a file and finding the file never
-  created — i.e. by proving absence directly, after two rounds of reasoning
-  about the logic produced nothing. `CLAUDE.md` documents the collision and
-  the remedy (`pip install -e .` from the dev dir), but documentation cannot
-  fix a silent failure: the remedy has to be applied BEFORE you know you
-  needed it.
-  **Fix options:** have `conftest.py` assert that the imported `server`
-  package resolves under the repo root and fail loudly otherwise (cheapest,
-  catches it on every run); or stop sharing one virtualenv between dev and
-  prod. The assert is a few lines and would have turned today's silent hour
-  into an immediate error. Same family as the rest of this ledger: two
-  sources answering one question, permissive one winning quietly, loser
-  never told.
-
 - **ID-2** `memory_take_seat` is **silently reverted** on launcher-spawned
   sessions. The tool exists so a session can be re-addressed mid-flight when
   someone decides two agents are co-working in one folder; it sets the

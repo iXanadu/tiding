@@ -1,12 +1,63 @@
+import pathlib
+
 import asyncpg
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+import server
 from server.config import settings
 from server.db import init_pool, close_pool
 from server.embeddings import init_client, close_client
 
 TEST_DB_NAME = "engram_test"
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _assert_testing_this_checkout() -> None:
+    """TEST-1: fail loudly if `server` resolves outside this repo.
+
+    Dev (`~/projects/engram`) and prod (`/opt/srv/engram`) are both
+    `pip install -e` into the same pyenv virtualenv, so `server.*` resolves to
+    whichever was installed LAST. On 2026-07-27 that was prod: pytest reported
+    255 passed while importing `/opt/srv/engram`, and edits to the working
+    tree had no effect on any run.
+
+    That is worse than a stale import, because it defeats falsification. A fix
+    was run with its change stashed (failed) and restored (failed) — the same
+    result twice, which only read as suspicious because the failure was
+    inspected. Had the existing code happened to satisfy the new test, the
+    sequence would have read as a clean PASS for a change that was never
+    loaded. Green tests for code you did not write, with nothing in the output
+    naming which tree it used.
+
+    A comment in CLAUDE.md cannot fix a silent failure — the remedy
+    (`pip install -e .` from the dev dir) has to be applied BEFORE you know
+    you need it. So assert it on every run instead.
+    """
+    resolved = pathlib.Path(server.__file__).resolve()
+    try:
+        resolved.relative_to(_REPO_ROOT)
+    except ValueError:
+        raise RuntimeError(
+            "\n"
+            "══════════════════════════════════════════════════════════════\n"
+            " TEST-1: pytest is testing a DIFFERENT CHECKOUT than this one.\n"
+            "══════════════════════════════════════════════════════════════\n"
+            f"  tests live in : {_REPO_ROOT}\n"
+            f"  `server` came from: {resolved.parent}\n"
+            "\n"
+            "  Dev and prod are both editable-installed into this virtualenv\n"
+            "  and the other one won. Every result from this run would\n"
+            "  describe code you are not editing — including any test you\n"
+            "  just 'verified failing against the old code'.\n"
+            "\n"
+            "  Fix:  pip install -e .   (from this repo root)\n"
+            "══════════════════════════════════════════════════════════════"
+        )
+
+
+_assert_testing_this_checkout()
 
 
 async def _ensure_test_db_exists() -> None:
