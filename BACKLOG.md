@@ -160,31 +160,54 @@
   normally. Those are the same defect in two hats — the answer is for a
   departing session to say so, not for observers to guess harder.
 
-- **MSG-8** **Mid-job wake DOES NOT WORK — measured 2026-07-27 — and the
-  obvious repair is UNVERIFIED.** A session has no execution context while a
-  tool call is in flight, so inbound mail is not seen until the call
-  returns. Measured on a probe genuinely head-down in one blocking 90s call:
-  sent 02:13:57Z (in-window), first observable to the agent 02:15:26Z — 89s
-  deaf, with a healthy watcher that had captured the message correctly.
-  **Not an engram defect:** delivery, addressing and the watcher all worked.
-  Latency equals the remaining runtime of the blocking tool, bounded only by
-  the harness ceiling — a worker in a 9-minute build is deaf for 9 minutes.
+- **MSG-8** **A message cannot interrupt an in-flight tool call — and the
+  dominant latency is the WATCHER POLL, not the block.** Two terms, and we
+  first attributed all of one to the other.
+  **MECHANISM (measured, stands):** a session has no execution context while
+  a tool call is in flight. A probe head-down in one blocking 90s call
+  produced ZERO mid-loop markers; detection came only after the call
+  returned. Chunking the same 90s of work into ten short calls DID produce
+  mid-run detection, twice. Same work, same watcher — only the boundaries
+  differed.
+  **QUANTITY (corrected 2026-07-27, do not resurrect the old figure):** the
+  first run was reported as "89s deaf, caused by the blocking call". That
+  attribution is WRONG. Decomposed: send 02:13:57.2Z, blocking call returned
+  02:14:23Z, first observable 02:15:26Z — so the block accounts for at most
+  25.8s (29%), and 63.0s elapsed while the agent was NOT blocked. That
+  remainder is poll latency. `engram-inbox-wait --poll-interval` defaults to
+  **45s** (inbox_wait.py:256); no watcher on the fleet overrides it.
+  Corroborated independently: two detections in the chunked run were 46.0s
+  apart — one poll cycle.
+  **So: the boundary is a GATE, the poll is the CLOCK.** Chunking removes
+  the hard block; it cannot buy responsiveness below the poll interval. A
+  worker chunked to 1s calls is still up to 45s stale.
+  **Not an engram defect in the blocking half** — delivery, addressing and
+  the watcher all worked. The poll half IS tunable and ours.
+  **Caught only because a single observation cannot separate two additive
+  latency terms.** The second run supplied the second observation. Any
+  future latency claim here needs two measurements at different chunk
+  shapes, or it is attributing a sum to whichever term was being discussed.
   **THE CONSEQUENCE, which is the load-bearing part:** a BUSY agent and a
   DEAD agent are indistinguishable from outside — both are silence. So you
   cannot interrupt a working agent, AND any liveness check that reads
   silence as death will kill working agents mid-task. Any manager/driver
   design must account for both directions.
-  **OPEN QUESTION, and the driver pattern rests on it:** does chunking work
-  — i.e. does splitting long work into sub-10s tool calls let wake land at a
-  chunk boundary? This is INFERRED, NOT MEASURED. "No context during a tool
-  call" explains the failure but does not establish that short calls
-  deliver; the event could be coalesced or need a boundary a tight loop
-  never produces. Test 3 designed and agreed: same ~90s chunked into ~10
-  short calls, mail sent mid-run and timestamped from the server clock,
-  measure WHERE detection lands. Next-boundary ⇒ chunking is a real
-  mitigation and the pattern is buildable with a documented worker
-  discipline. End-of-all-chunks ⇒ chunking does not help and the pattern
-  needs a different mechanism. Awaiting owner's go.
+  **THE MITIGATION IS TWO PARTS, and only one was in the original model:**
+  (1) CHUNK the work — removes the hard block, restores mid-job
+  reachability; (2) LOWER `--poll-interval` — sets how stale a worker can
+  be. Chunking alone gives mid-job detection with up-to-45s lag. Whether
+  45s is acceptable for steering a worker is the owner's call, and it is
+  now a tunable rather than an unknown.
+  **STILL OPEN:** confirm the poll interval is the WHOLE remaining term —
+  same chunked shape with `--poll-interval 5`, expecting first-boundary
+  detection. Cheap. Not run.
+  **TEST-DESIGN DEFECT worth keeping:** the agreed discriminator "the marker
+  must land at a CHUNK BOUNDARY" was DEGENERATE — an agent can only execute
+  at boundaries, so a marker can land nowhere else, and it was guaranteed to
+  pass by construction. The version with content is "the FIRST boundary
+  after t_send", and by that the chunked run FAILED both times (2 boundaries
+  late, then 4). Two of us reviewed that discriminator and neither noticed;
+  the probe that built the test caught it afterwards.
   Method notes worth keeping for any rerun: the naive "message a busy agent
   and see if it answers" is UNFALSIFIABLE (the launcher does not log prompt
   sends, so an autonomous wake and a prompted turn leave identical traces —
