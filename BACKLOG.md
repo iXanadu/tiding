@@ -5,28 +5,15 @@
 > file is written as if public. Journal → engram memory. Standard:
 > [docs/backlog-standard.md](docs/backlog-standard.md).
 
-## Now (blocking or next up)
+> **⛔ THE NO-SCAB RULE (owner, 2026-07-28) — read before pulling anything.**
+> "The more we pick at the messaging/huddles scab, the more it bleeds." Every
+> item in SET ASIDE below is quarantined: do NOT start one when idle, do not
+> "just one more filter" — the owner reopens them by name or they wait. This
+> OVERRIDES the pull-the-top-open-item idle rule. Items in the other sections
+> also start only when the owner names them ("let me drive"). Context:
+> `decision/no-scab-rule-2026-07-28` in project memory.
 
-- **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
-  needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
-  AB's enumeration both report `provider=grok` correctly (AB fixed the
-  enumeration in `b82860a`). What remains: grok gets no `ENGRAM_SESSION_KEY`
-  on AB's launch *start* path, so a grok seat has no stable key across a
-  respawn (grok effort/model changes stop→respawn), meaning it can't reliably
-  re-claim the same seat the way Claude does. Not an engram instability and no
-  regression — grok works today on its launch-injected identity.
-
-- **DR-3** Consider enabling WAL archiving. The backup chain itself is
-  sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
-  zero failures), captured onsite and offsite, and a dump already rotated off
-  local disk was recovered from the archive and restored cleanly. So the gap
-  is not coverage — it is GRANULARITY. `archive_mode=off` means no
-  point-in-time recovery between dumps, and the floor is therefore ~30
-  minutes. Demonstrated the same evening: a sub-second overwrite destroyed a
-  peer's content that no snapshot ever contained, because the whole race
-  resolved inside one backup window. No backup cadence fixes that class —
-  only a correct guard does. Decide whether the operational cost of WAL
-  archiving is worth closing the remaining window.
+## Set aside — messaging / huddles / addressing (owner reopens by name)
 
 - **MAIL-1** Rob's ruling 2026-07-27 (huddle kgKq6dH9), pinned on his "take
   note — no fix now": the owner-facing "Mail" surface must become either
@@ -37,9 +24,32 @@
   DEFAULT view must NOT change — agent watchers wake on huddle rows through
   it, and changing the default would silently deafen the fleet. Surface half
   (wiring Mail endpoints/tabs to the filter, or removing the tab) is
-  AB/app's. Blocked deliberately: owner said no fix now; he schedules it.
+  AB/app's.
 
-## Needs decision
+- **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
+  needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
+  AB's enumeration both report `provider=grok` correctly (AB fixed the
+  enumeration in `b82860a`). What remains: grok gets no `ENGRAM_SESSION_KEY`
+  on AB's launch *start* path, so a grok seat has no stable key across a
+  respawn (grok effort/model changes stop→respawn), meaning it can't reliably
+  re-claim the same seat the way Claude does. Not an engram instability and no
+  regression — grok works today on its launch-injected identity.
+
+- **DOC-8** Reference the shell-wrapper approach for seating
+  hand-launched sessions once it exists (sets `ENGRAM_INBOX_IDENTITY` from
+  folder + provider when unset, so a bare terminal session inherits a seat
+  through the same process tree as a launcher-spawned one). Makes the
+  strong path universal and demotes runtime seats to a convenience.
+  Wrapper lives in the operator's shell config, not this repo.
+
+- **NS-3** Retire the `claude-code=fleet` alias — SECOND attempt, now
+  data-gated. NS-2's config/DB/grants sweep missed a straggler class:
+  application clients hardcoding the legacy namespace in their own code
+  (AB's hub, MEM-403). Alias restored as prod operator config;
+  NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
+  switched to `fleet` AND the log is quiet for a full grace week.
+
+## Owner's drivable menu — store & ops (start when the owner names one)
 
 - **MEM-2** Key-prefix enumeration — a deterministic "list every key under
   `wip/`" that returns ALL matches in key order with no embedding involved.
@@ -66,9 +76,20 @@
   back-compatible). Today memories have only create and delete, so the sole
   way to stop stale handoffs accumulating is `memory_forget`, which destroys
   the history. "Delete is the only lifecycle verb" is a shape worth removing
-  after the 2026-07-23 incident. Same gate as MEM-2.
+  after the 2026-07-23 incident. Natural pair with MEM-2 (same part of the
+  codebase; together they make memory provable and curatable).
 
-## Next (committed, not started)
+- **DR-3** Consider enabling WAL archiving. The backup chain itself is
+  sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
+  zero failures), captured onsite and offsite, and a dump already rotated off
+  local disk was recovered from the archive and restored cleanly. So the gap
+  is not coverage — it is GRANULARITY. `archive_mode=off` means no
+  point-in-time recovery between dumps, and the floor is therefore ~30
+  minutes. Demonstrated the same evening: a sub-second overwrite destroyed a
+  peer's content that no snapshot ever contained, because the whole race
+  resolved inside one backup window. No backup cadence fixes that class —
+  only a correct guard does. Decide whether the operational cost of WAL
+  archiving is worth closing the remaining window.
 
 - **DATA-1** Decide the fate of two sensitive local archives sitting
   untracked at `~/projects/` top level (deliberately outside every git
@@ -78,20 +99,6 @@
   they persist until someone decides. Owner's call: keep, relocate to a
   vault, or delete. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
-- **DOC-8** Reference the shell-wrapper approach for seating
-  hand-launched sessions once it exists (sets `ENGRAM_INBOX_IDENTITY` from
-  folder + provider when unset, so a bare terminal session inherits a seat
-  through the same process tree as a launcher-spawned one). Makes the
-  strong path universal and demotes runtime seats to a convenience.
-  Wrapper lives in the operator's shell config, not this repo.
-
-- **NS-3** Retire the `claude-code=fleet` alias — SECOND attempt, now
-  data-gated. NS-2's config/DB/grants sweep missed a straggler class:
-  application clients hardcoding the legacy namespace in their own code
-  (AB's hub, MEM-403). Alias restored as prod operator config;
-  NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
-  switched to `fleet` AND the log is quiet for a full grace week.
-
 ## Blocked-external
 
 - **DOCKER-1** Verify the full-stack compose path (build, health,
@@ -100,6 +107,3 @@
   fleet (surveyed 2026-07-21 — Linux spokes have no Docker; macmini's
   OrbStack hangs on daemon start). Needs a runtime repair or a fresh box
   first; the stack definition itself is unproven, not suspect.
-
-## Later / decide
-
