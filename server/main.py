@@ -177,12 +177,17 @@ app = FastAPI(
 )
 
 app.add_middleware(PrincipalAuthMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://claude.ai"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Operator config, empty by default (ENGRAM_CORS_ORIGINS). Was hardcoded to
+# https://claude.ai for an integration that never shipped — see config.py.
+# Registered only when an origin is actually configured, so the default server
+# advertises no cross-origin permission at all rather than an empty allowlist.
+if settings.cors_origins_list():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins_list(),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 # Anti-DNS-rebinding: reject forged Host headers before routing. CORS does not
 # stop rebinding (the malicious page becomes same-origin); a Host allowlist
 # does. Starlette's TrustedHostMiddleware runs outermost (added last).

@@ -34,6 +34,22 @@ class Settings(BaseSettings):
     def trusted_hosts_list(self) -> list[str]:
         return [h.strip() for h in self.trusted_hosts.split(",") if h.strip()]
 
+    # Browser origins permitted to READ engram's responses cross-origin.
+    # DEFAULT EMPTY — engram's clients are servers and MCP bridges, which are
+    # not subject to CORS at all, so nothing legitimate needs this by default.
+    #
+    # It previously hardcoded `https://claude.ai` for a claude.ai skill planned
+    # 2026-04-01 that was never completed (its principal wrote 0 rows in four
+    # months). The grant outlived the plan, which is the general hazard: a named
+    # external origin is easy to add for a specific integration and nothing ever
+    # revisits it when that integration dies. Operator config with an empty
+    # default means the grant has to be re-stated deliberately, by someone who
+    # currently wants it.
+    cors_origins: str = ""
+
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     # NS-1 provider-agnostic namespaces. `primary_namespace` is where inbox +
     # presence rows live. `namespace_aliases` maps legacy names to canonical
     # ones at the API boundary ("old=new,old2=new2") so clients sending an old
