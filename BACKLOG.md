@@ -74,6 +74,14 @@
   the last release tag for direct subscripts of the field) and a deprecation
   period sized to "no pre-change bridge is still running", not to "the peer
   said yes". `state` is currently a back-compat shim awaiting exactly that.
+  ⚠️ **And engram cannot self-serve the forensics**, which is why the check
+  must be external: presence rows are keyed on the ADDRESS and upserted, so a
+  row outlives its occupants and `created_at` is the age of the SEAT NAME, not
+  of the session in it. No engram query answers "was session X running at time
+  T" — address-is-not-identity, this time blocking incident forensics. The
+  SPAWNER has that data because it started them, so the deployed-reader list
+  is asked for, not derived. Same principle as the liveness split, pointed at
+  deploys.
 
 ## Needs-decision
 
