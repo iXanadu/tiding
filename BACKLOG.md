@@ -62,8 +62,15 @@
   nobody has justified. (b) A farewell merely makes the seat eligible once
   the guards that already exist ALSO pass (no fresh presence, no undelivered
   mail) — no new constant, and the farewell acts as corroboration rather than
-  as its own clock. Leaning (b). AgentBeast's condition on the whole idea —
-  "shortens, never releases, and only with revocation" — is already met.
+  as its own clock. **(b) CHOSEN, and its open question is closed.**
+  AgentBeast's condition was that revocation needs TIME to work: instant
+  eligibility would leave a false farewell no window in which to be revoked,
+  quietly removing the safety net. Checked rather than assumed —
+  `_presence_is_fresh` means "no presence within `SEAT_LIVE_SECONDS`", so the
+  existing guards already supply a **10-minute** quiet period, ~13 watcher
+  polls, and revocation fires on the session's own heartbeat or a re-armed
+  watcher, whichever speaks first. The window was FOUND, not chosen; no new
+  number enters the design. Remaining work is purely the implementation.
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
