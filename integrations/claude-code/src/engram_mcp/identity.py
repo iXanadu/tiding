@@ -378,6 +378,130 @@ def discover_seat_file() -> str | None:
     return None
 
 
+# Where the bridge records its harness's process identity for the watcher.
+# Sits beside the seat file and is found the same two ways.
+PROC_FILE_SUFFIX = ".proc"
+
+
+def _proc_file_path(session_key: str | None = None) -> str | None:
+    seat = seat_file_path(session_key)
+    return seat[: -len(".seat")] + PROC_FILE_SUFFIX if seat else None
+
+
+def record_session_process() -> str | None:
+    """Record THIS BRIDGE's harness as the session process. Best-effort.
+
+    Only the bridge can do this, and it is the whole reason the file exists.
+    The bridge's parent IS the harness, reliable by construction — a stdio MCP
+    server is spawned as a direct child of the harness that talks to it. The
+    WATCHER has no such luck: measured on this fleet's shape,
+
+        watcher  8431  ppid=8429  pgid=8429   ← its own process group
+        wrapper  8429  ppid=6632  pgid=8429   ← /bin/zsh -c, group leader
+        SESSION  6632  ppid=6411  pgid=6632   ← a DIFFERENT group
+
+    its parent is a shell wrapper, an implementation detail of whatever armed
+    it. Keying a death signal on that fails BOTH ways: when the session dies
+    the wrapper is merely orphaned and keeps running (blocked in ``wait()``),
+    so a parent check reports "alive" and the signal never fires; and killing
+    the wrapper alone — which stopping a monitor does — reports the session
+    gone while it is fine. The second is the expensive direction and it is
+    routine, not exotic.
+
+    Walking ancestors for a seat file does not rescue it either: that probe
+    only matches AUTO-derived keys, so it finds hand-launched sessions and
+    misses every launcher-injected one, which is most of this fleet.
+
+    So the process that knows, writes it down. Stored as ``pid start_time``,
+    because A PID ALONE IS AN ADDRESS, NOT AN IDENTITY — the OS recycles them,
+    and a recycled pid reads as "still alive" forever. Same lesson as seat
+    names, one layer down.
+    """
+    try:
+        ppid = os.getppid()
+    except OSError:  # pragma: no cover
+        return None
+    if ppid <= 1:
+        return None  # no harness parent: nothing truthful to record
+    info = _proc_info(ppid)
+    if info is None:
+        return None
+    path = _proc_file_path()
+    if not path:
+        return None
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = f"{path}.tmp{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(f"{ppid} {info[1]}\n")
+        os.replace(tmp, path)  # atomic: a poller never sees a half-written line
+        return path
+    except OSError:
+        return None
+
+
+def _read_proc_at(path: str | None) -> tuple[int, str] | None:
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    pid, _, start = raw.partition(" ")
+    try:
+        return int(pid), start.strip()
+    except ValueError:
+        return None
+
+
+def discover_session_process() -> tuple[int, str] | None:
+    """``(pid, start_time)`` of the session this process belongs to, or None.
+
+    Same two lookups as ``read_seat_file``: the resolved session key first
+    (covers launcher-injected sessions, where bridge and watcher share
+    ``ENGRAM_SESSION_KEY`` through the environment), then an ancestor probe
+    (covers hand-launched ones, where the key is derived from the harness and
+    the harness is therefore on the watcher's ancestor chain).
+
+    None means "I could not identify a session to watch" — which must stay a
+    distinct outcome from "the session is gone", never collapsed into it.
+    """
+    found = _read_proc_at(_proc_file_path())
+    if found:
+        return found
+    try:
+        pid = os.getpid()
+    except OSError:  # pragma: no cover
+        return None
+    host = hostname()
+    seen: set[int] = set()
+    for _ in range(12):  # bounded: never loop on a cyclic/odd tree
+        if pid <= 1 or pid in seen:
+            break
+        seen.add(pid)
+        info = _proc_info(pid)
+        if info is None:
+            break
+        ppid, start = info
+        found = _read_proc_at(_proc_file_path(auto_session_key_for(pid, start, host)))
+        if found:
+            return found
+        pid = ppid
+    return None
+
+
+def process_is_alive(pid: int, start: str) -> bool:
+    """Is the process that was ``(pid, start)`` still running?
+
+    Both halves are required. Matching on pid alone would treat a recycled pid
+    as continued life, which is the failure that turns a death signal into a
+    silent lie — and a wrong death is the expensive direction.
+    """
+    info = _proc_info(pid)
+    return info is not None and info[1] == start
+
+
 def read_seat_file() -> str | None:
     """The seat recorded for this session, or None.
 

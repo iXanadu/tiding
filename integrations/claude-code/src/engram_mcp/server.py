@@ -19,6 +19,7 @@ from engram_mcp.identity import (
     derive_project_name,
     hostname,
     reader_to_address,
+    record_session_process,
     remember_project_dir,
     resolve_channels,
     resolve_provider,
@@ -1632,6 +1633,12 @@ async def memory_resolve_thread(
 
 
 def main():
+    # Record the harness for the watcher, HERE and not on a heartbeat: our
+    # parent is the session by construction only while we are the process the
+    # harness spawned, and this is the one moment that is unambiguous. The
+    # watcher cannot work this out for itself — its own parent is a shell
+    # wrapper in a different process group from the session.
+    record_session_process()
     mcp.run(transport="stdio")
 
 

@@ -979,6 +979,12 @@ async def presence_update(
         watcher_seen = prior_md.get("watcher_last_seen")
         if watcher_seen and not new_generation:
             metadata["watcher_last_seen"] = watcher_seen
+        # REVOCATION, and note it is by OMISSION: `metadata` is built fresh, so
+        # a prior `farewell_at` is dropped unless deliberately carried forward,
+        # and a heartbeat is the strongest possible evidence of life. Stated
+        # explicitly because it currently works by construction, and the next
+        # person to "fix" this by carrying the whole prior dict forward would
+        # silently resurrect every farewell the session had already disproved.
         value = f"{identity} [{provider or 'unknown'}] {state} on {project}"
         # Heartbeat timestamp rides last_used_at (no updated_at column).
         updated = await conn.execute(
@@ -1068,11 +1074,21 @@ async def presence_watcher_beat(identity: str, project: str) -> bool:
     async with pool.acquire() as conn:
         # jsonb_set merges into the existing metadata, so everything the
         # session reported survives untouched.
+        # REVOCATION (2026-08-01): a beat here is evidence of life, and any
+        # evidence of life VOIDS a farewell — hence the `- 'farewell_at'`.
+        #
+        # Without it a wrong farewell is silent AND permanent: the session it
+        # libelled cannot correct the record, because being unheard is the
+        # premise of the mistake. It would simply lose its address later
+        # instead of immediately. Revocation converts that failure from
+        # permanent to transient — the moment a re-armed watcher or the session
+        # itself speaks, the record heals — which is what makes a shortened
+        # backstop a grace period rather than a slower theft.
         updated = await conn.execute(
             """
             UPDATE memories
             SET metadata = jsonb_set(
-                    COALESCE(metadata, '{}'::jsonb),
+                    COALESCE(metadata, '{}'::jsonb) - 'farewell_at',
                     '{watcher_last_seen}', to_jsonb($1::text), true
                 ),
                 last_used_at = NOW()
@@ -1093,6 +1109,45 @@ async def presence_watcher_beat(identity: str, project: str) -> bool:
             project, f"seat/{identity}",
         )
     return True
+
+
+async def presence_farewell(identity: str, project: str) -> bool:
+    """Record that a watcher OBSERVED this session's process exit.
+
+    Narrow, like presence_watcher_beat, and for the same reasons: merges with
+    jsonb_set so nothing the session reported is clobbered, and REFUSES TO
+    INSERT — no presence row means no session ever heartbeated here, and
+    conjuring one from a farewell would invent a session in order to declare
+    it dead.
+
+    Deliberately does NOT touch last_used_at. A farewell is news about the
+    session, not evidence that anything is alive at this address; refreshing
+    the clock would extend the very lease the farewell exists to shorten.
+
+    ⚠️ The asymmetry is the whole design. A farewell RECEIVED is evidence of
+    death. A farewell NOT received is evidence of NOTHING — a watcher that was
+    killed itself sends nothing, and so does a machine that lost power. Any
+    code that reads absence as a signal has rebuilt the 600-second window under
+    a better name.
+    """
+    identity = identity.lower()
+    project = project.lower()
+    now = datetime.now(timezone.utc)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        updated = await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'::jsonb),
+                    '{farewell_at}', to_jsonb($1::text), true
+                )
+            WHERE namespace = $2 AND scope = $3 AND user_id = $4 AND key = $5
+            """,
+            now.isoformat(),
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, f"presence/{identity}",
+        )
+    return updated != "UPDATE 0"
 
 
 def _watcher_state(md: dict, now: datetime) -> tuple[bool | None, datetime | None]:
@@ -1212,6 +1267,10 @@ async def roster_list(
             "providers_seen": sorted({(i.get("provider") or "unknown") for i in fresh.values()}) if fresh else [],
             "watcher_alive": watcher_alive,
             "watcher_last_seen": watcher_seen,
+            # A fact, served like every other: "a watcher observed this
+            # session's process exit at T". Absent means no such observation
+            # was ever made, which is NOT a claim that the session is alive.
+            "farewell_at": md.get("farewell_at"),
         })
     return entries
 
@@ -1270,6 +1329,12 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
             "age_seconds": round(age, 1),
             "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
             "watcher_alive": watcher_alive,
+            # An OBSERVED exit, when one exists. This is the only signal here
+            # that does not have to wait out a window: staleness needs 10
+            # minutes and a silent watcher 5, and a seat abandoned inside those
+            # warns about nothing. A watcher that saw the process go reports it
+            # on its next poll.
+            "farewell_at": md.get("farewell_at"),
         }
     return out
 

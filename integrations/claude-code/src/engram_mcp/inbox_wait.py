@@ -37,6 +37,8 @@ from engram_mcp.config import settings
 from engram_mcp.identity import (
     compute_identity,
     derive_project_name,
+    discover_session_process,
+    process_is_alive,
     reader_to_address,
 )
 
@@ -237,6 +239,18 @@ async def _beat(client, reader_identity: str, project_dir: str | None) -> None:
         pass
 
 
+async def _farewell(client, reader_identity: str, project_dir: str | None) -> None:
+    """Report the watched session gone. Best-effort, like every other beat."""
+    try:
+        await client.presence_farewell(
+            identity=reader_identity.split("@", 1)[0],
+            project=derive_project_name(project_dir),
+            project_dir=project_dir,
+        )
+    except Exception:
+        pass
+
+
 async def _run(args) -> int:
     reader_identity, listen_set = compute_identity(args.project_dir or None)
     if args.address:
@@ -244,6 +258,19 @@ async def _run(args) -> int:
 
     _warn_plaintext_url(settings.memory_api_url)
     client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
+
+    # Resolved ONCE, at arm time, while the session is definitely alive — a
+    # later lookup could resolve a recycled pid or find nothing and read that
+    # as a death. None means "no session identified", which stays permanently
+    # distinct from "the session is gone": we simply never report a farewell.
+    watched = discover_session_process()
+    if watched is None:
+        print(
+            "inbox-wait: no session process identified — wake still works, "
+            "but this watcher will not report the session's exit",
+            file=sys.stderr, flush=True,
+        )
+
     try:
         # Default: only wake on mail that arrives AFTER the watcher starts — a
         # startup watcher shouldn't immediately fire on the backlog the session
@@ -309,6 +336,15 @@ async def _run(args) -> int:
             if fresh and not args.follow:
                 return 0  # one-shot: exit on first new mail (Bash-bg = one wake)
             if deadline is not None and time.monotonic() >= deadline:
+                return 0
+
+            # OBSERVE the session, don't announce our own death. We outlive it
+            # — measured: the watcher sits in its own process group, so a
+            # group-directed kill aimed at the session never reaches us and an
+            # exit hook would simply not fire on the commonest death. Being
+            # alive is what makes this reportable at all.
+            if watched and not process_is_alive(*watched):
+                await _farewell(client, reader_identity, args.project_dir or None)
                 return 0
             await asyncio.sleep(args.poll_interval)
     finally:

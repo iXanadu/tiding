@@ -234,6 +234,35 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def presence_farewell(
+        self,
+        identity: str,
+        project: str,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Report that the watched SESSION process is gone.
+
+        Sent by the watcher, which OUTLIVES its session and therefore observes
+        the death rather than announcing its own. A dying process is a poor
+        reporter — it may never be scheduled, and SIGKILL gives it nothing to
+        say — so the farewell is an observation, not a last gasp.
+
+        Only ever sent for an observed transition alive → gone. A watcher that
+        is killed itself sends nothing, and that silence is correct: absence of
+        a farewell means nothing at all.
+        """
+        return await self._request(
+            "POST",
+            "/memory/presence",
+            json={
+                "identity": identity,
+                "project": project,
+                "state": "running",  # ignored on the farewell path
+                "farewell": True,
+            },
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def session_claim(
         self,
         session_key: str,

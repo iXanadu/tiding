@@ -69,6 +69,7 @@ from server.services.memory_service import (
     memory_get,
     memory_search,
     memory_set,
+    presence_farewell,
     presence_update,
     presence_watcher_beat,
     recipient_liveness,
@@ -456,12 +457,19 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 # went quiet. Both are stated as observations — the sender
                 # decides what silence means, because the store cannot
                 # (MSG-8: a busy agent and a dead one are both silent).
-                if info["is_stale"] or info["watcher_alive"] is False:
+                if (info["is_stale"] or info["watcher_alive"] is False
+                        or info.get("farewell_at")):
                     hrs = info["age_seconds"] / 3600.0
                     age = f"{hrs:.1f}h" if hrs >= 1 else f"{int(info['age_seconds'])}s"
                     facts = f"last heartbeat {age} ago"
                     if info["watcher_alive"] is False:
                         facts += ", watcher silent"
+                    # The one fact here that needs no window to elapse. A seat
+                    # abandoned inside the 5-minute watcher window warned about
+                    # nothing before this — the exact case that cost a peer a
+                    # blocking work item sent to an empty chair.
+                    if info.get("farewell_at"):
+                        facts += ", watcher OBSERVED the session exit"
                     warnings.append(
                         f"{addr}: {facts} — delivered and stored, but do not "
                         "expect a reply. Check memory_roster before dividing "
@@ -723,6 +731,15 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
     transitions (running → awaiting-input → done). Engram never scrapes."""
     check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
     try:
+        if req.farewell:
+            # The watcher OBSERVED the session's process exit. Checked before
+            # `watcher`, because a farewell is the watcher's last act and must
+            # not be mistaken for another beat — a beat would refresh the
+            # clock and void the very thing being reported.
+            await presence_farewell(identity=req.identity, project=req.project)
+            return PresenceUpdateResponse(
+                status="ok", identity=req.identity, state=req.state, collision=None
+            )
         if req.watcher:
             # MSG-5/SEAT-7: a watcher beat proves an EAR is alive, which is a
             # different claim from the session's own state. It refreshes

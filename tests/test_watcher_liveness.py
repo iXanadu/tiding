@@ -231,3 +231,120 @@ async def test_watcher_beat_refreshes_the_seat(client, db_pool):
             "DELETE FROM memories WHERE key IN ($1, $2)",
             f"presence/{seat}", f"seat/{seat}",
         )
+
+
+# --- The goodbye (2026-08-01) -------------------------------------------
+#
+# A watcher OBSERVES its session's exit rather than announcing its own. These
+# three tests exist because the property that makes that safe is a discipline,
+# not a mechanism, and a discipline with no test is a paragraph.
+
+
+@_pytest.mark.asyncio
+async def test_a_missing_goodbye_changes_nothing(client, db_pool):
+    """ABSENCE OF A FAREWELL IS EVIDENCE OF NOTHING.
+
+    The failure this guards is not someone disagreeing with the rule. It is a
+    reader six months out finding "we have goodbyes now" and reaching for a
+    MISSING one as a signal — reasoning correctly from a false premise. A
+    watcher killed on its own sends nothing; so does a machine that lost power.
+    Inferring from silence rebuilds the 600-second window under a better name.
+
+    So: a row that never said goodbye must be byte-identical to one from
+    before the feature existed.
+    """
+    ident, proj = "nogoodbye", "nogoodbyeproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+
+    entry = await _roster_entry(client, proj, ident)
+    assert entry["farewell_at"] is None, "a farewell was invented from silence"
+    assert entry["watcher_alive"] is True
+    assert entry["is_stale"] is False
+
+    # And the send path must not warn on a healthy, silent-about-death seat.
+    r = await client.post("/memory/send", json={
+        "to": ident, "from_": "tester", "subject": "s", "body": "b",
+        "intent": "action"})
+    assert r.json().get("recipient_warnings") is None, (
+        "absence of a goodbye produced a warning — silence became a signal"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute("DELETE FROM memories WHERE scope='inbox' AND user_id=$1", ident)
+
+
+@_pytest.mark.asyncio
+async def test_a_farewell_is_voided_by_any_later_life(client, db_pool):
+    """REVOCATION — the rule that makes a wrong farewell survivable.
+
+    A farewell can be wrong. The session it libels cannot correct the record by
+    speaking up, because being unheard is the premise of the mistake — so
+    without revocation a false farewell is silent AND permanent, and the
+    session merely loses its address later rather than immediately.
+
+    Any evidence of life voids it. That converts the failure from permanent to
+    transient: the moment the session or a re-armed watcher speaks, the record
+    heals itself.
+    """
+    ident, proj = "revoked", "revokedproj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "farewell": True})
+    entry = await _roster_entry(client, proj, ident)
+    assert entry["farewell_at"] is not None, "the observed exit was not recorded"
+
+    # 1. The session itself speaks — the strongest possible evidence of life.
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running"})
+    entry = await _roster_entry(client, proj, ident)
+    assert entry["farewell_at"] is None, (
+        "a heartbeat did not void the farewell — the session cannot clear its "
+        "own death notice, so a wrong one would be permanent"
+    )
+
+    # 2. A re-armed watcher speaks, on a row that was declared dead again.
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "farewell": True})
+    assert (await _roster_entry(client, proj, ident))["farewell_at"] is not None
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running", "watcher": True})
+    entry = await _roster_entry(client, proj, ident)
+    assert entry["farewell_at"] is None, (
+        "a watcher beat did not void the farewell — a re-armed ear is life"
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@_pytest.mark.asyncio
+async def test_a_farewell_never_invents_a_session(client, db_pool):
+    """No presence row → nothing to say goodbye about.
+
+    Same discipline as the watcher beat refusing to INSERT, and sharper here:
+    conjuring a row from a farewell would invent a session for the sole purpose
+    of declaring it dead.
+    """
+    r = await client.post("/memory/presence", json={
+        "identity": "neverwas", "project": "neverwasproj", "state": "running",
+        "farewell": True})
+    assert r.status_code == 200  # best-effort, never an error to the caller
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchval(
+            "SELECT count(*) FROM memories WHERE key = 'presence/neverwas'")
+    assert row == 0, "a farewell conjured a session in order to bury it"

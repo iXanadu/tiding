@@ -634,6 +634,15 @@ class PresenceUpdateRequest(BaseModel):
     # carries no state and joins no nonce map, because the watcher shares its
     # session's identity and would otherwise look like a second live session.
     watcher: bool = False
+    # The watcher OBSERVED this session's process exit. Not a self-report: a
+    # dying process is a poor reporter (it may never be scheduled, and SIGKILL
+    # gives it nothing to say), so the one process that outlives the session
+    # reports the transition instead. Routed to a narrow write like `watcher`.
+    #
+    # ⚠️ ASYMMETRIC BY CONSTRUCTION: receiving this is evidence of death;
+    # NOT receiving it is evidence of nothing whatsoever. Never infer from
+    # absence — see test_a_missing_goodbye_changes_nothing.
+    farewell: bool = False
 
     @field_validator("identity", "project", mode="before")
     @classmethod
@@ -678,6 +687,10 @@ class RosterEntry(BaseModel):
     live_sessions: int = 1
     collision: bool = False
     providers_seen: list[str] = []  # providers across live sessions (collision detail)
+    # When a watcher OBSERVED this session's process exit. None means no such
+    # observation exists — never that the session is alive. Voided by any
+    # later evidence of life, so a wrong one self-heals.
+    farewell_at: datetime | None = None
     # MSG-5: is anyone actually LISTENING at this address? True = a watcher
     # beat recently; False = one used to beat and has gone quiet; None = no
     # watcher has ever beaten here, so there is no basis. None is never

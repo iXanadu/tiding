@@ -615,3 +615,52 @@ class TestAdminFallbackVisibility:
         (tmp_path / ".engram.cfg").write_text("project = admin\n")
         assert derive_project_name(str(tmp_path)) == "admin"
         assert admin_was_fallback(str(tmp_path)) is False
+
+
+# --- The goodbye: identifying the SESSION process (2026-08-01) -----------
+
+
+def test_bridge_records_and_watcher_rediscovers_the_session(monkeypatch, tmp_path):
+    """The bridge writes down what only it can know; the watcher reads it.
+
+    Only the bridge can identify the session, because its parent IS the
+    harness by construction. The watcher's parent is a shell wrapper in a
+    different process group, so it must be told.
+    """
+    _host(monkeypatch)
+    monkeypatch.setattr(identity, "seat_file_path",
+                        lambda key=None: str(tmp_path / "k.seat"))
+    written = identity.record_session_process()
+    assert written is not None
+    assert identity.discover_session_process() == (
+        os.getppid(), identity._proc_info(os.getppid())[1]
+    )
+
+
+def test_a_recycled_pid_is_not_the_same_process(monkeypatch):
+    """A PID ALONE IS AN ADDRESS, NOT AN IDENTITY.
+
+    The OS recycles pids. Matching on the number alone would report a stranger
+    as our still-living session forever — and since only a DEAD session is
+    reported, that error runs in the safe direction here. The dangerous mirror
+    is the one this pins: the start time must make a recycled pid read as gone
+    rather than as continued life.
+    """
+    me = os.getpid()
+    start = identity._proc_info(me)[1]
+    assert identity.process_is_alive(me, start) is True
+    assert identity.process_is_alive(me, "Thu Jan  1 00:00:00 2020") is False
+
+
+def test_no_recorded_session_is_unknown_never_dead(monkeypatch, tmp_path):
+    """"I could not identify a session" must never collapse into "it died".
+
+    A watcher that cannot find its session simply never reports a farewell.
+    Returning something falsy that a caller might read as a death would
+    manufacture one for every session on an older bridge.
+    """
+    _host(monkeypatch)
+    monkeypatch.setattr(identity, "seat_file_path",
+                        lambda key=None: str(tmp_path / "absent.seat"))
+    monkeypatch.setattr(identity, "_proc_info", lambda pid: None)
+    assert identity.discover_session_process() is None
