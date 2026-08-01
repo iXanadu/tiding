@@ -151,12 +151,19 @@ async def test_watcher_beat_does_not_revert_reported_state(client, db_pool):
     })
 
     entry = await _roster_entry(client, "blocked", "blocked")
-    assert entry["state"] == "awaiting-input"   # session's report survives
     assert entry["provider"] == "grok"
     assert entry["channels"] == ["#devagents"]
     assert entry["watcher_alive"] is True
-
+    # `state` left the roster payload on 2026-08-01 (one distinct value across
+    # every row ever recorded), but the no-clobber behaviour it guarded is
+    # real, so the assertion moves to the metadata where the field still lives.
+    assert "state" not in entry
     async with db_pool.acquire() as conn:
+        md = await conn.fetchval(
+            "SELECT metadata FROM memories WHERE key = 'presence/blocked'"
+        )
+        md = _json.loads(md) if isinstance(md, str) else md
+        assert md["state"] == "awaiting-input"   # session's report survives
         await conn.execute("DELETE FROM memories WHERE key = 'presence/blocked'")
 
 

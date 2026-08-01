@@ -653,14 +653,19 @@ class PresenceUpdateRequest(BaseModel):
 class RosterEntry(BaseModel):
     identity: str
     project: str
-    # The session's own last claim, NEVER corrected server-side. The roster
-    # reports facts (address exists, last spoke at T, watcher beat at T2) and
-    # leaves liveness verdicts to consumers with process truth — see
-    # decision/roster-should-report-facts-not-judgments (2026-07-27). The
-    # `presumed_dead`/`reported_state` pair that briefly lived here was the
-    # verdict this rubric removes; its premise ("a watcher that stopped is a
-    # process that exited") was falsified by a power cut the day it shipped.
-    state: str
+    # `state` USED TO LIVE HERE and is deliberately gone (2026-08-01). It was
+    # kept as "the session's own last claim, never corrected" — defensible in
+    # principle, empty in fact: one distinct value across all 38 presence rows
+    # ever recorded, `running`, plus a server-side default that INVENTED that
+    # claim for rows whose metadata said nothing.
+    #
+    # A constant printed beside a name reads as a status. It carried zero bits
+    # and cost a consumer an evening of chasing sessions the word said were
+    # alive. The roster reports facts — this address exists, something last
+    # spoke at T, a watcher beat at T2 — and liveness verdicts belong to
+    # whatever spawns and kills, which observes a termination instead of
+    # inferring it. Still RECORDED in presence metadata as provenance; simply
+    # no longer asserted on the wire.
     provider: str | None = None
     overlays: list[str] = []
     channels: list[str] = []

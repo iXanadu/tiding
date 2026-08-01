@@ -1198,10 +1198,7 @@ async def test_a_restarted_session_does_not_inherit_its_predecessors_watcher_bea
         "the predecessor's watcher beat is still being read as evidence about "
         "the live generation"
     )
-    assert entry["state"] == "running", (
-        "the session's own claim was altered — the roster reports facts, "
-        "and the only fact about state is what the session last said"
-    )
+    assert "state" not in entry, "state left the roster payload on 2026-08-01"
 
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -1255,19 +1252,23 @@ async def test_same_generation_still_preserves_watcher_last_seen(client, db_pool
 
 
 @pytest.mark.asyncio
-async def test_roster_serves_a_corpses_stale_claim_uncorrected_with_the_facts_beside_it(client, db_pool):
+async def test_roster_serves_a_corpse_as_facts_with_no_verdict_attached(client, db_pool):
     """FACTS, NEVER VERDICTS — the retreat that collapsed SEAT-4.
 
-    A dead session never retracts its own 'running', and the roster serves
-    that stale claim AS the claim, uncorrected. The shipped correction
+    A dead session leaves a row nobody retracts. The roster must serve what it
+    can attest about that row — when something last spoke, when the watcher
+    last beat — and must attach NO judgement to it. The shipped correction
     ("a watcher that beat and then stopped is a process that exited") was
-    falsified by a power cut the day it landed — the premise fails across a
-    restart boundary, and every replacement premise is another heuristic
-    with another failure mode (MSG-8: a busy agent and a dead one are both
-    silent). Liveness verdicts belong to the orchestrator with process
-    truth; the store attests what it can: the claim, when the session last
-    spoke, when its watcher last beat. The facts must be there for the
-    consumer to judge — that is the half this test pins.
+    falsified by a power cut the day it landed: the premise fails across a
+    restart boundary, and every replacement premise is another heuristic with
+    another failure mode (MSG-8: a busy agent and a dead one are both silent).
+
+    2026-08-01: this test used to also assert the corpse's own stale 'running'
+    was served uncorrected. That defence is now moot — `state` left the payload
+    entirely, because across every presence row ever written it had exactly one
+    value, and a constant printed beside a name reads as a status. Removing it
+    is the stronger form of the same principle: the cleanest way not to serve a
+    verdict is to have no field that looks like one.
     """
     ident, proj = "corpse", "corpseproj"
     async with db_pool.acquire() as conn:
@@ -1293,9 +1294,9 @@ async def test_roster_serves_a_corpses_stale_claim_uncorrected_with_the_facts_be
 
     r = await client.post("/memory/roster", json={"project": proj})
     entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
-    assert entry["state"] == "running", (
-        f"got {entry['state']!r} — the roster judged. It must serve the "
-        "session's own claim untouched and leave the verdict to consumers"
+    assert "state" not in entry, (
+        "the field that read as a status is back on the wire — a constant "
+        "beside a name is exactly how a consumer stops checking the timestamp"
     )
     assert entry["watcher_alive"] is False, (
         "the fact the consumer needs to judge liveness — a watcher that beat "
@@ -1303,7 +1304,7 @@ async def test_roster_serves_a_corpses_stale_claim_uncorrected_with_the_facts_be
     )
     assert entry["watcher_last_seen"] is not None
     assert "presumed_dead" not in entry, "the verdict field is gone, not defaulted"
-    assert "reported_state" not in entry, "state IS the reported state now"
+    assert "reported_state" not in entry, "no resurrection under an alias either"
 
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -1331,8 +1332,9 @@ async def test_a_session_with_no_watcher_reads_no_basis_not_false(client, db_poo
     r = await client.post("/memory/roster", json={"project": proj})
     entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
     assert entry["watcher_alive"] is None
-    assert entry["state"] == "running", (
-        "a session that never armed a watcher had its claim altered — absent is not dead"
+    assert entry["age_seconds"] is not None, (
+        "a session that never armed a watcher must still be served with the "
+        "one fact that IS known about it — absent is not dead"
     )
 
     async with db_pool.acquire() as conn:

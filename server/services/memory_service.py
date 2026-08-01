@@ -1166,7 +1166,10 @@ async def roster_list(
         md = r["metadata"] or {}
         if isinstance(md, str):
             md = json.loads(md)
-        state = md.get("state") or "running"
+        # No default. A row whose metadata says nothing about state is a row
+        # that told us nothing — the old `or "running"` manufactured a claim
+        # for exactly the sessions that had never made one.
+        state = md.get("state")
         if state == "done" and not include_done:
             continue
         if channel and channel.lower() not in [c.lower() for c in md.get("channels") or []]:
@@ -1185,22 +1188,19 @@ async def roster_list(
         live = max(len(fresh), 1)
         watcher_alive, watcher_seen = _watcher_state(md, now)
         # FACTS, NEVER VERDICTS (decision/roster-should-report-facts-not-
-        # judgments, ratified 2026-07-27). `state` is whatever the session
-        # last claimed, uncorrected — a corpse's stale "running" is the
-        # CLAIM on record, and rendering it as anything else is a liveness
-        # verdict, which is orchestration's call (AgentBeast owns process
-        # truth), not the store's. Every signal available here is a
-        # heuristic — a busy agent and a dead one are both silent (MSG-8),
-        # and a machine cannot write its own goodbye — so any verdict
-        # computed from this row has a failure mode; the shipped
-        # `presumed-dead` override was falsified by a power cut the same
-        # day it landed. The roster serves what it can attest: the address
+        # judgments, 2026-07-27; `state` dropped from the payload 2026-08-01).
+        # Every signal available here is a heuristic — a busy agent and a dead
+        # one are both silent (MSG-8), and a machine cannot write its own
+        # goodbye — so any verdict computed from this row has a failure mode;
+        # the shipped `presumed-dead` override was falsified by a power cut the
+        # same day it landed. The roster serves what it can attest: the address
         # exists, when the session last spoke, when its watcher last beat.
-        # Consumers judge.
+        # Consumers judge — and the consumer that judges WELL is whatever
+        # spawned the session, because it observes a termination rather than
+        # inferring one from silence.
         entries.append({
             "identity": ident,
             "project": r["user_id"],
-            "state": state,
             "provider": md.get("provider"),
             "overlays": md.get("overlays") or [],
             "channels": md.get("channels") or [],
@@ -1262,13 +1262,11 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
         last_seen = r["last_used_at"] or now
         age = (now - last_seen).total_seconds()
         watcher_alive, _ = _watcher_state(md, now)
-        # Facts only, same discipline as the roster: `state` is the
-        # session's own last claim, never corrected here. The caller
-        # composing a warning gets watcher_alive and age and decides what
-        # they mean — the store attests, it does not judge.
-        state = md.get("state") or "running"
+        # Facts only, same discipline as the roster. The caller composing a
+        # warning gets watcher_alive and age and decides what they mean — the
+        # store attests, it does not judge. (`state` was dropped here too on
+        # 2026-08-01: no caller read it, and it only ever said "running".)
         out[ident] = {
-            "state": state,
             "age_seconds": round(age, 1),
             "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
             "watcher_alive": watcher_alive,

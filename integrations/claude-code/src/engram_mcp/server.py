@@ -1181,11 +1181,23 @@ async def memory_roster(
     include_done: bool = False,
     project_dir: str = "",
 ) -> str:
-    """Who is live right now — on a project, a #channel, or the whole box.
+    """Addresses on record — on a project, a #channel, or the whole box.
 
-    Use this INSTEAD of guessing addresses: each entry's 'identity' is a
-    DM-able address, its 'project' is the group address, and state/staleness
-    tells you whether the peer is actually staffed before you message it.
+    A DIRECTORY, NOT A LIVENESS CHECK. Use it INSTEAD of guessing addresses:
+    each entry's 'identity' is a DM-able address and its 'project' is the group
+    address. What it reports is when something last spoke at that address and
+    when a watcher last beat there — observations, with the timestamps attached
+    so you can judge them.
+
+    It CANNOT tell you a session is alive, and neither can anything else built
+    on heartbeats: a heartbeat can outlive an exit but never observe one, so a
+    busy agent head-down in a long call and a dead one look identical. If you
+    need a real answer, ask whatever spawns and kills the sessions — it knows a
+    termination because it performed one.
+
+    Mail does not need this. Sending to an address with nobody behind it is
+    normal and supported: the message queues and is read when that session next
+    wakes.
 
     Args:
         project: Bare project name to filter (empty = all projects)
@@ -1222,31 +1234,40 @@ async def memory_roster(
             provs = ", ".join(e.get("providers_seen") or []) or "?"
             clash = f" ⛔ {n} LIVE SESSIONS on this ONE identity ({provs})"
             collisions.append(e["identity"])
-        # MSG-5: three-valued, and rendered as three states. '?' is not a
-        # softer 'no' — it means no watcher has ever reported here, which is
+        # MSG-5: three-valued, and rendered as three OBSERVATIONS. '?' is not
+        # a softer 'no' — it means no watcher has ever reported here, which is
         # a different thing from one that stopped.
+        #
+        # Worded as what was seen, not what it means. "👂 listening" was a
+        # verdict wearing an observation's clothes: the beat is a fact, "is
+        # listening" is an inference from it, and printing the inference is how
+        # a reader stops checking the timestamp beside it.
         wa = e.get("watcher_alive")
         if wa is True:
-            ear = " 👂 listening"
+            ear = " · watcher beat recently"
         elif wa is False:
-            ear = " 🔇 NOT LISTENING"
+            ear = " · watcher gone quiet"
             if not e.get("is_stale"):
                 deaf.append(e["identity"])
         else:
-            ear = " ?listening"
+            ear = " · no watcher seen"
         lines.append(
             f"  {e['identity']:<28} [{e.get('provider') or '?'}] "
-            f"{e['state']:<15} project={e['project']} seen {age}s ago{stale}{ear}{clash}"
+            f"project={e['project']} last spoke {age}s ago{stale}{ear}{clash}"
         )
-    head = f"Live roster ({len(entries)}):\n" + "\n".join(lines)
+    head = (
+        f"Addresses on record ({len(entries)}) — a directory, not a liveness "
+        f"check:\n" + "\n".join(lines)
+    )
     if deaf:
         head += (
-            f"\n\n🔇 ADDRESSABLE BUT DEAF: {', '.join(deaf)} — running, and mail "
-            f"will be accepted and stored, but no watcher is alive to wake them, "
-            f"so nothing will be read until a human types into that session. "
-            f"Do not expect a reply. This is NOT grounds to take the address — "
-            f"a session can be doing real work with a dead watcher; it is "
-            f"unreachable, not gone."
+            f"\n\n🔇 ADDRESSABLE, NO WATCHER BEAT: {', '.join(deaf)} — mail is "
+            f"accepted and stored, but nothing has beaten a watcher there "
+            f"recently, so it may not be read until someone types into that "
+            f"session. This is NOT grounds to take the address, and NOT a "
+            f"report that the session is gone: a session can be doing real "
+            f"work with a dead watcher. Unreachable is not the same as absent, "
+            f"and neither is a death — ask whatever spawned it if you need one."
         )
     if collisions:
         head += (
