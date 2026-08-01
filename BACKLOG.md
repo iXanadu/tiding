@@ -99,6 +99,20 @@
   is asked for, not derived. Same principle as the liveness split, pointed at
   deploys.
 
+- **SEC-8** One unreadable namespace in a `namespaces[]` list zeroes the ENTIRE
+  result set, silently. Measured 2026-08-01 with a token reading
+  {fleet, claude-web, grok, beast}: `namespaces=[fleet]` → 5 hits ·
+  `[fleet, grok]` → 5 hits · `[fleet, ixanadu]` → **0 hits**. Not a 403 — a
+  200 with no rows. So a client that asks generously gets nothing instead of
+  the subset it is entitled to, and cannot tell that from "no matches". Should
+  either drop unreadable namespaces and serve the rest (with the drop reported
+  as an advisory — the `*_warnings` channel now exists), or refuse loudly with
+  the offending namespace named. Silent-empty is the one behaviour that must
+  not stay. ⚠️ Live consumer risk: BeastChat holds an admin wildcard today so
+  it cannot hit this, but it is scheduled to move to a scoped principal
+  (`ixanadu-chat`, read ixanadu+fleet) — at which point a broad list would
+  silently return zero and the new principal would take the blame.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
