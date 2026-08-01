@@ -1,7 +1,25 @@
 # The backlog standard: a ledger you could publish, a journal you never do
 
-**Status:** ADOPTED 2026-07-20 · applies to every project; engram is the
-reference implementation.
+**Status:** written 2026-07-20 · engram is the reference implementation.
+**Intended** for every project — but adoption is PER-PROJECT and has to be
+recorded, because this file cannot adopt itself.
+
+> ⚠️ **This header used to read "ADOPTED · applies to every project", and that
+> was a claim, not a fact.** On 2026-08-01 a peer project and this one produced
+> two different live defects sharing one backlog ID. The diagnosis offered was
+> "a gap in the shared standard both ledgers cite" — and it was wrong on its
+> premise: the peer's repo did not reference this file anywhere and its
+> maintainers had never seen it. Both projects had arrived at the same `SEAT-*`
+> convention by convergent guessing, not by reading the same page.
+>
+> A standard one party has never read is a standard in name only, and **its
+> silence on a point is not evidence that anyone reasoned from that silence.**
+> Nothing here propagates by being written down in one repo.
+>
+> **So an adopting project carries the load-bearing rules INLINE in its own
+> `BACKLOG.md` header, AND links here.** The rule must not depend on a reader
+> following a link, and the link must not be the only copy. Divergence between
+> the two is then visible and fixable; a link nobody follows is neither.
 
 ## The doctrine this serves
 
