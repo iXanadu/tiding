@@ -49,6 +49,22 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
+## Needs-decision
+
+- **SEAT-13** Decide whether an observed farewell should shorten a seat's
+  allocation backstop, and how. The goodbye now records `farewell_at` when a
+  watcher observes its session's process exit, and any later evidence of life
+  voids it — but nothing yet CONSUMES it during allocation, so an abandoned
+  address still waits the full 7d. Deliberately held back: this is the half
+  where a mistake costs a live session its address, unlike the observation
+  half, which only adds a fact. Two shapes to choose between. (a) A fixed
+  shorter window on a farewell — simple, but introduces a second number
+  nobody has justified. (b) A farewell merely makes the seat eligible once
+  the guards that already exist ALSO pass (no fresh presence, no undelivered
+  mail) — no new constant, and the farewell acts as corroboration rather than
+  as its own clock. Leaning (b). AgentBeast's condition on the whole idea —
+  "shortens, never releases, and only with revocation" — is already met.
+
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
 - **MEM-2** Key-prefix enumeration — a deterministic "list every key under
