@@ -1296,6 +1296,11 @@ async def roster_list(
         entries.append({
             "identity": ident,
             "project": r["user_id"],
+            # Back-compat shim — see RosterEntry.state. A pre-2026-08-01 bridge
+            # subscripts this directly and KeyErrors without it, which broke
+            # `memory_roster` for every session already running at deploy time.
+            # "unknown" rather than the old invented "running" default.
+            "state": state or "unknown",
             "provider": md.get("provider"),
             "overlays": md.get("overlays") or [],
             "channels": md.get("channels") or [],

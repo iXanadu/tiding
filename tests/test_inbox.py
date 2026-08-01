@@ -1047,7 +1047,7 @@ async def test_presence_heartbeat_and_roster(client, db_pool):
     assert {e["identity"] for e in entries} == {"foo", "foo-grok"}
     grok = next(e for e in entries if e["identity"] == "foo-grok")
     assert grok["provider"] == "grok"
-    assert "state" not in grok  # dropped from the payload 2026-08-01
+    assert grok["state"] == "awaiting-input"  # back-compat shim, session's claim
     assert grok["is_stale"] is False
     assert grok["age_seconds"] < 60
 

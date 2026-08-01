@@ -662,7 +662,26 @@ class PresenceUpdateRequest(BaseModel):
 class RosterEntry(BaseModel):
     identity: str
     project: str
-    # `state` USED TO LIVE HERE and is deliberately gone (2026-08-01). It was
+    # ⚠️ BACK-COMPAT SHIM, restored 2026-08-01 hours after removal. REMOVE ONLY
+    # when no pre-2026-08-01 bridge is still running anywhere on the fleet.
+    #
+    # Removing this field broke every LIVE session: the shipped bridge renders
+    # the roster with `f"{e['state']:<15}"` — a direct subscript, not `.get()` —
+    # so `memory_roster` raised KeyError for any session started before the
+    # deploy. Bridge changes land at a session's NEXT start, so "we updated the
+    # bridge" fixes nobody already running.
+    #
+    # The migration was checked with the peer consumer that had asked for the
+    # removal, and their clearance was mistaken for fleet clearance. THE BRIDGE
+    # IS ALSO A CONSUMER, and every running session holds an old copy of it.
+    # A wire contract has as many consumers as there are deployed readers, not
+    # as many as there are maintainers who answered.
+    #
+    # Value is the session's own recorded claim, and where there is none it is
+    # "unknown" — NOT the invented "running" default this field originally
+    # carried. Back-compatible without restoring the lie.
+    state: str = "unknown"
+    # `state` was removed here on 2026-08-01 for good reasons that still hold. It was
     # kept as "the session's own last claim, never corrected" — defensible in
     # principle, empty in fact: one distinct value across all 38 presence rows
     # ever recorded, `running`, plus a server-side default that INVENTED that

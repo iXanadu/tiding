@@ -1198,7 +1198,10 @@ async def test_a_restarted_session_does_not_inherit_its_predecessors_watcher_bea
         "the predecessor's watcher beat is still being read as evidence about "
         "the live generation"
     )
-    assert "state" not in entry, "state left the roster payload on 2026-08-01"
+    # `state` is back as a BACK-COMPAT SHIM (its removal KeyErrored every
+    # already-running bridge). It must carry the session's own claim and
+    # never the invented "running" default.
+    assert entry["state"] == "running"
 
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -1294,9 +1297,8 @@ async def test_roster_serves_a_corpse_as_facts_with_no_verdict_attached(client, 
 
     r = await client.post("/memory/roster", json={"project": proj})
     entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
-    assert "state" not in entry, (
-        "the field that read as a status is back on the wire — a constant "
-        "beside a name is exactly how a consumer stops checking the timestamp"
+    assert entry["state"] == "running", (
+        "back-compat shim must serve the session's own last claim verbatim"
     )
     assert entry["watcher_alive"] is False, (
         "the fact the consumer needs to judge liveness — a watcher that beat "

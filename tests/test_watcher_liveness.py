@@ -157,7 +157,7 @@ async def test_watcher_beat_does_not_revert_reported_state(client, db_pool):
     # `state` left the roster payload on 2026-08-01 (one distinct value across
     # every row ever recorded), but the no-clobber behaviour it guarded is
     # real, so the assertion moves to the metadata where the field still lives.
-    assert "state" not in entry
+    assert entry["state"] == "awaiting-input"  # shim serves the claim verbatim
     async with db_pool.acquire() as conn:
         md = await conn.fetchval(
             "SELECT metadata FROM memories WHERE key = 'presence/blocked'"
