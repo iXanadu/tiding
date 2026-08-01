@@ -62,15 +62,35 @@
   nobody has justified. (b) A farewell merely makes the seat eligible once
   the guards that already exist ALSO pass (no fresh presence, no undelivered
   mail) — no new constant, and the farewell acts as corroboration rather than
-  as its own clock. **(b) CHOSEN, and its open question is closed.**
-  AgentBeast's condition was that revocation needs TIME to work: instant
-  eligibility would leave a false farewell no window in which to be revoked,
-  quietly removing the safety net. Checked rather than assumed —
-  `_presence_is_fresh` means "no presence within `SEAT_LIVE_SECONDS`", so the
-  existing guards already supply a **10-minute** quiet period, ~13 watcher
-  polls, and revocation fires on the session's own heartbeat or a re-armed
-  watcher, whichever speaks first. The window was FOUND, not chosen; no new
-  number enters the design. Remaining work is purely the implementation.
+  as its own clock.
+  **⛔ (b) WITHDRAWN 2026-08-01, and this item is OPEN, not decided.** It was
+  briefly recorded here as chosen; that was premature — a read had been asked
+  for and the question was closed before it arrived. AgentBeast then read the
+  code and produced two findings, both verified in this tree:
+  (1) **Revocation does not reach the population it was meant to protect.**
+  The watcher sends its farewell and exits on the same branch, so it cannot
+  re-arm; and the bridge has NO background beat — every heartbeat rides a tool
+  call — so an idle session emits nothing. Revocation reliably heals only a
+  session that goes on to do work, which is the population least likely to be
+  falsely declared dead. Partially mitigated where the watcher is
+  harness-managed (its exit is reported to the session, which usually provokes
+  a healing tool call); not mitigated for a bare-shell watcher.
+  (2) **"No new number" does not remove a number — it sets it to ZERO.**
+  Eligible-as-soon-as-the-other-guards-pass means a false farewell costs the
+  address immediately, removing the 7d clock, which is the only guard that
+  does not require an idle session to speak. That optimises the cheap
+  direction, against the asymmetry rule we already adopted.
+  **Proposed instead: shorten, never zero** — a floor whose job is to give an
+  idle session at least one plausible chance to speak. AB proposes deriving it
+  from the fleet (p95 of intervals between consecutive presence heartbeats)
+  rather than picking it. ⚠️ **That data does not exist yet**: presence rows
+  hold ONE `last_used_at` each (a snapshot, not a history) and presence writes
+  bypass `memory_set`, so `audit_log` has no trail of them. Getting the number
+  needs a sampling campaign or instrumentation first.
+  **GATED** on AB's RC-2 residual (two live sessions in one folder rendering
+  one picker row — observed, unmeasured, being measured now). Until that is
+  explained, an accelerated reclaim would land on top of an unexplained
+  single-row symptom and neither side could tell the two apart afterwards.
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 

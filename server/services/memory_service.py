@@ -1079,11 +1079,33 @@ async def presence_watcher_beat(identity: str, project: str) -> bool:
         #
         # Without it a wrong farewell is silent AND permanent: the session it
         # libelled cannot correct the record, because being unheard is the
-        # premise of the mistake. It would simply lose its address later
-        # instead of immediately. Revocation converts that failure from
-        # permanent to transient — the moment a re-armed watcher or the session
-        # itself speaks, the record heals — which is what makes a shortened
-        # backstop a grace period rather than a slower theft.
+        # premise of the mistake.
+        #
+        # ⚠️ HOW FAR THIS ACTUALLY GETS — corrected 2026-08-01 after AgentBeast
+        # read the code rather than this comment, which had claimed revocation
+        # heals "the moment a re-armed watcher or the session itself speaks".
+        # VERIFIED, and BOTH of those speakers are absent in the case that
+        # matters most:
+        #   · The watcher cannot re-arm. It sends the farewell and exits on the
+        #     same branch (inbox_wait.py), and arming happens at session start —
+        #     which, by hypothesis, did not happen.
+        #   · An IDLE session never speaks. The bridge has no background beat
+        #     at all (no create_task, no timer); every heartbeat rides a tool
+        #     call. A session that is alive and idle emits nothing.
+        # So revocation reliably heals only a session that goes on to DO WORK —
+        # which is the population LEAST likely to be falsely declared dead,
+        # because a busy session's process is plainly there.
+        #
+        # Partial mitigation, stated as a fact and not a defence: when the
+        # watcher is harness-managed, its exit is itself reported to the
+        # session, which typically provokes the tool call that heals the row.
+        # That covers harness-armed sessions and NOT a bare-shell watcher, so
+        # it narrows the gap without closing it.
+        #
+        # This comment previously described the property we wanted. Prose one
+        # layer above what the code does is the exact failure our own huddle
+        # doc committed, and an unmitigated residual DOCUMENTED AS MITIGATED is
+        # worse than a small residual honestly labelled. See SEAT-13.
         updated = await conn.execute(
             """
             UPDATE memories
