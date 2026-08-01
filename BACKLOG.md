@@ -49,6 +49,32 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
+## Blocking-ish — ops gaps that cost live sessions today
+
+- **DEPLOY-2** engram has no drain/graceful restart. `scripts/restart.sh` is a
+  bare `launchctl kickstart`, so every deploy refuses connections fleet-wide
+  for a few seconds — it touches every session on every box, not just this
+  project's. Six restarts on 2026-08-01 while the owner had live sessions
+  elsewhere. The watcher survives a blip (it catches poll errors and keeps
+  polling) and heartbeats are best-effort, but a session mid-`memory_store`
+  or mid-`memory_search` sees a connection error. AgentBeast already solved
+  the equivalent (`graceful-deploy.sh`, drain → restart → reattach, ~2s and
+  no in-flight turns cut); engram should have the same or should batch
+  deploys instead of shipping each commit.
+
+- **WIRE-1** A response field cannot be removed on one consumer's say-so.
+  Removing `state` from `/memory/roster` on 2026-08-01 broke `memory_roster`
+  for every ALREADY-RUNNING session for 2h19m: the shipped bridge renders it
+  with `f"{e['state']:<15}"`, a direct subscript, and bridge updates only land
+  at a session's next start. The peer consumer who requested the removal had
+  migrated and said it was safe — but the bridge is also a consumer and every
+  running session holds an old copy. **A wire contract has as many consumers
+  as there are DEPLOYED READERS, not as many as there are maintainers who
+  answer.** Needed: a documented pre-removal check (grep the shipped bridge at
+  the last release tag for direct subscripts of the field) and a deprecation
+  period sized to "no pre-change bridge is still running", not to "the peer
+  said yes". `state` is currently a back-compat shim awaiting exactly that.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
