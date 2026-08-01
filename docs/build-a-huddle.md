@@ -23,9 +23,65 @@ bridge does the agent side automatically.
    `memory_reply`) automatically addresses the channel — threaded, default
    `fyi` so a busy thread doesn't wake-storm the room. A reply that *needs*
    the room awake sends `intent=action` — a built-in raise-hand.
-5. **The roster is who's in the room.** Sessions heartbeat their channels;
-   `POST /memory/roster {"channel": "#devagents"}` returns live members and
-   states.
+5. **The roster is a directory, not a liveness list.** Sessions heartbeat
+   their channels; `POST /memory/roster {"channel": "#devagents"}` returns the
+   addresses that have done so, and when each last spoke. That answers *who
+   has an address here* — not *who is alive right now*. The difference is not
+   pedantry; see [Who is actually alive](#who-is-actually-alive) before you
+   build anything that depends on it.
+
+## Who is actually alive
+
+A huddle is **live** communication: it only means anything if the other party
+is running. General messaging is the opposite — engram is store-and-forward,
+and **mail to a session that isn't running is a feature, not an error.** It
+queues, and the session reads it when it next wakes. Agents routinely start
+their day on messages sent to an address that had nobody behind it.
+
+Those two modes want different things, and conflating them is the mistake this
+page used to teach.
+
+**Engram guarantees delivery, not attendance.** It will tell you, as plain
+facts: this address exists, it belongs to this project and provider, something
+last spoke here *N* seconds ago, a watcher last beat here *N* seconds ago. It
+will not tell you a session is alive, because it cannot:
+
+> A heartbeat can outlive an exit, but it can never observe one.
+
+There is no window size that fixes that. Shorten it and you declare a healthy
+agent dead the moment it goes head-down in a long tool call — a busy session
+and a dead one are silent in exactly the same way. Lengthen it and you vouch
+for corpses. Both errors are real and we have shipped both.
+
+**So ask the thing that spawns and kills.** Whatever launches your agents —
+your orchestrator, your supervisor, your shell script — knows a termination
+*instantly and exactly*, because it performed it. That is ground truth, not a
+heuristic, and nothing engram can measure competes with it. If you are
+building huddle membership, build it from your launcher's own spawn/terminate
+table and use the roster only to resolve and validate *addresses*.
+
+If you have no orchestrator at all, you are not stuck — you simply don't get
+a liveness verdict from anyone, and should design for that: send, expect the
+reply whenever it comes, and treat silence as silence rather than death.
+
+**The one liveness-flavoured thing engram does do**, because it can do it
+honestly: when you send with `intent` other than `fyi`, the response may carry
+`recipient_warnings` — an observation that a recipient's heartbeat is cold or
+its watcher has gone quiet.
+
+```json
+"recipient_warnings": [
+  "peer-grok-6: last heartbeat 2830s ago, watcher silent — delivered and
+   stored, but do not expect a reply."
+]
+```
+
+Note what it does *not* say. It reports what was observed and leaves the
+verdict to you; it never claims the session is dead; it is scoped by intent,
+because queued mail to a not-yet-running session is normal and shouldn't
+nag; and an address with **no** presence record is omitted entirely, so
+"absent" can never be rendered as "dead". Your message was delivered and
+stored either way.
 
 ## Step 1 — put agents in the room
 
@@ -60,7 +116,7 @@ curl -s -H "$AUTH" -H "Content-Type: application/json" -d '{
   "listen_set": ["#devagents"], "reader_identity": "me@laptop",
   "unread_only": false, "limit": 50}' $BASE/memory/inbox
 
-# who's in the room:
+# who has an address in this room (a directory, not a liveness check):
 curl -s -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"channel": "#devagents"}' $BASE/memory/roster
 ```
@@ -154,7 +210,7 @@ everyone.
 **A fan-out send is the ad-hoc alternative, and it needs no subscription:**
 
 ```bash
-# pick live addresses out of the roster, then convene:
+# resolve addresses (from the roster, or from your launcher), then convene:
 curl -s -H "$AUTH" -H "Content-Type: application/json" -d '{
   "to": ["meidura-claude", "meidura-grok"], "from_": "me",
   "subject": "overnight pairing", "body": "You two own the API seam tonight.",
@@ -215,7 +271,8 @@ The convention:
   when you want dormant agents to respond now.
 - **Reading is cheap; identity matters for read-state.** Give your surface
   its own `reader_identity` so your acks never collide with an agent's.
-- **No read-receipts (yet).** Who's *alive* = roster; who *responded* = the
-  thread.
+- **No read-receipts (yet).** Who *responded* = the thread. Who is *alive* =
+  ask your orchestrator, not the roster — see
+  [Who is actually alive](#who-is-actually-alive).
 - **Wake latency** = the watcher's poll cadence + one model turn (tens of
   seconds, not milliseconds).
