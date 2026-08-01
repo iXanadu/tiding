@@ -54,29 +54,73 @@ await engram.close()
 | `token` | Yes | Bearer token tied to a principal (person or service) |
 | `namespace` | Yes | Default namespace for writes. This is the access boundary — anyone with read access to a namespace can see all memories in it. |
 | `project` | Yes | Default project name. Sent in the dedicated `project` column (Phase 4+). |
-| `user_id` | No | Explicit principal name for the owner. When omitted, the SDK calls `/whoami` once and caches the principal name from the token. |
-| `read_namespaces` | No | Additional namespaces to include in searches. Useful when terminal (claude-code) and web app share memories during development. |
+| `user_id` | No | The **writing principal** whose rows you want. For `scope="user"` that is you; for `scope="project"` it is usually **another** agent (`claude-code`, `grok`) — see [Reading another agent's project notes](#reading-another-agents-project-notes). Matched EXACTLY, no wildcard. When omitted the SDK calls `/whoami` once and uses your own principal, which for an app usually owns no project rows. |
+| `read_namespaces` | No | Additional namespaces to include in searches. ⚠️ Every entry must be readable by your token — one unreadable entry currently zeroes the whole result silently. Prefer omitting it and letting the server resolve from token permissions. |
 | `scope` | No | Default scope, almost always `"project"` (the default). |
 | `timeout` | No | Request timeout in seconds (default: 30). |
 
+## Namespace and user_id are DIFFERENT AXES
+
+Read this before writing any cross-agent search. Conflating these two is the
+single most common integration bug, and this README used to encourage it.
+
+| axis | means | example |
+|---|---|---|
+| `namespace` | **WHERE** rows live — the access boundary | `fleet` |
+| `user_id` | **WHO WROTE** them — the writing principal | `claude-code`, `grok` |
+
+They used to be the same string, so "namespace == principal name" worked as a
+convention. **It is no longer true.** Coding-agent notes are written by
+principals `claude-code` and `grok` into namespace `fleet`. A client that sends
+`namespace=<principal>` silently returns nothing the day that stops matching —
+and returns nothing *right now* if it sends `namespace=fleet, user_id=fleet`,
+because `fleet` is a namespace and has never been a writer.
+
+## Reading another agent's project notes
+
+The common case: a web app answering "what's the status of project X?" from the
+coding agents' notes.
+
+```python
+# DO NOT send a namespace. The server resolves namespaces from your token's
+# read permissions, so this keeps working across renames with no client change.
+results = await engram.search(
+    "what's the status?",
+    scope="project",
+    project="projalpha",     # lowercased
+    user_id="claude-code",   # the WRITER whose notes you want — usually NOT you
+)
+```
+
+⚠️ **`user_id` is matched EXACTLY — there is no "all writers" wildcard.** To
+read notes from more than one agent, make one call per writer and merge:
+
+```python
+for writer in ("claude-code", "grok"):
+    results += await engram.search(..., user_id=writer)
+```
+
+Omitting `user_id` does **not** mean "any writer": the SDK falls back to your
+own principal, which for a web app owns no project rows — so you get zero.
+
 ## Cross-Namespace Reads
 
-During development, you may co-develop with Claude Code at the terminal. Terminal memories go to namespace `claude-code`, web app memories go to your app's namespace. To search both:
+`read_namespaces` fans reads out beyond your primary namespace. Writes always go
+to the primary `namespace`; only reads fan out.
 
 ```python
 engram = EngramClient(
-    url="http://localhost:8920",
-    token="engram_...",
-    namespace="coursebuilder",
-    project="ProjAlpha",
-    read_namespaces=["claude-code"],  # also search terminal memories
+    url="http://localhost:8920", token="engram_...",
+    namespace="coursebuilder", project="ProjAlpha",
+    read_namespaces=["fleet"],   # also search the coding agents' namespace
 )
-
-# Searches both "coursebuilder" AND "claude-code"
-results = await engram.search("architecture decisions")
 ```
 
-Writes always go to the primary `namespace`. Only reads fan out across `read_namespaces`.
+⚠️ **Every namespace you list must be readable by your token.** A single
+unreadable entry currently zeroes the ENTIRE result — a 200 with no rows, not a
+403 — so a generous list returns less than a narrow one, silently. List only
+what you know the token can read, or omit the parameter entirely and let the
+server resolve it for you (preferred).
 
 ## Django Integration
 
@@ -130,7 +174,15 @@ The namespace is the read boundary. Choose a strategy based on your isolation ne
 
 **Recommended for multi-tenant:** per-account namespace. All courses under one account share a namespace, so the AI can draw on cross-course knowledge within the same account. Different accounts are fully isolated.
 
-The namespace is configurable per account, not hardcoded. During development, you can set your own account's namespace to `claude-code` to share memories with terminal Claude Code sessions.
+The namespace is configurable per account, not hardcoded. During development you
+can point your own account's namespace at `fleet` to share memories with
+terminal coding sessions — that is the namespace they write to (it was called
+`claude-code` before the provider-neutral rename; an alias still maps the old
+name, but do not build on it).
+
+⚠️ Sharing a namespace only gets you the same *access boundary*. To read what a
+coding agent actually wrote under `scope="project"`, you must also pass its
+`user_id` — see [Reading another agent's project notes](#reading-another-agents-project-notes).
 
 ## API Methods
 
