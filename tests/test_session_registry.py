@@ -287,13 +287,20 @@ async def test_seat_rows_are_not_writable_through_the_generic_memory_path(client
 
 
 @pytest.mark.asyncio
-async def test_seats_endpoint_reports_liveness(client, db_pool):
+async def test_seats_endpoint_reports_the_lease_not_a_verdict(client, db_pool):
+    """The registry answers addressing questions, not liveness ones.
+
+    `is_live` was removed 2026-08-01: a 10-minute death guess off the same
+    timestamp as `reclaimable`, so the two were mutually exclusive by
+    construction and it did no work for any caller checking both.
+    """
     await _clear(db_pool)
     a = (await _claim(client, "visible")).json()
     r = await client.post("/session/seats", json={"project": PROJ})
     entry = [s for s in r.json()["seats"] if s["seat"] == a["seat"]][0]
-    assert entry["is_live"] is True
+    assert "is_live" not in entry, "the registry is back to rendering verdicts"
     assert entry["reclaimable"] is False
+    assert entry["age_seconds"] is not None  # the fact a caller can judge
     assert entry["session_key"] == "visible"
     await _clear(db_pool)
 
@@ -351,8 +358,11 @@ async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
     The seat and the presence row are two clocks on one session. The seat's
     was written once at claim time and never refreshed, so they disagreed in
     production: the roster reported a session fresh at 374s while its seat
-    read is_live=false, reclaimable=true — at which point a newcomer could be
-    granted an address a running session still held.
+    read reclaimable — at which point a newcomer could be granted an address a
+    running session still held.
+
+    Read as a lease (the framing adopted 2026-08-01): a heartbeat RENEWS the
+    lease, so a session that is still speaking never reaches expiry.
     """
     await _clear(db_pool)
     a = (await _claim(client, "beating")).json()
@@ -361,7 +371,7 @@ async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
 
     listed = (await client.post("/session/seats",
                                 json={"session_key": "beating"})).json()["seats"][0]
-    assert listed["is_live"] is False  # stale, pre-heartbeat
+    assert listed["reclaimable"] is True  # lease expired, pre-heartbeat
 
     # One heartbeat at that identity — exactly what a live session sends.
     beat = await client.post("/memory/presence", json={
@@ -372,8 +382,10 @@ async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
 
     after = (await client.post("/session/seats",
                                json={"session_key": "beating"})).json()["seats"][0]
-    assert after["is_live"] is True, "a heartbeating session must not read as dead"
-    assert after["reclaimable"] is False, "and its address must not be reclaimable"
+    assert after["reclaimable"] is False, (
+        "a heartbeat must RENEW the lease — a session that is still speaking "
+        "must never have its address reissued"
+    )
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", PROJ)
     await _clear(db_pool)

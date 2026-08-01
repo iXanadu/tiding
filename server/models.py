@@ -850,8 +850,10 @@ class SeatEntry(BaseModel):
     host: str | None = None
     session_key: str | None = None
     age_seconds: float
-    is_live: bool
-    reclaimable: bool
+    # `is_live` was removed 2026-08-01 — a 10-minute death guess off the same
+    # timestamp as `reclaimable`, hence mutually exclusive with it and doing no
+    # work for any caller that checked both.
+    reclaimable: bool  # LEASE EXPIRED (24h without renewal) — not a death claim
 
 
 class SeatListRequest(BaseModel):

@@ -59,7 +59,25 @@ SEAT_NAMESPACE = INBOX_NAMESPACE
 # longer live in the registry" mean the same thing to a reader.
 SEAT_LIVE_SECONDS = 600
 
-# Past this, a seat is RECLAIMABLE.
+# Past this, a seat's LEASE HAS EXPIRED and it is reclaimable.
+#
+# THIS IS A LEASE TERM, NOT A DEATH TEST — the distinction is load-bearing and
+# was mis-documented for months. `reclaimable` reads ONE timestamp and consults
+# no liveness signal whatsoever. Like a DHCP lease, it is reclaimed from a
+# holder that STOPPED RENEWING, which is not the same claim as "the holder is
+# gone" and must never be read as one.
+#
+# ⚠️ The renewal side is what makes that honest, so state it plainly: the lease
+# is renewed by ANY presence write on the seat's identity — the bridge
+# heartbeat (which rides tool calls, so it measures activity) or the watcher
+# beat (which polls on its own timer and lives exactly as long as the session,
+# so it measures existence). The watcher is the renewer that actually tracks
+# session lifetime, and it is OPTIONAL: `presence_watcher_beat` also refuses to
+# INSERT, so it renews nothing for a session that never heartbeated. A session
+# that is idle, unmailed, and has no live watcher can therefore reach expiry
+# WHILE ALIVE and have its address reissued. Guards blunt it — undelivered mail
+# parks a seat indefinitely, fresh presence vetoes takeover, and continuity by
+# session_key has no age condition — but none of them fire in that exact case.
 #
 # Deliberately very long, because RECLAMATION BUYS ALMOST NOTHING AND RISKS A
 # LOT. A session restarting with a stable session_key gets its own seat back
@@ -675,7 +693,13 @@ async def seat_list(
             "host": md.get("host"),
             "session_key": md.get("session_key"),
             "age_seconds": round(age, 1),
-            "is_live": age < SEAT_LIVE_SECONDS,
-            "reclaimable": age >= SEAT_GRACE_SECONDS,
+            # `is_live` USED TO SIT HERE and is gone (2026-08-01). It was
+            # `age < SEAT_LIVE_SECONDS` — a 10-minute death guess computed off
+            # the same timestamp as `reclaimable`, which made the pair mutually
+            # exclusive by construction and the flag redundant to every caller
+            # that checked both. It was also a verdict, and the registry's job
+            # is addressing: whose address is this, and has the lease expired.
+            # Liveness belongs to whatever spawns and kills.
+            "reclaimable": age >= SEAT_GRACE_SECONDS,  # lease expired, not "dead"
         })
     return out
