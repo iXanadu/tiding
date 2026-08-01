@@ -226,16 +226,61 @@ def _strip_leaked_markup(body: str, subject: str) -> tuple[str, str, str]:
     return clean, effective_subject, warning
 
 
+# Advisory fields are recognised by NAMING CONVENTION, not enumerated, so a
+# field the server grows tomorrow reaches the agent without a bridge release.
+#
+# The previous shape read exactly one key — `guidance` — which meant
+# `recipient_warnings` was discarded before any agent saw it: shipped, correct
+# and working server-side, invisible to every MCP-connected session. A peer
+# found it with one curl, comparing the direct HTTP response against the tool's.
+#
+# The instance was cheap; the CLASS is what matters. A whitelist of one fails
+# SILENTLY — the server adds a field, agents go on not seeing it, and nothing
+# errors on either side. Matching a suffix means the failure mode inverts: a new
+# advisory shows up unbidden rather than vanishing unnoticed.
+_ADVISORY_SUFFIX = "_warnings"
+
+
+def _advisories(result: dict) -> str:
+    """Every advisory field on a server response, whatever it is called.
+
+    Accepts a bare string as well as a list — a server that sends one warning
+    unwrapped should not have it rendered as a column of characters.
+    """
+    if not isinstance(result, dict):
+        return ""
+    lines: list[str] = []
+    for key in sorted(result):
+        if not key.endswith(_ADVISORY_SUFFIX):
+            continue
+        items = result[key]
+        if not items:
+            continue
+        if isinstance(items, str):
+            items = [items]
+        lines.extend(f"⚠️  {item}" for item in items if item)
+    return "\n".join(lines)
+
+
 def _append_guidance(body: str, result: dict) -> str:
-    """Append server-provided usage guidance to a tool result string.
+    """Append server-provided advisories and usage guidance to a tool result.
 
     The engram server returns a 'guidance' field on inbox responses — usage
     hints, addressing rules, polling cadence — so we can iterate on wording
-    server-side without forcing an MCP/Claude restart.
+    server-side without forcing an MCP/Claude restart. Advisory fields ride the
+    same channel; see `_advisories`.
+
+    Advisories sit with the BODY, above the guidance separator: guidance is
+    reference material about the tool, an advisory is a fact about the call that
+    just happened, and burying "nobody is home at that address" under a wall of
+    addressing help is how it gets skimmed past.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
     alert = (_seat_collision_banner() + _seat_revert_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
+    advisory = _advisories(result)
+    if advisory:
+        body = f"{body}\n\n{advisory}"
     if not guidance:
         return alert + body
     return f"{alert}{body}\n\n---\n{guidance}"

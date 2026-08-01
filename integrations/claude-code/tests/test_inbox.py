@@ -13,6 +13,7 @@ from engram_mcp.identity import (
     reader_to_address,
 )
 from engram_mcp.server import (
+    _advisories,
     _render_inbox_banner,
     memory_ack,
     memory_inbox,
@@ -199,6 +200,68 @@ async def test_memory_send_forwards_guidance(respx_mock):
         )
     assert "inbox/xyz" in result
     assert "GUIDANCE_SENTINEL" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_send_surfaces_recipient_warnings(respx_mock):
+    """MAIL-1 regression: the server's stale-recipient warning must reach the
+    agent.
+
+    The server has always computed this correctly; the bridge read only
+    'guidance' and dropped it, so a send to a seat whose session had ended
+    returned a clean receipt. A peer divided blocking work with an empty chair
+    on the strength of one such receipt.
+    """
+    respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "id": "inbox/xyz",
+                "recipient_warnings": [
+                    "peer-grok-6: last heartbeat 2830s ago, watcher silent — "
+                    "delivered and stored, but do not expect a reply."
+                ],
+                "guidance": "addressing is flat",
+            },
+        )
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_send(
+            to="peer-grok-6",
+            body="you own the API seam tonight",
+            project_dir="/Users/ixanadu/projects/projgamma",
+        )
+    assert "watcher silent" in result
+    assert "do not expect a reply" in result
+    # Above the guidance separator: a fact about THIS call outranks reference
+    # material about the tool, and must not be skimmed past.
+    assert result.index("watcher silent") < result.index("addressing is flat")
+
+
+def test_advisories_pass_through_unknown_warning_fields():
+    """The class fix, not the instance.
+
+    A whitelist of one fails silently — the server grows a field, agents never
+    see it, nothing errors either side. Recognising advisories by suffix means
+    an unfamiliar one surfaces unbidden instead of vanishing.
+    """
+    rendered = _advisories({
+        "status": "ok",
+        "quota_warnings": ["namespace 'fleet' is at 91% of its row budget"],
+    })
+    assert "91% of its row budget" in rendered
+
+
+def test_advisories_ignore_structural_fields_and_empties():
+    """Pass-through must not turn into noise: only advisories, never payload."""
+    assert _advisories({"status": "ok", "id": "inbox/xyz", "ids": ["a", "b"]}) == ""
+    assert _advisories({"recipient_warnings": None}) == ""
+    assert _advisories({"recipient_warnings": []}) == ""
+    # A server that sends one warning unwrapped must not be rendered as a
+    # column of single characters.
+    assert _advisories({"recipient_warnings": "seat is cold"}) == "⚠️  seat is cold"
 
 
 @respx.mock(base_url="http://localhost:8920")
