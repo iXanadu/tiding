@@ -287,20 +287,21 @@ async def test_seat_rows_are_not_writable_through_the_generic_memory_path(client
 
 
 @pytest.mark.asyncio
-async def test_seats_endpoint_reports_the_lease_not_a_verdict(client, db_pool):
+async def test_seats_endpoint_exports_the_number_not_a_threshold(client, db_pool):
     """The registry answers addressing questions, not liveness ones.
 
-    `is_live` was removed 2026-08-01: a 10-minute death guess off the same
-    timestamp as `reclaimable`, so the two were mutually exclusive by
-    construction and it did no work for any caller checking both.
+    Both `is_live` and `reclaimable` were removed 2026-08-01. Each was a
+    threshold applied to `age_seconds` and nothing else, so exporting them sent
+    the same bit twice — once as a fact, once as a verdict. The verdict half is
+    what invited consumers to adopt our threshold as their policy.
     """
     await _clear(db_pool)
     a = (await _claim(client, "visible")).json()
     r = await client.post("/session/seats", json={"project": PROJ})
     entry = [s for s in r.json()["seats"] if s["seat"] == a["seat"]][0]
     assert "is_live" not in entry, "the registry is back to rendering verdicts"
-    assert entry["reclaimable"] is False
-    assert entry["age_seconds"] is not None  # the fact a caller can judge
+    assert "reclaimable" not in entry, "our threshold is a consumer's policy again"
+    assert entry["age_seconds"] is not None  # the fact a caller judges from
     assert entry["session_key"] == "visible"
     await _clear(db_pool)
 
@@ -358,20 +359,22 @@ async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
     The seat and the presence row are two clocks on one session. The seat's
     was written once at claim time and never refreshed, so they disagreed in
     production: the roster reported a session fresh at 374s while its seat
-    read reclaimable — at which point a newcomer could be granted an address a
-    running session still held.
+    read past the backstop — at which point a newcomer could be granted an
+    address a running session still held.
 
-    Read as a lease (the framing adopted 2026-08-01): a heartbeat RENEWS the
-    lease, so a session that is still speaking never reaches expiry.
+    2026-08-01: no signal is REQUIRED to hold an address (an address must
+    outlive its owner being awake), but a heartbeat still pushes the backstop
+    out, which is what this pins. The assertion moved from the removed
+    `reclaimable` flag to the number consumers now judge from.
     """
     await _clear(db_pool)
     a = (await _claim(client, "beating")).json()
-    # Age the seat past the grace window, as a long-running session's would.
+    # Age the seat past the backstop, as a long-quiet session's would.
     await _age_seat(db_pool, a["seat"], SEAT_GRACE_SECONDS + 600)
 
     listed = (await client.post("/session/seats",
                                 json={"session_key": "beating"})).json()["seats"][0]
-    assert listed["reclaimable"] is True  # lease expired, pre-heartbeat
+    assert listed["age_seconds"] >= SEAT_GRACE_SECONDS  # past the backstop
 
     # One heartbeat at that identity — exactly what a live session sends.
     beat = await client.post("/memory/presence", json={
@@ -382,9 +385,9 @@ async def test_heartbeat_refreshes_the_seat_so_a_live_session_stays_live(
 
     after = (await client.post("/session/seats",
                                json={"session_key": "beating"})).json()["seats"][0]
-    assert after["reclaimable"] is False, (
-        "a heartbeat must RENEW the lease — a session that is still speaking "
-        "must never have its address reissued"
+    assert after["age_seconds"] < SEAT_GRACE_SECONDS, (
+        "a heartbeat must refresh the seat row — a session that is still "
+        "speaking must never have its address reissued"
     )
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE scope='presence' AND user_id=$1", PROJ)

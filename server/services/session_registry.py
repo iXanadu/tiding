@@ -59,31 +59,40 @@ SEAT_NAMESPACE = INBOX_NAMESPACE
 # longer live in the registry" mean the same thing to a reader.
 SEAT_LIVE_SECONDS = 600
 
-# Past this, a seat's LEASE HAS EXPIRED and it is reclaimable.
+# A BACKSTOP for deaths nobody reported. INTERNAL TO ALLOCATION — never
+# exported (see seat_list).
 #
-# THIS IS A LEASE TERM, NOT A DEATH TEST — the distinction is load-bearing and
-# was mis-documented for months. `reclaimable` reads ONE timestamp and consults
-# no liveness signal whatsoever. Like a DHCP lease, it is reclaimed from a
-# holder that STOPPED RENEWING, which is not the same claim as "the holder is
-# gone" and must never be read as one.
+# We asked "what should renew this lease?" and the question was wrong. Renewal
+# would have to come from some liveness signal — a heartbeat, a watcher beat —
+# and the moment address tenure depends on one, HOLDING AN ADDRESS BECOMES A
+# FUNCTION OF BEING AWAKE. That is the entanglement this codebase spent
+# 2026-08-01 removing, and it fails the rule that sorted everything else:
+# a mailbox does not require its owner to be conscious. So there is no defined
+# renewer, by decision (AgentBeast's argument, adopted 2026-08-01).
 #
-# ⚠️ The renewal side is what makes that honest, so state it plainly: the lease
-# is renewed by ANY presence write on the seat's identity — the bridge
-# heartbeat (which rides tool calls, so it measures activity) or the watcher
-# beat (which polls on its own timer and lives exactly as long as the session,
-# so it measures existence). The watcher is the renewer that actually tracks
-# session lifetime, and it is OPTIONAL: `presence_watcher_beat` also refuses to
-# INSERT, so it renews nothing for a session that never heartbeated. A session
-# that is idle, unmailed, and has no live watcher can therefore reach expiry
-# WHILE ALIVE and have its address reissued. Guards blunt it — undelivered mail
-# parks a seat indefinitely, fresh presence vetoes takeover, and continuity by
-# session_key has no age condition — but none of them fire in that exact case.
+# What actually returns an address, in order:
+#   1. EXPLICIT RELEASE on stop — the normal path, live on both providers.
+#   2. A goodbye from a dying session — covers hand-launched sessions that no
+#      orchestrator ever spawned and therefore nobody can certify dead.
+#   3. This backstop, for the remainder: power cut, SIGKILL, machine death.
+# The ladder of abandoned `-grok-N` ordinals that originally justified a tight
+# window was fixed at its source (release on stop), so (3) is now the rare
+# residue rather than the main mechanism.
 #
-# Deliberately very long, because RECLAMATION BUYS ALMOST NOTHING AND RISKS A
-# LOT. A session restarting with a stable session_key gets its own seat back
-# through the continuity check above, which has no age condition at all — so
-# reclamation serves exactly one purpose: letting a genuinely NEW session reuse
-# an abandoned ordinal to keep numbering tight. That is cosmetic.
+# WHY SO LONG — the asymmetry sets the number, not a guess at how long a
+# session lives. A FALSE reclaim is SILENT and takes a working session's
+# address out from under it. A LATE reclaim parks one name in a namespace with
+# effectively unlimited names, and is VISIBLE the moment an ordinal appears.
+# Those costs are nowhere close, so this is tuned to make a false reclaim
+# implausible, not to reclaim promptly. Measured before lengthening: one seat
+# row per project against MAX_SEAT_ORDINAL=64 — no exhaustion pressure exists
+# to trade against.
+#
+# Reclamation also buys almost nothing to begin with: a session restarting with
+# a stable session_key gets its own seat back through the continuity check,
+# which has no age condition at all. So this serves exactly one purpose —
+# letting a genuinely NEW session reuse an abandoned ordinal to keep numbering
+# tight. That is cosmetic, and cosmetics do not outrank a stolen address.
 #
 # What it risks is not cosmetic. Liveness is inferred from heartbeats, and
 # heartbeats only fire on tool calls, so a session doing long uninterrupted
@@ -93,11 +102,12 @@ SEAT_LIVE_SECONDS = 600
 # listening. Reclaiming it would have handed its address to a newcomer.
 #
 # So the window is set past any plausible quiet stretch rather than past a
-# plausible pause. The real fix is a liveness signal that does not depend on
-# the agent speaking (the watcher, which polls on its own timer — SEAT-7);
-# until that exists, this is the conservative trade: slightly untidier
-# ordinals, no stolen addresses.
-SEAT_GRACE_SECONDS = 86400  # 24h
+# plausible pause — and the 2026-08-01 lengthening goes further, because the
+# earlier framing ("until a better liveness signal exists") was still looking
+# for a renewer. There isn't going to be one. Untidier ordinals, no stolen
+# addresses, and the untidiness is bounded by explicit release doing the real
+# work.
+SEAT_GRACE_SECONDS = 604800  # 7d (was 24h until 2026-08-01)
 
 # Refuse rather than allocate unbounded. A project needing >64 concurrent
 # sessions is a misconfiguration (usually a session_key that changes every
@@ -692,14 +702,20 @@ async def seat_list(
             "provider": md.get("provider"),
             "host": md.get("host"),
             "session_key": md.get("session_key"),
+            # `age_seconds` is the whole answer. Both flags that used to sit
+            # here are gone (2026-08-01): `is_live` (age < 600) and then
+            # `reclaimable` (age >= grace). Each was a THRESHOLD APPLIED TO
+            # THIS EXACT NUMBER — so exporting them shipped the same bit twice,
+            # once as a fact and once as a verdict, and it was the verdict half
+            # that invited every consumer to adopt our threshold as truth. A
+            # peer's reaper leaned on it for weeks, which meant our tuning
+            # silently became their policy.
+            #
+            # The backstop still exists; it is INTERNAL TO ALLOCATION, where we
+            # legitimately own the address space and must decide who gets a
+            # free name. Callers that want a judgement now apply their own to
+            # age_seconds, which is the correct place for it — same move as
+            # dropping `state` from the roster, one layer up.
             "age_seconds": round(age, 1),
-            # `is_live` USED TO SIT HERE and is gone (2026-08-01). It was
-            # `age < SEAT_LIVE_SECONDS` — a 10-minute death guess computed off
-            # the same timestamp as `reclaimable`, which made the pair mutually
-            # exclusive by construction and the flag redundant to every caller
-            # that checked both. It was also a verdict, and the registry's job
-            # is addressing: whose address is this, and has the lease expired.
-            # Liveness belongs to whatever spawns and kills.
-            "reclaimable": age >= SEAT_GRACE_SECONDS,  # lease expired, not "dead"
         })
     return out

@@ -849,11 +849,11 @@ class SeatEntry(BaseModel):
     provider: str | None = None
     host: str | None = None
     session_key: str | None = None
+    # Both `is_live` and `reclaimable` were removed 2026-08-01. Each was a
+    # threshold applied to `age_seconds` and nothing else, so exporting them
+    # sent the same bit twice — once as a fact, once as a verdict. Consumers
+    # judge from the number; the allocation backstop stays internal.
     age_seconds: float
-    # `is_live` was removed 2026-08-01 — a 10-minute death guess off the same
-    # timestamp as `reclaimable`, hence mutually exclusive with it and doing no
-    # work for any caller that checked both.
-    reclaimable: bool  # LEASE EXPIRED (24h without renewal) — not a death claim
 
 
 class SeatListRequest(BaseModel):

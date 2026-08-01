@@ -49,29 +49,6 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
-## Needs-decision
-
-- **LEASE-1** Decide what RENEWS a seat lease. Seat reclamation was renamed
-  from a liveness test to what it already was — a 24h lease, reclaimed from a
-  holder that stopped renewing, not one proven gone. That framing is honest
-  only if the renewer tracks the session's lifetime, and today it doesn't
-  reliably: renewal rides ANY presence write, which means either the bridge
-  heartbeat (rides tool calls → measures activity, so an idle session renews
-  nothing) or the watcher beat (own timer, lives exactly as long as the
-  session → measures existence, and is the right renewer). But the watcher is
-  OPTIONAL, and it deliberately refuses to INSERT, so it renews nothing for a
-  session that never heartbeated. Reachable result: a session that is idle,
-  unmailed and has no live watcher reaches expiry WHILE ALIVE and can have its
-  address reissued to a newcomer. Three guards blunt it and none fire in that
-  exact case — undelivered mail parks a seat indefinitely, fresh presence
-  vetoes takeover, and continuity by `session_key` has no age condition.
-  Raised by AgentBeast when they ratified the lease framing, on the grounds
-  that after the rename "it's a lease" becomes the answer to this complaint
-  rather than the question it should prompt. Leaning: make the watcher the
-  DEFINED renewer rather than an optional one — same process, same lifetime,
-  and the same footing as a goodbye-on-exit signal, which is the other end of
-  that process's life. Not to ship without AB's read.
-
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
 - **MEM-2** Key-prefix enumeration — a deterministic "list every key under
