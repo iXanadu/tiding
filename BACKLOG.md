@@ -87,10 +87,36 @@
   hold ONE `last_used_at` each (a snapshot, not a history) and presence writes
   bypass `memory_set`, so `audit_log` has no trail of them. Getting the number
   needs a sampling campaign or instrumentation first.
+  ⚠️ **And the method has a survivorship problem AB raised against their own
+  proposal:** heartbeats ride tool calls, so a distribution of heartbeat
+  intervals is a distribution over *sessions that call tools*. Idle sessions
+  contribute NO samples — so it would read tighter than reality, and the exact
+  population the floor exists to protect is the one missing from the data.
+  Collecting more of the same data does not fix that; the floor needs a
+  different basis, or the item needs dropping (see AB's own escape hatch: if
+  idle gaps are long, a farewell should barely shorten anything and SEAT-13 is
+  not worth its risk).
   **GATED** on AB's RC-2 residual (two live sessions in one folder rendering
   one picker row — observed, unmeasured, being measured now). Until that is
   explained, an accelerated reclaim would land on top of an unexplained
   single-row symptom and neither side could tell the two apart afterwards.
+
+- **SEAT-15** Decide whether seat allocation should stay LAZY. A session
+  claims its seat on its first engram tool call, not at startup:
+  `_claim_seat` is reachable only from the heartbeat (which rides tool
+  handlers) and `memory_take_seat`, and the bridge has no background beat.
+  Verified 2026-08-01. Two consequences worth a decision rather than a
+  shrug. (1) Anything reasoning about "the set of seated sessions" is really
+  reasoning about "the set of sessions that have called an engram tool" —
+  which surprised a peer building on it. (2) Seat-collision detection is
+  disarmed for exactly the case that matters here: it needs both sessions in
+  the nonce map, a nonce only lands there via the heartbeat, so a second
+  session that never calls a tool is structurally invisible to it — and per
+  AgentBeast's measurement that is a state a session can occupy for its whole
+  life, not a startup window. The coverage limit is now documented at
+  `SEAT_COLLISION_WINDOW_SECONDS`; the open question is whether documenting it
+  is sufficient or whether a session should claim at startup. Claiming eagerly
+  costs a call per session launch and would make "seated" mean "exists".
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 

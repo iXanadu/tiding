@@ -818,6 +818,24 @@ PRESENCE_RETENTION_SECONDS = 172800  # 48h silent → off the default roster
 # Seat-collision detection (grew out of ROST-1): a session nonce is fresh for
 # this many seconds. Window ≈ 2.5× the bridge heartbeat interval (120s) — a
 # bridge restart mid-session can look like a collision for at most this long.
+#
+# ⚠️ WHAT THIS CANNOT SEE, stated because the omission is not obvious and a
+# peer reasoned from the assumption that it was covered (2026-08-01). Detection
+# needs BOTH sessions in the nonce map, and a nonce only lands there via
+# `presence_update` — i.e. via the bridge heartbeat, which rides TOOL CALLS.
+# The bridge has no background beat, and `_claim_seat` is reachable only from
+# that same heartbeat and from `memory_take_seat`.
+#
+# So SEAT ALLOCATION IS LAZY: a session claims on its FIRST ENGRAM TOOL CALL,
+# not at startup. A second session in the same folder that is idle, or busy
+# with work that never touches engram, never heartbeats — so it never enters
+# the map, and a collision involving it is STRUCTURALLY UNDETECTABLE. Measured
+# by AgentBeast: this is not a settling window a session passes through, it is
+# a state a session can occupy for its entire life.
+#
+# The detector is therefore sound for what it reports and silent — not
+# reassuring — about the lazy case. Do not read "no collision" as "one session
+# here". See SEAT-15.
 SEAT_COLLISION_WINDOW_SECONDS = 300
 # Identities where multiple simultaneous sessions are legitimate role-sharing
 # by design (per the two-axis doctrine): never flagged as collisions.
