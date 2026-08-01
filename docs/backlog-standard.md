@@ -66,6 +66,23 @@ Rules, each load-bearing:
    until shipped. Client work gets neutral labels.
 4. **IDs are stable** (`X-1`, `SEC-2`, …) so commits and messages can
    reference them (`Fix X-1: …`).
+   ⚠️ **They are also PROJECT-SCOPED, and only project-scoped.** Two repos
+   working the same problem space will independently mint the same prefix and
+   walk the same counter — observed 2026-08-01, when two projects each held a
+   live, *different* `SEAT-13`, both already cited in shipped code comments.
+   Nobody allocates from a common register; everyone increments a
+   shared-looking sequence in private, so collisions are the default outcome
+   rather than an accident.
+   Two rules follow, and the second is the one that gets forgotten:
+   · Within a repo, an ID means one thing forever — never recycle a retired one.
+   · **Across repos, ALWAYS qualify**: "engram SEAT-13", "AB SEAT-13". A bare
+     ID in an inbox message, a huddle, or another project's ledger is
+     ambiguous even when it feels obvious to the sender, and the ambiguity
+     surfaces later as two people confidently discussing different defects.
+   Renaming an established series to dodge this is usually the wrong trade —
+   IDs leak into commit messages, code comments and memory keys, so the churn
+   costs more than the qualifier. Rename only when the collision is fresh on
+   both sides.
 5. **One ledger per repo, at the root.** If it's not in the ledger, it's not
    tracked. (The *content* rule changed; the single-source-of-truth rule did
    not.)

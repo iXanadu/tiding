@@ -96,12 +96,22 @@
   different basis, or the item needs dropping (see AB's own escape hatch: if
   idle gaps are long, a farewell should barely shorten anything and SEAT-13 is
   not worth its risk).
-  **GATED** on AB's RC-2 residual (two live sessions in one folder rendering
-  one picker row — observed, unmeasured, being measured now). Until that is
-  explained, an accelerated reclaim would land on top of an unexplained
-  single-row symptom and neither side could tell the two apart afterwards.
+  **GATED** on AgentBeast's **MERGE-2** (two live sessions in one folder
+  rendering one picker row — measured 2026-08-01 and confirmed real; AB
+  renamed it from their SEAT-14, which collided with an existing pin of
+  theirs). Note the ID is AB's, not ours. Until it is fixed, an accelerated
+  reclaim would land under a surface still showing one healthy row, and
+  neither side could reconstruct afterwards which session lost its address —
+  engram's own collision detector is blind to the same case (see SEAT-15).
 
-- **SEAT-15** Decide whether seat allocation should stay LAZY. A session
+- **SEAT-15** *(downgraded 2026-08-01 to a PREFERENCE, not a defect — both
+  maintainers agreed the underlying problem dissolves rather than gets fixed:
+  a store only ever sees what speaks to it, so NO claiming policy makes seat
+  rows a session census, and any consumer treating them as one is wrong by
+  construction. AgentBeast is fixing their consumer (MERGE-2) by counting
+  their own spawns instead of inferring the count from which of them called a
+  tool, and is no longer waiting on this.)*
+  Decide whether seat allocation should stay LAZY. A session
   claims its seat on its first engram tool call, not at startup:
   `_claim_seat` is reachable only from the heartbeat (which rides tool
   handlers) and `memory_take_seat`, and the bridge has no background beat.
