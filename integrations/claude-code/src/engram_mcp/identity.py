@@ -491,15 +491,37 @@ def discover_session_process() -> tuple[int, str] | None:
     return None
 
 
-def process_is_alive(pid: int, start: str) -> bool:
-    """Is the process that was ``(pid, start)`` still running?
+def process_is_gone(pid: int, start: str) -> bool:
+    """POSITIVE evidence that the process which was ``(pid, start)`` has exited.
 
-    Both halves are required. Matching on pid alone would treat a recycled pid
-    as continued life, which is the failure that turns a death signal into a
-    silent lie — and a wrong death is the expensive direction.
+    Asks the question in the direction that fails safe, which is the whole
+    point. The obvious spelling — ``not process_is_alive(...)`` over
+    ``_proc_info`` — has a hole we have now hit at three different layers:
+    ``_proc_info`` returns None BOTH when the process is genuinely absent and
+    when ``ps`` ITSELF FAILED (timeout, OSError, fork pressure). Reading that
+    None as "gone" turns a transient hiccup into a death notice for a live
+    session. ABSENT IS NOT DEAD, and "I could not ask" is not an answer.
+
+    So: True only on a definite negative — ``ps`` ran and reported no such
+    process, or reported a DIFFERENT process under a recycled pid. Every other
+    outcome, including every failure to ask, returns False. Uncertainty can
+    never produce a farewell.
     """
-    info = _proc_info(pid)
-    return info is not None and info[1] == start
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,lstart=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False  # could not ask — not evidence of anything
+    parts = out.stdout.split()
+    if len(parts) >= 6:
+        # Something is running under this pid. It is OUR process only if the
+        # start time matches; otherwise the pid was recycled and ours is gone.
+        return " ".join(parts[1:6]) != start
+    if out.returncode == 1:
+        return True  # ps ran and found nothing: the one definite answer
+    return False  # ps failed some other way — still not an answer
 
 
 def read_seat_file() -> str | None:

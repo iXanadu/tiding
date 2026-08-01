@@ -38,7 +38,7 @@ from engram_mcp.identity import (
     compute_identity,
     derive_project_name,
     discover_session_process,
-    process_is_alive,
+    process_is_gone,
     reader_to_address,
 )
 
@@ -270,6 +270,7 @@ async def _run(args) -> int:
             "but this watcher will not report the session's exit",
             file=sys.stderr, flush=True,
         )
+    gone_seen = 0  # consecutive polls that positively observed the exit
 
     try:
         # Default: only wake on mail that arrives AFTER the watcher starts — a
@@ -343,9 +344,18 @@ async def _run(args) -> int:
             # group-directed kill aimed at the session never reaches us and an
             # exit hook would simply not fire on the commonest death. Being
             # alive is what makes this reportable at all.
-            if watched and not process_is_alive(*watched):
-                await _farewell(client, reader_identity, args.project_dir or None)
-                return 0
+            if watched and process_is_gone(*watched):
+                # Confirm on a second poll before reporting. `process_is_gone`
+                # already refuses to answer when it could not ask, so this is
+                # belt-and-braces — but a false farewell is the expensive
+                # direction, and one extra poll interval of latency on a death
+                # report costs nothing that matters.
+                gone_seen += 1
+                if gone_seen >= 2:
+                    await _farewell(client, reader_identity, args.project_dir or None)
+                    return 0
+            else:
+                gone_seen = 0
             await asyncio.sleep(args.poll_interval)
     finally:
         await client.close()

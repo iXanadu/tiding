@@ -648,8 +648,8 @@ def test_a_recycled_pid_is_not_the_same_process(monkeypatch):
     """
     me = os.getpid()
     start = identity._proc_info(me)[1]
-    assert identity.process_is_alive(me, start) is True
-    assert identity.process_is_alive(me, "Thu Jan  1 00:00:00 2020") is False
+    assert identity.process_is_gone(me, start) is False
+    assert identity.process_is_gone(me, "Thu Jan  1 00:00:00 2020") is True
 
 
 def test_no_recorded_session_is_unknown_never_dead(monkeypatch, tmp_path):
@@ -664,3 +664,41 @@ def test_no_recorded_session_is_unknown_never_dead(monkeypatch, tmp_path):
                         lambda key=None: str(tmp_path / "absent.seat"))
     monkeypatch.setattr(identity, "_proc_info", lambda pid: None)
     assert identity.discover_session_process() is None
+
+
+def test_a_failed_probe_is_not_a_death(monkeypatch):
+    """"I could not ask" must never read as "the process is gone".
+
+    The obvious spelling of this check — ``not process_is_alive(...)`` over
+    ``_proc_info`` — has a hole: ``_proc_info`` returns None BOTH for a genuinely
+    absent process AND when ``ps`` itself failed. Reading that None as "gone"
+    turns a transient hiccup (timeout, fork pressure) into a death notice for a
+    live session, which is the expensive direction and the same absent-is-not-
+    dead conflation this project spent 2026-08-01 removing one layer up.
+    """
+    import subprocess
+
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="ps", timeout=5)
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    assert identity.process_is_gone(1234, "whenever") is False
+
+    class _Failed:
+        stdout = ""
+        returncode = 127  # ps missing / exec failure, NOT "no such process"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Failed())
+    assert identity.process_is_gone(1234, "whenever") is False
+
+
+def test_a_definite_absence_is_a_death(monkeypatch):
+    """The one answer that IS conclusive: ps ran and found no such process."""
+    import subprocess
+
+    class _Absent:
+        stdout = ""
+        returncode = 1  # POSIX ps: no matching process
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Absent())
+    assert identity.process_is_gone(1234, "whenever") is True
