@@ -1,4 +1,5 @@
 import asyncio
+import functools
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -48,7 +49,15 @@ async def embed(text: str) -> np.ndarray:
     if not text or not text.strip():
         raise ValueError("Cannot embed empty text")
     async with _encode_lock:
-        result = await asyncio.to_thread(_model.encode, text)
+        # show_progress_bar=False, and it is not cosmetic. sentence-transformers
+        # defaults tqdm ON, so EVERY embed wrote a progress bar to stderr —
+        # 15,226 of engram.err's 47,751 lines, for single-item encodes where the
+        # bar conveys nothing. It buried the uvicorn lifecycle lines badly enough
+        # that finding a restart's shutdown/startup pair took a targeted grep.
+        # A log nobody can read is a log nobody reads.
+        result = await asyncio.to_thread(
+            functools.partial(_model.encode, show_progress_bar=False), text
+        )
     return np.array(result, dtype=np.float32)
 
 
@@ -57,7 +66,12 @@ async def embed_batch(texts: list[str]) -> list[np.ndarray]:
     if _model is None:
         raise RuntimeError("Embedding client not initialized")
     async with _encode_lock:
-        results = await asyncio.to_thread(_model.encode, texts)
+        # Batch keeps the bar suppressed too: this runs in a server process
+        # whose stderr is a log file, never a terminal, so there is no reader
+        # for whom a progress bar is the useful form.
+        results = await asyncio.to_thread(
+            functools.partial(_model.encode, show_progress_bar=False), texts
+        )
     return [np.array(v, dtype=np.float32) for v in results]
 
 

@@ -51,6 +51,19 @@
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **LOG-1** Verify log rotation on ALREADY-INSTALLED boxes. `install.sh` writes
+  `/etc/newsyslog.d/engram.conf` (10MB, keep 5, gzip) — but this box's install
+  predated that step, so the file was ABSENT and nothing ever rotated:
+  `engram.log` reached **176 MB** and `engram.err` 5.5 MB, growing without
+  bound. Config written as code is not config present on the host, and nothing
+  detected the drift. Installed by hand 2026-08-01 and validated with
+  `newsyslog -n`. ⚠️ **Two things remain:** (1) rotation only takes full effect
+  at the next service restart, because launchd holds the log fds — until then
+  writes follow the rotated inode; (2) there is no drift check, so the next box
+  with an older install has the same silent gap. A `scripts/doctor.sh` that
+  verifies host-side config matches what `install.sh` intends would close both
+  this and the class.
+
 - **DEPLOY-2** engram has no drain/graceful restart. `scripts/restart.sh` is a
   bare `launchctl kickstart`, so every deploy refuses connections fleet-wide
   for a few seconds — it touches every session on every box, not just this
@@ -60,7 +73,10 @@
   or mid-`memory_search` sees a connection error. AgentBeast already solved
   the equivalent (`graceful-deploy.sh`, drain → restart → reattach, ~2s and
   no in-flight turns cut); engram should have the same or should batch
-  deploys instead of shipping each commit.
+  deploys instead of shipping each commit. **Measured, not estimated:** a
+  restart is ~4s of fleet-wide refusal (08:50:52 "Shutting down" → 08:50:56
+  "Application startup complete"), dominated by loading the embedding model.
+  Six restarts on 2026-08-01 ≈ 24s total.
 
 - **WIRE-1** A response field cannot be removed on one consumer's say-so.
   Removing `state` from `/memory/roster` on 2026-08-01 broke `memory_roster`
