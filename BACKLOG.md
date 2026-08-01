@@ -114,9 +114,29 @@
   session that never calls a tool is structurally invisible to it — and per
   AgentBeast's measurement that is a state a session can occupy for its whole
   life, not a startup window. The coverage limit is now documented at
-  `SEAT_COLLISION_WINDOW_SECONDS`; the open question is whether documenting it
-  is sufficient or whether a session should claim at startup. Claiming eagerly
-  costs a call per session launch and would make "seated" mean "exists".
+  `SEAT_COLLISION_WINDOW_SECONDS`. **Both maintainers lean STAY LAZY; owner
+  decides, because it touches every box.**
+  · *For eager:* it would make "seated" mean "exists", which is what every
+    consumer already assumes — AgentBeast built on that assumption, which is
+    how their one-row defect happened.
+  · *Against eager (AB):* claiming at startup makes seat existence track
+    PROCESS existence, re-fusing addressing to presence at the seam this
+    project separated on 2026-08-01. Correct the consumers rather than bend
+    the model.
+  · *Against eager (engram, the load-bearing one):* an address exists to
+    participate in messaging. A session that never calls an engram tool is
+    not a participant, and eager claiming would allocate an address — and
+    burn an ordinal against `MAX_SEAT_ORDINAL` — on process start rather than
+    on need, for sessions that will never send or receive anything.
+  · ⚠️ *Neither option fixes the detection blindness*, and that is the thing
+    to be clear about: collision detection is NONCE-based via
+    `presence_update`, so eager SEAT claiming would not populate it. Eager
+    would fix a consumer's rendering, not engram's detector.
+  **Proposed resolution, consistent with the liveness split:** detecting a
+  second session that never speaks to engram is ORCHESTRATION's job, not the
+  store's. The orchestrator knows what it spawned; the store can only ever see
+  what speaks to it. Engram's duty is to say so plainly rather than to stay
+  silent in a way that reads as reassurance — which is now done.
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
