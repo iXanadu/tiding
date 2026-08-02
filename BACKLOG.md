@@ -119,6 +119,24 @@
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
+- **MEM-5** A shared finding only its author can find is not shared.
+  `scope=project` rows are partitioned by the WRITING principal's `user_id`,
+  so a note written by one principal is invisible to a peer searching the same
+  project under its own identity — it must know to pass an explicit `user_id`
+  override, which means knowing the note exists and who wrote it. Circular.
+  Cost it caused 2026-08-02: research on a project was written to that
+  project's memory, and a peer investigating the SAME project got zero rows,
+  started from scratch, and sent another agent a set of instructions to redo
+  five questions that had already been answered. Nobody was careless — the
+  knowledge was present, correctly scoped, and structurally unreachable.
+  This is the same partition gap that broke the chat client's project reads
+  (`decision/three-axes-principal-project-address` #2), surfacing as a
+  coordination failure rather than a query one. Fix candidates: let a project
+  search span all writers the token may read (see the `user_id="*"` proposal —
+  it grants nothing new, since permission is namespace-level and any writer's
+  rows are already readable by naming them); or surface writers in the result
+  so a searcher at least learns who else has written here.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
