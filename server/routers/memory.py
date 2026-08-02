@@ -362,7 +362,32 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     """Send an inbox message to a project, machine, #channel, or a list of
     recipients (ad-hoc fan-out: one message row per recipient)."""
     principal = get_current_principal(request)
-    check_namespace_access(principal, INBOX_NAMESPACE, "write")
+    # MAIL IS NOT MEMORY — gated on READ, not write (2026-08-02).
+    #
+    # Writing memory deposits shared knowledge into a namespace. Sending mail
+    # addresses a row to a RECIPIENT, who owns it. Gating the second on the
+    # first was a conflation, and it made messaging structurally unavailable to
+    # every principal that is not a shared-namespace writer: 4 of 7 could not
+    # send at all, and one of them had consequently never written a row
+    # anywhere. Nobody noticed, because the three that worked are the three in
+    # daily use.
+    #
+    # Read is the honest prerequisite: you must be able to see a community to
+    # message it. That is not a licence to rewrite what the community knows.
+    #
+    # Verified a NO-OP for every currently-active principal before shipping:
+    # those that can send today all hold read as well, and those that cannot
+    # (ha-system, moneymaker) hold no read here either, so they still cannot.
+    # What it unblocks is SCOPED principals — a chat client that should read
+    # projects and write only its owner's personal memories can now relay a
+    # message without being handed write access to every shared row on the
+    # fleet in order to do it.
+    #
+    # DELIBERATELY NOT CHANGED: POST /memory/presence. A heartbeat writes a row
+    # ABOUT YOU into the namespace; it is not addressed to anyone, so the
+    # argument above does not reach it. Relaxing an adjacent endpoint because
+    # it sits nearby is how a scoped change becomes a hole.
+    check_namespace_access(principal, INBOX_NAMESPACE, "read")
     raw_targets = req.to if isinstance(req.to, list) else [req.to]
     try:
         corrected: list[tuple[str, str | None]] = [
@@ -574,7 +599,9 @@ async def inbox_unread_summary(req: InboxUnreadSummaryRequest, request: Request)
 @router.post("/inbox/{message_id:path}/ack", response_model=InboxAckResponse)
 async def ack_inbox(message_id: str, req: InboxAckRequest, request: Request):
     """Mark an inbox message as read by a specific reader."""
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    # Mail lifecycle: read-gated, same rule as send — acking, archiving or
+    # resolving a message addressed to you is not a write to shared memory.
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
     try:
         updated = await inbox_ack(message_id=message_id, reader_identity=req.reader_identity)
         if not updated:
@@ -590,7 +617,9 @@ async def ack_inbox(message_id: str, req: InboxAckRequest, request: Request):
 @router.post("/inbox/{message_id:path}/archive", response_model=InboxAckResponse)
 async def archive_inbox(message_id: str, req: InboxAckRequest, request: Request):
     """Archive an inbox message (hides from all inbox queries)."""
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    # Mail lifecycle: read-gated, same rule as send — acking, archiving or
+    # resolving a message addressed to you is not a write to shared memory.
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
     try:
         updated = await inbox_archive(
             message_id=message_id,
@@ -613,7 +642,9 @@ async def resolve_inbox(message_id: str, req: InboxResolveRequest, request: Requ
     Unlike archive (a global hard-hide), resolve records who closed the thread
     and when, and the message stays retrievable via include_resolved=True.
     """
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    # Mail lifecycle: read-gated, same rule as send — acking, archiving or
+    # resolving a message addressed to you is not a write to shared memory.
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
     try:
         updated = await inbox_resolve(
             message_id=message_id,
@@ -641,7 +672,9 @@ async def resolve_inbox_thread(req: InboxResolveThreadRequest, request: Request)
     Idempotent: resolving an unknown or already-drained thread returns 0
     rather than an error, so a closer can call it unconditionally.
     """
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    # Mail lifecycle: read-gated, same rule as send — acking, archiving or
+    # resolving a message addressed to you is not a write to shared memory.
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
     try:
         n = await inbox_resolve_thread(
             thread_id=req.thread_id,

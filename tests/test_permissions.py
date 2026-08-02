@@ -362,3 +362,81 @@ async def test_patch_memories_source_namespace_requires_write(client):
         assert resp.status_code == 403
     finally:
         await _cleanup_principal("patch-nosrc")
+
+
+# --- MAIL IS NOT MEMORY (2026-08-02) ------------------------------------
+#
+# Messaging used to be gated on WRITE access to the inbox namespace, so any
+# principal that was not a shared-namespace writer could not send at all —
+# 4 of 7 on this fleet. These pin the split so a later tidy-up cannot quietly
+# re-conflate them.
+
+
+@pytest.mark.asyncio
+async def test_read_only_principal_can_send_mail(enforced_client):
+    """READ is enough to send. Mail is addressed to a recipient who owns it;
+    it is not shared knowledge deposited in a namespace."""
+    try:
+        _, raw_token = await ps.create_principal(
+            name="mail-reader", type="agent",
+            read_namespaces=["fleet"], write_namespaces=["not-fleet"],
+        )
+        resp = await enforced_client.post(
+            "/memory/send",
+            json={"to": "somebody", "from_": "mail-reader",
+                  "subject": "s", "body": "b"},
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert resp.status_code == 200, (
+            f"read-only principal refused send ({resp.status_code}) — messaging "
+            f"has been re-conflated with memory write"
+        )
+    finally:
+        await _cleanup_principal("mail-reader")
+
+
+@pytest.mark.asyncio
+async def test_principal_without_read_still_cannot_send(enforced_client):
+    """Read is the prerequisite, not a formality — otherwise this was not a
+    narrowing of the gate but its removal."""
+    try:
+        _, raw_token = await ps.create_principal(
+            name="mail-outsider", type="agent",
+            read_namespaces=["elsewhere"], write_namespaces=["elsewhere"],
+        )
+        resp = await enforced_client.post(
+            "/memory/send",
+            json={"to": "somebody", "from_": "mail-outsider",
+                  "subject": "s", "body": "b"},
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert resp.status_code == 403, (
+            f"expected 403 for a principal with no read on the inbox namespace, "
+            f"got {resp.status_code} — the gate was removed, not narrowed"
+        )
+    finally:
+        await _cleanup_principal("mail-outsider")
+
+
+@pytest.mark.asyncio
+async def test_presence_still_requires_write(enforced_client):
+    """DELIBERATELY UNCHANGED: a heartbeat is not mail. It writes a row ABOUT
+    YOU into the namespace, addressed to nobody, so the mail argument does not
+    reach it. Pins that the relaxation stopped where its reasoning stopped."""
+    try:
+        _, raw_token = await ps.create_principal(
+            name="presence-reader", type="agent",
+            read_namespaces=["fleet"], write_namespaces=["not-fleet"],
+        )
+        resp = await enforced_client.post(
+            "/memory/presence",
+            json={"identity": "presence-reader", "project": "p",
+                  "state": "running"},
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert resp.status_code == 403, (
+            f"presence accepted a read-only principal ({resp.status_code}) — "
+            f"the relaxation leaked past the endpoints its argument covers"
+        )
+    finally:
+        await _cleanup_principal("presence-reader")
