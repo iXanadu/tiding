@@ -85,20 +85,6 @@
   is asked for, not derived. Same principle as the liveness split, pointed at
   deploys.
 
-- **SEC-8** One unreadable namespace in a `namespaces[]` list zeroes the ENTIRE
-  result set, silently. Measured 2026-08-01 with a token reading
-  {fleet, claude-web, grok, beast}: `namespaces=[fleet]` → 5 hits ·
-  `[fleet, grok]` → 5 hits · `[fleet, ixanadu]` → **0 hits**. Not a 403 — a
-  200 with no rows. So a client that asks generously gets nothing instead of
-  the subset it is entitled to, and cannot tell that from "no matches". Should
-  either drop unreadable namespaces and serve the rest (with the drop reported
-  as an advisory — the `*_warnings` channel now exists), or refuse loudly with
-  the offending namespace named. Silent-empty is the one behaviour that must
-  not stay. ⚠️ Live consumer risk: BeastChat holds an admin wildcard today so
-  it cannot hit this, but it is scheduled to move to a scoped principal
-  (`ixanadu-chat`, read ixanadu+fleet) — at which point a broad list would
-  silently return zero and the new principal would take the blame.
-
 - **ROST-2** A one-off cross-project call registers a session on that
   project's roster, permanently. `_heartbeat(project_dir)` writes the presence
   row with the SESSION's identity but the project derived from the CALL's
@@ -136,6 +122,22 @@
   it grants nothing new, since permission is namespace-level and any writer's
   rows are already readable by naming them); or surface writers in the result
   so a searcher at least learns who else has written here.
+
+- **SEC-9** An empty search result cannot be told apart from a wrong query.
+  Three separate incidents on 2026-08-02, none of them permission-related:
+  a personal-memory read that omitted `project` returned `200 — 0 hits`; a
+  client's first read after a token swap returned the same because `user_id`
+  defaulted to its own principal; and a peer searching a project it did not
+  write got zero and concluded the knowledge did not exist (see MEM-5). In
+  every case the query was well-formed, the caller was authorised, and the
+  answer was indistinguishable from "nothing matches".
+  Proposal (additive, no behaviour change): when a search returns zero rows,
+  state the partition actually searched — namespace(s), scope, user_id,
+  project — so an empty answer is diagnosable instead of ambiguous. The
+  `*_warnings` advisory channel already exists and the bridge now surfaces it.
+  ⚠️ NOTE: this is NOT the permission case. An unreadable namespace already
+  returns a 403 naming it — verified 2026-08-02, after I wrongly recorded the
+  opposite (see below).
 
 ## Needs-decision
 
