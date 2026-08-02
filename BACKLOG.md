@@ -64,20 +64,6 @@
   verifies host-side config matches what `install.sh` intends would close both
   this and the class.
 
-- **DEPLOY-2** engram has no drain/graceful restart. `scripts/restart.sh` is a
-  bare `launchctl kickstart`, so every deploy refuses connections fleet-wide
-  for a few seconds — it touches every session on every box, not just this
-  project's. Six restarts on 2026-08-01 while the owner had live sessions
-  elsewhere. The watcher survives a blip (it catches poll errors and keeps
-  polling) and heartbeats are best-effort, but a session mid-`memory_store`
-  or mid-`memory_search` sees a connection error. AgentBeast already solved
-  the equivalent (`graceful-deploy.sh`, drain → restart → reattach, ~2s and
-  no in-flight turns cut); engram should have the same or should batch
-  deploys instead of shipping each commit. **Measured, not estimated:** a
-  restart is ~4s of fleet-wide refusal (08:50:52 "Shutting down" → 08:50:56
-  "Application startup complete"), dominated by loading the embedding model.
-  Six restarts on 2026-08-01 ≈ 24s total.
-
 - **WIRE-1** A response field cannot be removed on one consumer's say-so.
   Removing `state` from `/memory/roster` on 2026-08-01 broke `memory_roster`
   for every ALREADY-RUNNING session for 2h19m: the shipped bridge renders it
