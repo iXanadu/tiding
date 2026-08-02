@@ -702,3 +702,53 @@ def test_a_definite_absence_is_a_death(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Absent())
     assert identity.process_is_gone(1234, "whenever") is True
+
+
+# --- A discarded declaration must not be silent (2026-08-02) -------------
+
+
+def test_env_override_of_a_declared_identity_is_announced(monkeypatch, tmp_path):
+    """A committed .engram.cfg declaration that is overridden must SAY SO.
+
+    The precedence itself is correct and load-bearing — a launcher has to seat
+    each spawn distinctly, and .engram.cfg is per-folder so it cannot. What was
+    wrong was the silence: a repo declared `beastchat-server`, ran as
+    `beastchat-grok`, and nothing anywhere reported the divergence. Mail to the
+    declared name reached nobody, and a peer began writing remediation for the
+    wrong cause before anyone noticed.
+    """
+    identity._IDENTITY_OVERRIDE_NOTICE = None
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: "declared-name")
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "env-name")
+    monkeypatch.setattr(identity, "_SESSION_SEAT", None)
+    monkeypatch.setattr(identity, "read_seat_file", lambda: None)
+
+    assert identity.resolve_session_identity("/x") == "env-name"  # env still wins
+    notice = identity.identity_override_notice()
+    assert notice is not None, "the discarded declaration was not reported"
+    assert "declared-name" in notice and "env-name" in notice
+    assert "reaches nobody" in notice
+
+
+def test_no_notice_when_env_and_declaration_agree(monkeypatch):
+    """Agreement is not a divergence — do not cry wolf on a matching pair."""
+    identity._IDENTITY_OVERRIDE_NOTICE = None
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: "same-name")
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "same-name")
+    monkeypatch.setattr(identity, "_SESSION_SEAT", None)
+    monkeypatch.setattr(identity, "read_seat_file", lambda: None)
+
+    assert identity.resolve_session_identity("/x") == "same-name"
+    assert identity.identity_override_notice() is None
+
+
+def test_no_notice_when_nothing_is_declared(monkeypatch):
+    """An env-only session has overridden nothing — silence is correct there."""
+    identity._IDENTITY_OVERRIDE_NOTICE = None
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "env-name")
+    monkeypatch.setattr(identity, "_SESSION_SEAT", None)
+    monkeypatch.setattr(identity, "read_seat_file", lambda: None)
+
+    assert identity.resolve_session_identity("/x") == "env-name"
+    assert identity.identity_override_notice() is None

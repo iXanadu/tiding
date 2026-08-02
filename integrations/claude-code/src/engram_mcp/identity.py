@@ -46,6 +46,17 @@ ADMIN_NAME = "admin"
 # See decision/three-axes-principal-project-address.
 INBOX_IDENTITY_ENV = "ENGRAM_INBOX_IDENTITY"
 
+# Set when the launch env overrides a DIFFERENT identity declared in
+# .engram.cfg. Rendered once as a banner by the bridge (see
+# _identity_override_banner) so a dead declared address cannot sit unnoticed.
+_IDENTITY_OVERRIDE_NOTICE: str | None = None
+
+
+def identity_override_notice() -> str | None:
+    """The pending 'your .engram.cfg declaration is not in effect' notice."""
+    return _IDENTITY_OVERRIDE_NOTICE
+
+
 
 # Session-stable project_dir resolution.
 #
@@ -143,10 +154,39 @@ def resolve_session_identity(project_dir: str | None) -> str | None:
     if from_file:
         return from_file
     env = (os.environ.get(INBOX_IDENTITY_ENV) or "").strip().lower()
-    if env:
-        return env
     declared = resolve_inbox_identity(project_dir)
-    return declared.lower() if declared else None
+    declared = declared.lower() if declared else None
+    if env:
+        # The precedence is correct and load-bearing: a launcher must be able
+        # to seat each spawn distinctly, which is the only thing that keeps two
+        # sessions in one folder from colliding. `.engram.cfg` is per-FOLDER
+        # and cannot express that.
+        #
+        # What was wrong is the SILENCE. A repo that commits
+        # `inbox_identity = X` has that declaration reviewed, version
+        # controlled, and then discarded at runtime with no error, no warning
+        # and nothing anywhere reporting a divergence — so the file says one
+        # thing, the session is another, and mail to the declared name reaches
+        # nobody. Measured 2026-08-02: a project declared `beastchat-server`,
+        # ran as `beastchat-grok`, and the dead address went unnoticed long
+        # enough for a peer to start writing remediation for the wrong cause.
+        #
+        # This module already holds the principle one level up — a runtime seat
+        # that overrides a launcher-set one is reported, "so the override is
+        # never silent". It simply was not applied to launch-over-file. It is
+        # now: same rule, same reason, the other seam.
+        if declared and declared != env:
+            global _IDENTITY_OVERRIDE_NOTICE
+            _IDENTITY_OVERRIDE_NOTICE = (
+                f"'{declared}' (declared in .engram.cfg) is NOT in effect — "
+                f"the launch environment set {INBOX_IDENTITY_ENV}='{env}', "
+                f"which wins. Mail addressed to '{declared}' reaches nobody. "
+                f"Either drop the .engram.cfg line or have the launcher honour "
+                f"it; the env override itself is correct and is what keeps two "
+                f"sessions in one folder distinct."
+            )
+        return env
+    return declared
 
 
 # Runtime seat, taken mid-session rather than injected at launch.

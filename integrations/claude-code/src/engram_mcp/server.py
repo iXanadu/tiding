@@ -18,6 +18,7 @@ from engram_mcp.identity import (
     current_seat,
     derive_project_name,
     hostname,
+    identity_override_notice,
     reader_to_address,
     record_session_process,
     remember_project_dir,
@@ -278,6 +279,7 @@ def _append_guidance(body: str, result: dict) -> str:
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
     alert = (_seat_collision_banner() + _seat_revert_banner()
+             + _identity_override_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
     advisory = _advisories(result)
     if advisory:
@@ -285,6 +287,23 @@ def _append_guidance(body: str, result: dict) -> str:
     if not guidance:
         return alert + body
     return f"{alert}{body}\n\n---\n{guidance}"
+
+
+# Shown once per session: a committed .engram.cfg declaration that the launch
+# environment overrode. Once, not every call — it is a fact to state, not a nag.
+_IDENTITY_OVERRIDE_ANNOUNCED = False
+
+
+def _identity_override_banner() -> str:
+    """Announce that a repo's declared inbox_identity is not the one in use."""
+    global _IDENTITY_OVERRIDE_ANNOUNCED
+    if _IDENTITY_OVERRIDE_ANNOUNCED:
+        return ""
+    notice = identity_override_notice()
+    if not notice:
+        return ""
+    _IDENTITY_OVERRIDE_ANNOUNCED = True
+    return f"⚠️  DECLARED IDENTITY NOT IN EFFECT — {notice}\n\n"
 
 
 def _seat_revert_banner() -> str:
