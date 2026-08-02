@@ -99,6 +99,26 @@
   (`ixanadu-chat`, read ixanadu+fleet) — at which point a broad list would
   silently return zero and the new principal would take the blame.
 
+- **ROST-2** A one-off cross-project call registers a session on that
+  project's roster, permanently. `_heartbeat(project_dir)` writes the presence
+  row with the SESSION's identity but the project derived from the CALL's
+  `project_dir` — two different sources — so any session that makes a single
+  memory call scoped to another project appears on that project's roster,
+  frozen at that instant, until the 48h horizon hides it. Measured
+  2026-08-02: `presence/engram-claude` sat under project `beastchat`
+  (created and last-used the same minute, 22.5h stale) purely because this
+  session wrote one research note with `project_dir=beastchat`;
+  `presence/softphone-grok-4` sits under `abouthr` the same way.
+  The row is factually TRUE — that identity did touch that project — but the
+  roster presents "identities that have touched this project" as "sessions on
+  this project", and a peer correctly read it as a misregistered session and
+  began writing remediation instructions for a project that had nothing wrong
+  with it. Accurate data, wrong meaning attached — the same defect class as
+  `state: running`. Options: don't write presence for cross-project calls
+  (heartbeat only your own project); or mark such rows visiting/transient so
+  the roster can distinguish them; or serve them under a separate field.
+  Whichever, "touched once" must stop rendering as "is here".
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
