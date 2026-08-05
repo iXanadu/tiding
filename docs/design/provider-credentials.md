@@ -47,7 +47,7 @@ wrong.
   | Provider | Where | Line |
   |---|---|---|
   | Grok | `~/.grok/config.toml` engram env block | `ENGRAM_IDENTITY = "grok"` |
-  | GPT/Codex | its MCP/env config | `ENGRAM_IDENTITY=gpt` |
+  | Codex | `~/.codex/config.toml` `[mcp_servers.engram.env]` | `ENGRAM_IDENTITY = "codex"` |
   | Claude Code | *(nothing needed)* | legacy-file fallback covers it |
 
   Claude Code deliberately carries **zero** engram lines in `~/.claude.json`:
@@ -55,9 +55,13 @@ wrong.
   bridge's fallback (below) resolves Claude to the legacy identity file, which
   is (or symlinks to) `identities/claude`.
 
-- **Identity names are identities, not providers.** `claude`, `grok`, `gpt`
+- **Identity names are identities, not providers.** `claude`, `grok`, `codex`
   today; a second same-provider agent on one box (e.g. an app-specific
   session) is just another file + selector.
+- Pair the selector with `ENGRAM_PROVIDER` in the same env block. The provider
+  is a separate axis (it is what the roster uses to tell agents apart); a
+  selector without it leaves the session reporting the back-compat default
+  `claude`, which is the decorative-`providers_seen` defect over again.
 
 ## Resolution order (bridge `config.py`, also inherited by `engram-inbox-wait`)
 

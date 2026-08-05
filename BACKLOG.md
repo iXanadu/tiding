@@ -122,6 +122,18 @@
   it grants nothing new, since permission is namespace-level and any writer's
   rows are already readable by naming them); or surface writers in the result
   so a searcher at least learns who else has written here.
+  ⚠️ **MEASURED 2026-08-05, and it now has a third writer.** One query
+  (`"session handoff decision architecture"`, `scope=project`, this repo) driven
+  through the real stdio bridge under each identity in turn:
+  `claude` → **5 hits**, `grok` → **0**, `codex` → **0**. Same project, same
+  server, all three authorised on the namespace. This is not a latent risk any
+  more — it is the CURRENT state of every non-Claude agent on the box, and
+  onboarding `codex` (2026-08-05) added a second blind reader rather than a
+  second contributor. Compounded by SEC-9: a blind agent gets `No memories
+  found`, which is indistinguishable from an empty project, so it will not
+  report a fault — it will confidently start from scratch. **Any plan that
+  treats multiple providers as one development team is blocked on this item**,
+  because today they cannot read each other's project notes at all.
 
 - **SEC-9** An empty search result cannot be told apart from a wrong query.
   Three separate incidents on 2026-08-02, none of them permission-related:
