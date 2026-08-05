@@ -241,10 +241,19 @@ def _snippet(item, max_lines: int):
     hidden = len(lines) - max_lines
     body = "\n".join(lines[:max_lines])
     key = getattr(item, "key", "<key>")
+    # A project search spans every writer, but memory_get still resolves to the
+    # CALLER's partition — so a bare hint is a dead end for any row the caller
+    # did not write: it would return nothing, having just been advertised as
+    # retrievable. Name the writer so the suggested call actually works.
+    writer = getattr(item, "user_id", None)
+    if getattr(item, "scope", None) == "project" and writer:
+        call = f"memory_get(key={key!r}, user_id={writer!r})"
+    else:
+        call = f"memory_get(key={key!r})"
     return item.model_copy(update={
         "value": (
             f"{body}\n… [+{hidden} more line(s) — TRUNCATED for search. "
-            f"Full text: memory_get(key={key!r})]"
+            f"Full text: {call}]"
         )
     })
 

@@ -374,10 +374,24 @@ async def memory_search(
     project: str | None = None,
     limit: int = 5,
 ) -> list[MemoryItem]:
-    """Hybrid vector + trigram search, scoped to namespace(s) and user."""
+    """Hybrid vector + trigram search, scoped to namespace(s) and user.
+
+    ``user_id="*"`` spans every writer in the partition. It is honored ONLY for
+    ``scope=project``, where the ``project`` column already does the scoping and
+    the ``user_id`` predicate is pure exclusion: a note written by one principal
+    is otherwise invisible to a peer searching the same project, which made
+    shared project memory unreachable for every agent but its author (MEM-5).
+
+    It grants nothing new — permission is enforced at the NAMESPACE level, and
+    any writer's rows were already readable by naming that writer explicitly.
+    For every other scope the wildcard is ignored and treated as a literal,
+    because there ``user_id`` identifies a PERSON (scope=user) or a HOST
+    (scope=machine) and spanning it would be a disclosure, not a fix.
+    """
     _, _, scope, user_id, project = _normalize_key_fields(
         scope=scope, user_id=user_id, project=project
     )
+    all_writers = user_id == "*" and scope == "project"
     namespaces = [ns.lower() for ns in namespaces]
     pool = await get_pool()
     query_embedding = await embed(query)
@@ -396,7 +410,7 @@ async def memory_search(
                   AND namespace = ANY($3::text[])
                   AND scope = $4
                   AND scope <> 'inbox'
-                  AND user_id IS NOT DISTINCT FROM $5
+                  AND ($11 OR user_id IS NOT DISTINCT FROM $5)
                   AND project IS NOT DISTINCT FROM $6
                 ORDER BY embedding <=> $1
                 LIMIT $7 * 3
@@ -418,6 +432,7 @@ async def memory_search(
             settings.trigram_weight,
             settings.vector_threshold,
             settings.trigram_threshold,
+            all_writers,
         )
 
         results = []
@@ -443,13 +458,14 @@ async def memory_search(
             await conn.execute(
                 """UPDATE memories SET last_used_at = NOW()
                    WHERE namespace = $1 AND key = ANY($2) AND scope = $3
-                     AND user_id IS NOT DISTINCT FROM $4
+                     AND ($6 OR user_id IS NOT DISTINCT FROM $4)
                      AND project IS NOT DISTINCT FROM $5""",
                 ns,
                 keys,
                 scope,
                 user_id,
                 project,
+                all_writers,
             )
 
     return results

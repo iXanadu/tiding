@@ -721,6 +721,7 @@ async def memory_search(
     if not query or not query.strip():
         return "No memories found."
 
+    caller_pinned_writer = bool(user_id)
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
             scope or None,
@@ -730,6 +731,14 @@ async def memory_search(
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
+    # A project's memory belongs to the PROJECT, not to whichever principal
+    # happened to write each row. Reads therefore span every writer unless the
+    # caller pinned one deliberately. Writes are unchanged — they still attribute
+    # to the real principal, so provenance is preserved and shown in results.
+    # Without this, a note is invisible to any peer but its author, and the peer
+    # cannot tell that from an empty project (MEM-5 + SEC-9).
+    if resolved_scope == "project" and not caller_pinned_writer:
+        user_id = "*"
     reader_identity, listen_set = compute_identity(project_dir or None)
     # Empty memory_read_namespaces => omit namespaces so the server resolves the
     # search from the token's read permissions (single source of truth). A CSV

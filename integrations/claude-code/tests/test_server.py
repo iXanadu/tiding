@@ -414,6 +414,50 @@ async def test_search_narrows_when_read_list_set(respx_mock):
     assert body["namespaces"] == ["claude-code", "beast"]
 
 
+# --- project reads span all writers (MEM-5) ---
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_project_search_defaults_to_all_writers(respx_mock, tmp_path):
+    """A project read must not be partitioned by whoever wrote each row.
+
+    Project memory belongs to the project. Filtering reads by the writing
+    principal left each agent reading only its own notes, and an empty result
+    is indistinguishable from an empty project — so nobody could detect it.
+    """
+    (tmp_path / ".engram.cfg").write_text("project = spantest\n")
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    await memory_search(query="hello", scope="project", project_dir=str(tmp_path))
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "*"
+    assert body["project"] == "spantest"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_explicit_user_id_still_pins_one_writer(respx_mock, tmp_path):
+    """An explicit user_id is a deliberate narrowing and must be honored."""
+    (tmp_path / ".engram.cfg").write_text("project = spantest\n")
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    await memory_search(query="hello", scope="project",
+                        project_dir=str(tmp_path), user_id="grok")
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "grok"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_non_project_scope_keeps_its_partition(respx_mock):
+    """shared/machine/user partitions are meaningful — never wildcarded."""
+    route = respx_mock.post("/memory/search").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "results": []})
+    )
+    await memory_search(query="hello", scope="shared")
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] != "*"
+
+
 # --- _format_recency (read-defensive recency annotation) ---
 
 from datetime import datetime, timedelta, timezone

@@ -122,6 +122,15 @@
   it grants nothing new, since permission is namespace-level and any writer's
   rows are already readable by naming them); or surface writers in the result
   so a searcher at least learns who else has written here.
+  ✅ **READ HALF FIXED 2026-08-05 (committed, NOT yet deployed).** `user_id="*"`
+  now spans every writer for `scope=project`, and the bridge sends it by default
+  on project reads; writes still attribute to the real principal, so provenance
+  survives and is shown per row. Honored ONLY for `scope=project` — for
+  `scope=user`/`machine` the wildcard stays a literal, because there `user_id`
+  is a person or a host and spanning it would be disclosure, not repair. The
+  search truncation hint now names the writer, since a bare `memory_get` hint
+  is a dead end for a row the caller did not write. Delete this item once prod
+  has pulled and a live cross-writer read is verified.
   ⚠️ **MEASURED 2026-08-05, and it now has a third writer.** One query
   (`"session handoff decision architecture"`, `scope=project`, this repo) driven
   through the real stdio bridge under each identity in turn:
@@ -134,6 +143,31 @@
   report a fault — it will confidently start from scratch. **Any plan that
   treats multiple providers as one development team is blocked on this item**,
   because today they cannot read each other's project notes at all.
+
+- **OWN-1** Nothing stops one agent overwriting another's memory. The owner's
+  rule (2026-08-05): *a development agent may READ any project memory in the
+  fleet, but may not CHANGE one another agent wrote.* The read half is done
+  (MEM-5). The write half is not enforced at all — `user_id` is supplied by the
+  CLIENT and never validated against the caller's token, so a raw HTTP call
+  claiming another principal's `user_id` silently replaces that principal's row.
+  **Measured 2026-08-05:** one agent wrote a project row claiming a peer's
+  `user_id`; the server returned 200 and the peer's value was gone. Only the
+  MCP bridge's convention of sending its own principal name keeps writers apart
+  today, and the credentials standard explicitly invites raw-HTTP harnesses
+  that have no such convention.
+  **The fix is small, because the data is already there.** `/memory/set`
+  already records `owner` server-side from the authenticated principal, and it
+  is authoritative — in the probe above `user_id` read `claude-code` while
+  `owner` correctly read the true writer. So enforcement is a comparison on
+  upsert (existing row's `owner` vs current principal → reject on mismatch),
+  not a schema change or a migration. Decisions needed: the carve-out shape for
+  `scope=shared` (owner's rule says shared is mutable by anyone), what an
+  admin/human principal may override, and whether `owner` should also be
+  exposed on reads so displayed provenance is proof rather than a claim —
+  today a spoofed `user_id` is what a spanning search renders as the author.
+  ⚠️ Backfill: `owner` is NULL on 12,525 of 15,601 rows (pre-dates the column),
+  so an enforcement check needs a defined behaviour for NULL-owner rows or it
+  will either lock everyone out of the old corpus or exempt all of it.
 
 - **SEC-9** An empty search result cannot be told apart from a wrong query.
   Three separate incidents on 2026-08-02, none of them permission-related:
