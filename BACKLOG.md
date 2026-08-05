@@ -105,45 +105,6 @@
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
-- **MEM-5** A shared finding only its author can find is not shared.
-  `scope=project` rows are partitioned by the WRITING principal's `user_id`,
-  so a note written by one principal is invisible to a peer searching the same
-  project under its own identity — it must know to pass an explicit `user_id`
-  override, which means knowing the note exists and who wrote it. Circular.
-  Cost it caused 2026-08-02: research on a project was written to that
-  project's memory, and a peer investigating the SAME project got zero rows,
-  started from scratch, and sent another agent a set of instructions to redo
-  five questions that had already been answered. Nobody was careless — the
-  knowledge was present, correctly scoped, and structurally unreachable.
-  This is the same partition gap that broke the chat client's project reads
-  (`decision/three-axes-principal-project-address` #2), surfacing as a
-  coordination failure rather than a query one. Fix candidates: let a project
-  search span all writers the token may read (see the `user_id="*"` proposal —
-  it grants nothing new, since permission is namespace-level and any writer's
-  rows are already readable by naming them); or surface writers in the result
-  so a searcher at least learns who else has written here.
-  ✅ **READ HALF FIXED 2026-08-05 (committed, NOT yet deployed).** `user_id="*"`
-  now spans every writer for `scope=project`, and the bridge sends it by default
-  on project reads; writes still attribute to the real principal, so provenance
-  survives and is shown per row. Honored ONLY for `scope=project` — for
-  `scope=user`/`machine` the wildcard stays a literal, because there `user_id`
-  is a person or a host and spanning it would be disclosure, not repair. The
-  search truncation hint now names the writer, since a bare `memory_get` hint
-  is a dead end for a row the caller did not write. Delete this item once prod
-  has pulled and a live cross-writer read is verified.
-  ⚠️ **MEASURED 2026-08-05, and it now has a third writer.** One query
-  (`"session handoff decision architecture"`, `scope=project`, this repo) driven
-  through the real stdio bridge under each identity in turn:
-  `claude` → **5 hits**, `grok` → **0**, `codex` → **0**. Same project, same
-  server, all three authorised on the namespace. This is not a latent risk any
-  more — it is the CURRENT state of every non-Claude agent on the box, and
-  onboarding `codex` (2026-08-05) added a second blind reader rather than a
-  second contributor. Compounded by SEC-9: a blind agent gets `No memories
-  found`, which is indistinguishable from an empty project, so it will not
-  report a fault — it will confidently start from scratch. **Any plan that
-  treats multiple providers as one development team is blocked on this item**,
-  because today they cannot read each other's project notes at all.
-
 - **OWN-1** Nothing stops one agent overwriting another's memory. The owner's
   rule (2026-08-05): *a development agent may READ any project memory in the
   fleet, but may not CHANGE one another agent wrote.* The read half is done
