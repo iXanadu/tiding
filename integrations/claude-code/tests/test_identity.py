@@ -202,9 +202,18 @@ def test_startup_cwd_anchors_identity_when_project_dir_omitted(monkeypatch):
     assert listen_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
 
 
-def test_explicit_project_dir_overrides_startup_cwd(monkeypatch):
-    """An explicit arg still wins over the cwd anchor (admin cross-project work,
-    or a session operating on a dir other than its cwd)."""
+def test_cross_project_call_does_not_move_identity(monkeypatch):
+    """A call scoped to another project must NOT re-derive who this session is.
+
+    This assertion is INVERTED from what it was before 2026-08-06, and the
+    inversion is the fix. It previously read "an explicit arg still wins over
+    the cwd anchor (admin cross-project work, ...)" — encoding, as a
+    requirement, the very thing that was broken: reading a peer's project
+    silently changed the session's own addresses for the rest of its life.
+
+    `project_dir` on a call answers "which project's memory am I reading?".
+    It must never answer "who am I?". The cwd anchor does that.
+    """
     _host(monkeypatch)
     monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
     monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
@@ -216,6 +225,69 @@ def test_explicit_project_dir_overrides_startup_cwd(monkeypatch):
         if project_dir
         else identity.ADMIN_NAME,
     )
+    reader, _ = compute_identity("/Users/ixanadu/projects/Beta")
+    assert reader == "alpha@macmini"
+
+
+def test_one_cross_project_call_does_not_cost_a_session_its_group(monkeypatch):
+    """The measured 2026-08-06 disturbance, reproduced end to end.
+
+    A maintenance session anchored at ~/maintenance (project `admin`) makes ONE
+    memory call scoped to another project — ordinary work — and then a normal
+    call with the argument omitted. Before the fix it lost BOTH `admin` and
+    `admin@macmini` from that point on, permanently.
+
+    The failure was silent in the worst way: the watcher is anchored by a flag,
+    so it never moved and still WOKE the session on mail to `admin@macmini` —
+    the session then read an inbox whose listen_set no longer contained the
+    address the mail was addressed to. Woken, and unable to find it.
+    """
+    _host(monkeypatch)
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "maintenance-claude-macmini")
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/maintenance")
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: "admin"
+        if (project_dir or "").endswith("maintenance")
+        else "engram",
+    )
+
+    _, at_start = compute_identity("/Users/ixanadu/maintenance")
+    assert "admin" in at_start and "admin@macmini" in at_start
+
+    # One cross-project read — legitimate, and must not touch identity.
+    compute_identity("/Users/ixanadu/projects/engram")
+
+    # ...and the next ordinary call, argument omitted.
+    _, after = compute_identity(None)
+    assert "admin@macmini" in after, "lost its host-qualified address"
+    assert "admin" in after, "lost its own project group — broadcasts stop landing"
+    assert "engram@macmini" not in after, "adopted another project's address"
+
+
+def test_watcher_anchor_wins_over_its_launching_shell_cwd(monkeypatch):
+    """The watcher's `--project-dir` must beat the cwd of whatever shell ran it.
+
+    The bridge and the watcher have DIFFERENT authoritative anchors: the bridge
+    is spawned with cwd = the session's project root, while the watcher inherits
+    whatever directory its launching shell happened to be in. If the watcher
+    resolved identity from cwd it would listen as the wrong session — the
+    WATCH-1 failure, silent because project mail still lands.
+    """
+    _host(monkeypatch)
+    monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+    monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu")  # a bare shell
+    monkeypatch.setattr(identity, "_IDENTITY_ANCHOR", None)
+    monkeypatch.setattr(
+        identity,
+        "derive_project_name",
+        lambda project_dir: (project_dir or "").rsplit("/", 1)[-1].lower()
+        if project_dir
+        else identity.ADMIN_NAME,
+    )
+    identity.set_identity_anchor("/Users/ixanadu/projects/Beta")
     reader, _ = compute_identity("/Users/ixanadu/projects/Beta")
     assert reader == "beta@macmini"
 

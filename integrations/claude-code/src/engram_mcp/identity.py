@@ -98,6 +98,59 @@ except OSError:  # pragma: no cover - cwd unlinked; nothing to anchor to
 
 _SESSION_PROJECT_DIR: str | None = None
 
+# The directory IDENTITY is derived from, as distinct from the one MEMORY is
+# scoped to. Only a process that knows its own anchor authoritatively sets it
+# (today: the watcher, from its `--project-dir` flag). The bridge never does —
+# `_STARTUP_CWD` is already its authoritative anchor.
+_IDENTITY_ANCHOR: str | None = None
+
+
+def set_identity_anchor(project_dir: str | None) -> None:
+    """Declare, once, the directory this PROCESS derives its identity from.
+
+    For the bridge this is unnecessary: it is spawned with cwd = the session's
+    project root, so ``_STARTUP_CWD`` is authoritative. The watcher is a
+    separate process whose cwd is whatever shell launched it, so its
+    ``--project-dir`` flag is the only authoritative anchor it has — it calls
+    this at startup and the flag then wins over cwd for identity.
+
+    Deliberately not driven by tool arguments: identity must be a property of
+    the session, and anything a per-call argument can move is not one.
+    """
+    global _IDENTITY_ANCHOR
+    if project_dir and os.path.isabs(project_dir):
+        _IDENTITY_ANCHOR = project_dir
+
+
+def identity_anchor_dir() -> str | None:
+    """The directory to derive this session's IDENTITY from.
+
+    Distinct from ``remember_project_dir``, and the distinction is the whole
+    point. ``project_dir`` on a tool call answers *"which project's memory am I
+    reading?"*; it must follow the call, because reading another project's
+    memory is a normal, supported thing to do. It must NOT answer *"who am
+    I?"* — yet until 2026-08-06 both were resolved through the same mutable
+    pin, so ONE cross-project memory call silently re-derived the session's
+    addresses for the rest of its life:
+
+        start, pinned to ~/maintenance   -> ['admin', 'admin@macmini', ...]
+        one call scoped elsewhere        -> ['engram', 'engram@macmini', ...]
+        every call after, arg omitted    -> ['engram', 'engram@macmini', ...]
+
+    The session kept its seat but left its own project GROUP and its
+    ``<project>@<host>`` address. Mail to either was still accepted and stored,
+    and the watcher — anchored by a flag, so it never moved — still WOKE the
+    session; the session then read an inbox whose listen_set no longer
+    contained the address the mail was sent to. Woken, and unable to find it.
+
+    The module comment above called the override "the rare cross-project /
+    cwd-changed case". Those are two cases, not one: a session that genuinely
+    relocates should re-anchor, a session reading a peer's memory must not.
+    Identity now resolves from a fixed anchor and cannot be moved by an
+    argument; ``remember_project_dir`` keeps last-explicit-wins for memory.
+    """
+    return _IDENTITY_ANCHOR or _STARTUP_CWD or _SESSION_PROJECT_DIR
+
 
 def remember_project_dir(project_dir: str | None) -> str | None:
     """Resolve the effective directory to derive identity from.
@@ -773,9 +826,13 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     identity consistent within a session even when the caller passes project_dir
     on some tool calls but not others (see the pin's module note).
     """
-    project_dir = remember_project_dir(project_dir)
+    # Memory scoping still follows the call — reading a peer's project is
+    # normal and must keep working — so the pin is still updated here.
+    remember_project_dir(project_dir)
+    # IDENTITY does not. It resolves from a fixed anchor, so a cross-project
+    # call cannot move this session's addresses out from under its watcher.
     host = hostname()
-    project = derive_project_name(project_dir)
+    project = derive_project_name(identity_anchor_dir())
     override = resolve_session_identity(project_dir) or ""
     channels = resolve_channels()
     if override and override != project:

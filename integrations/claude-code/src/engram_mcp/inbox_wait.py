@@ -40,6 +40,7 @@ from engram_mcp.identity import (
     discover_session_process,
     process_is_gone,
     reader_to_address,
+    set_identity_anchor,
 )
 
 # Exit code for auth failure — distinct from 0 (clean) so a Monitor-armed
@@ -252,6 +253,11 @@ async def _farewell(client, reader_identity: str, project_dir: str | None) -> No
 
 
 async def _run(args) -> int:
+    # This process's cwd is whatever shell launched it, not the session's
+    # project root, so `--project-dir` is the only authoritative anchor the
+    # watcher has. Declare it once, before any identity is computed — the
+    # bridge needs no equivalent, its spawn cwd already is the anchor.
+    set_identity_anchor(args.project_dir or None)
     reader_identity, listen_set = compute_identity(args.project_dir or None)
     if args.address:
         listen_set = [a.strip() for a in args.address.split(",") if a.strip()]
