@@ -67,6 +67,22 @@
   one is silence on read, the other silence on send; in both, an empty result
   and a wrong query are indistinguishable. The `@host` trap deserves its own
   line in the fix: the invalid form reads as *more* precise to a human.
+  **ADDR-3, folded in here because it shares the code path — the register
+  never says what KIND an address is.** Seats, groups, boxes and channels are
+  all drawn from one flat string space with no marker distinguishing them,
+  which is what let a human form `admin@webone` from `project = admin` in the
+  first place. The clearest evidence is the grave: `admin` appears in the
+  register as an address carrying a provider and a project — a seat — while
+  `admin` is simultaneously the group address every session on that project
+  listens on. (Not yet confirmed which that row actually is; the hazard holds
+  either way, because **from the string alone the two are
+  indistinguishable**.) Fix: serve a `kind` (`seat`/`group`/`box`/`channel`)
+  on every register row. Then a picker renders `maintenance-claude (seat)`
+  beside `admin (group)` and the bad form is never typed; and ADDR-2's
+  warning becomes specific — *"`admin` is a GROUP address; `@host` qualifies
+  a SEAT. Did you mean `maintenance-claude-webone`?"* — a typo report rather
+  than a shrug. Documents the rule at the point of use instead of in a doc
+  nobody reads while typing.
 
 - **DEPLOY-3** The spokes' watcher cannot report itself, so the roster's
   watcher field is a false negative fleet-wide. webone, dbone and haos-host
