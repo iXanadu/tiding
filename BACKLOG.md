@@ -49,6 +49,23 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
+- **WATCH-1** The watcher accepts an inherited identity that contradicts its
+  own `--project-dir`, and says nothing. Env wins over the flag, so a watcher
+  launched for project A while the environment still names address B listens
+  as B — the session is then addressed at one place and listening at another,
+  which is SILENT because project mail still lands. **Measured three times on
+  2026-08-05**, all different causes: a harness that daemonised and froze a
+  peer's launch identity, then served it to every later session on the box; a
+  maintainer's own test that resolved to their address instead of the target's
+  and reported the wrong inbox; and the same trap again in a hand-run check.
+  The fix is a refusal, not a warning: if `ENGRAM_INBOX_IDENTITY` is inherited
+  (not explicitly passed) AND disagrees with the identity `--project-dir`
+  resolves to, refuse to start and name both. An explicitly-passed identity
+  must still win — stating an intent differs from leaking one, and co-working
+  sessions depend on the explicit form. Quarantined here because it is
+  addressing; recorded because it has now cost three separate people time in
+  one day and the failure looks like healthy operation from every angle.
+
 ## Blocking-ish — ops gaps that cost live sessions today
 
 - **LOG-1** Verify log rotation on ALREADY-INSTALLED boxes. `install.sh` writes
@@ -104,31 +121,6 @@
   (heartbeat only your own project); or mark such rows visiting/transient so
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
-
-- **OWN-1** Nothing stops one agent overwriting another's memory. The owner's
-  rule (2026-08-05): *a development agent may READ any project memory in the
-  fleet, but may not CHANGE one another agent wrote.* The read half is done
-  (MEM-5). The write half is not enforced at all — `user_id` is supplied by the
-  CLIENT and never validated against the caller's token, so a raw HTTP call
-  claiming another principal's `user_id` silently replaces that principal's row.
-  **Measured 2026-08-05:** one agent wrote a project row claiming a peer's
-  `user_id`; the server returned 200 and the peer's value was gone. Only the
-  MCP bridge's convention of sending its own principal name keeps writers apart
-  today, and the credentials standard explicitly invites raw-HTTP harnesses
-  that have no such convention.
-  **The fix is small, because the data is already there.** `/memory/set`
-  already records `owner` server-side from the authenticated principal, and it
-  is authoritative — in the probe above `user_id` read `claude-code` while
-  `owner` correctly read the true writer. So enforcement is a comparison on
-  upsert (existing row's `owner` vs current principal → reject on mismatch),
-  not a schema change or a migration. Decisions needed: the carve-out shape for
-  `scope=shared` (owner's rule says shared is mutable by anyone), what an
-  admin/human principal may override, and whether `owner` should also be
-  exposed on reads so displayed provenance is proof rather than a claim —
-  today a spoofed `user_id` is what a spanning search renders as the author.
-  ⚠️ Backfill: `owner` is NULL on 12,525 of 15,601 rows (pre-dates the column),
-  so an enforcement check needs a defined behaviour for NULL-owner rows or it
-  will either lock everyone out of the old corpus or exempt all of it.
 
 - **SEC-9** An empty search result cannot be told apart from a wrong query.
   Three separate incidents on 2026-08-02, none of them permission-related:
@@ -239,6 +231,21 @@
     to be clear about: collision detection is NONCE-based via
     `presence_update`, so eager SEAT claiming would not populate it. Eager
     would fix a consumer's rendering, not engram's detector.
+  ⚠️ **NEW EVIDENCE 2026-08-05, and it is the strongest case for eager yet —
+  not from the model, from DISCOVERABILITY.** Which tools trigger a claim is
+  undocumented and unguessable: the heartbeat rides five tool handlers, and
+  `memory_whoami` is NOT one of them. A peer integrating a new provider drove
+  `whoami`, got a correct principal back, and reasonably concluded the session
+  was wired up — then spent an hour on four disconfirming probes into the
+  addressing layer, because a session with a working tool call and no address
+  looks broken in exactly the place the fault is not. **A working tool call is
+  not a heartbeating tool call, and nothing in the output distinguishes them.**
+  Lazy can stay (the argument above holds), but the discoverability cost is
+  now measured rather than theoretical, and at minimum the claim-triggering
+  set belongs in the docs and in `memory_whoami`'s own output — an identity
+  report that cannot say "you hold no address yet, call any memory tool to
+  claim one" is the surface most likely to be asked, answering everything
+  except the thing that is wrong.
   **Proposed resolution, consistent with the liveness split:** detecting a
   second session that never speaks to engram is ORCHESTRATION's job, not the
   store's. The orchestrator knows what it spawned; the store can only ever see

@@ -81,6 +81,34 @@ class VersionConflict(Exception):
         super().__init__("version mismatch")
 
 
+class OwnershipConflict(Exception):
+    """Raised when a principal tries to overwrite a row another one wrote.
+
+    The owner's rule (2026-08-05): a development agent may READ any project
+    memory in the fleet, but may not CHANGE one another agent wrote — shared
+    scope excepted, because shared is deliberately everyone's.
+
+    This is enforceable only because ``owner`` is recorded SERVER-SIDE from the
+    authenticated token and is therefore authoritative, unlike ``user_id``,
+    which the client supplies and can simply assert. Measured 2026-08-05: one
+    agent wrote a project row claiming a peer's ``user_id``, the server
+    returned 200, and the peer's value was gone — while ``owner`` on that same
+    row correctly recorded the real writer the whole time. The data to stop it
+    was already being collected; nothing consulted it.
+
+    Carries both names so the refusal names who holds the row rather than
+    saying "denied" — a caller that cannot see the holder cannot tell a
+    permission problem from a partition mistake.
+    """
+
+    def __init__(self, current_owner: str, attempted_by: str | None):
+        self.current_owner = current_owner
+        self.attempted_by = attempted_by
+        super().__init__(
+            f"owned by {current_owner!r}, not {attempted_by!r}"
+        )
+
+
 def _normalize_key_fields(
     namespace: str | None = None,
     key: str | None = None,
@@ -142,6 +170,7 @@ async def memory_set(
     metadata: dict | None = None,
     owner: str | None = None,
     if_match: str | None = None,
+    actor_is_admin: bool = False,
 ) -> tuple[str, bool, str]:
     """Store or update a memory with its embedding.
 
@@ -179,6 +208,15 @@ async def memory_set(
 
     metadata_json = json.dumps(metadata) if metadata else None
 
+    # OWN-1. Ownership is enforced for scope=project ONLY, which is exactly the
+    # rule as stated: project memory belongs to its writer, shared is
+    # everyone's. Deliberately NOT extended to the protocol scopes (inbox,
+    # presence, seat) — mail and registry rows are written and amended by
+    # parties other than their author BY DESIGN (acks, resolves, releases), so
+    # an ownership gate there would break messaging fleet-wide to fix a problem
+    # those scopes do not have.
+    enforce_owner = scope == "project" and not actor_is_admin
+
     async with pool.acquire() as conn:
         # The if_match check and the write MUST be one transaction, with the
         # row locked — otherwise the guard has the very race it exists to
@@ -186,7 +224,35 @@ async def memory_set(
         # is lost). SELECT ... FOR UPDATE serialises concurrent conditional
         # writers on the same key; the row is held only for this statement
         # pair, never across a client's think-time.
-        async with conn.transaction() if if_match is not None else _null_ctx():
+        async with (
+            conn.transaction()
+            if (if_match is not None or enforce_owner)
+            else _null_ctx()
+        ):
+            if enforce_owner:
+                # FOR UPDATE, and inside the transaction, for the same reason
+                # if_match is: a check that releases its row before the write
+                # has the exact race it exists to close — two writers both read
+                # "owned by me", both proceed, one row survives.
+                existing_owner = await conn.fetchval(
+                    """
+                    SELECT owner FROM memories
+                    WHERE namespace = $1 AND key = $2 AND scope = $3
+                      AND user_id IS NOT DISTINCT FROM $4
+                      AND project IS NOT DISTINCT FROM $5
+                    FOR UPDATE
+                    """,
+                    namespace, key, scope, user_id, project,
+                )
+                # A NULL owner is a row that predates the column (12,525 of
+                # them at the time of writing). It is allowed through rather
+                # than locked away: refusing would make the legacy corpus
+                # permanently unwritable by anyone, to protect authorship
+                # nobody recorded. The upsert stamps `owner` on the way past,
+                # so the corpus becomes protected as it is touched instead of
+                # needing a migration.
+                if existing_owner is not None and existing_owner != owner:
+                    raise OwnershipConflict(existing_owner, owner)
             if if_match == "":
                 # MUST-NOT-EXIST is a different problem from must-match, and
                 # the row lock below cannot solve it: SELECT ... FOR UPDATE has

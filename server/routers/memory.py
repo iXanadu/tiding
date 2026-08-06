@@ -55,6 +55,7 @@ from server.services.memory_service import (
     INBOX_NAMESPACE,
     INBOX_SCOPE,
     PRESENCE_SCOPE,
+    OwnershipConflict,
     VersionConflict,
     inbox_ack,
     inbox_archive,
@@ -132,6 +133,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
             metadata=metadata or None,
             owner=owner,
             if_match=req.if_match,
+            actor_is_admin=bool(principal and principal.get("is_admin")),
         )
         # AUDIT-1: the write trail. Overwrites matter most — "created": false
         # is the overwrite that no backup window could reconstruct.
@@ -175,6 +177,33 @@ async def set_memory(req: MemorySetRequest, request: Request):
             if_match_applied=req.if_match is not None,
             warning=warning,
             inbox_banner=banner,
+        )
+    except OwnershipConflict as e:
+        # 409, and it NAMES the holder. A bare "denied" cannot be told apart
+        # from a partition mistake, which is the failure this project has paid
+        # for repeatedly — an answer that is technically correct and leaves the
+        # caller unable to act on it. Knowing the owner is not a disclosure:
+        # the row was already readable, and its writer is already shown on
+        # every search result.
+        await audit("memory.set.refused", principal, {
+            "namespace": req.namespace, "key": req.key, "scope": req.scope,
+            "project": req.project, "owner": e.current_owner,
+            "attempted_by": e.attempted_by,
+        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "ownership_conflict",
+                "message": (
+                    f"'{req.key}' in project '{req.project}' was written by "
+                    f"'{e.current_owner}' and cannot be changed by "
+                    f"'{e.attempted_by}'. Project memory is readable by every "
+                    f"agent but writable only by its author — write your own "
+                    f"key, or use scope=shared if this belongs to everyone."
+                ),
+                "owner": e.current_owner,
+                "attempted_by": e.attempted_by,
+            },
         )
     except VersionConflict as e:
         # 409 carries the CURRENT value so the caller can re-merge its section
