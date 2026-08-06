@@ -50,14 +50,20 @@
   switched to `fleet` AND the log is quiet for a full grace week.
 
 - **ADDR-2** A send to an address nobody holds succeeds silently. Measured
-  2026-08-06: a private huddle named two participants in the form
-  `<project>@<host>` — a shape that resolves to nothing, because the valid
-  qualified form is `<SEAT>@<host>` and a project name is a bare group
-  address. Delivery returned no error, so from the convener's side "never
-  invited" and "slow to answer" were indistinguishable, and the huddle waited
-  ~12 minutes on a session that was never in it. One of the two invalid names
-  happened to have a working twin in the same list, which is the only reason
-  the room was not empty.
+  2026-08-06: a private huddle named two participants as `admin@macmini` /
+  `admin@webone` and waited ~12 minutes on a session that was never in it,
+  because nothing listened there and delivery returned no error — from the
+  convener's side "never invited" and "slow to answer" are one picture.
+  ⛔ **RE-SCOPED — the original diagnosis here was WRONG and would have made
+  this worse.** This item first recorded `<project>@<host>` as an invalid
+  form. It is not: it is the documented address (see this module's header)
+  and is now restored in `7e9ee9c`. Those two names were **correct**; the
+  sessions had stopped listening on them because a seated session's
+  listen_set dropped `<project>@<host>`.
+  **So the warning must never say `<project>@<host>` is invalid.** Shipping
+  the first version of this item would have hardened the wrong rule into the
+  tool and buried the real regression. The defect that survives is only the
+  SILENCE: a send matching no listener returns success.
   **Warn, do not reject** — sending to an address with nobody behind it is
   deliberate and load-bearing (mail queues durably for a session that is
   dormant or has not started; the handoff pattern depends on it). Proposal:
@@ -65,50 +71,49 @@
   naming the address and the live seats on that project, via the existing
   `*_warnings` channel. Additive, no behaviour change. Pairs with **SEC-9** —
   one is silence on read, the other silence on send; in both, an empty result
-  and a wrong query are indistinguishable. The `@host` trap deserves its own
-  line in the fix: the invalid form reads as *more* precise to a human.
+  and a wrong query are indistinguishable.
+  ⚠️ The advisory must reach the party that NAMED the address, which the
+  obvious implementation misses: the name that caused this entered at huddle
+  creation and fanned out, so a warning living only in `memory_send` would
+  advise the relay and never the human. Surfaces should also render RESOLVED
+  addresses rather than the strings as typed.
   **ADDR-3, folded in here because it shares the code path — the register
   never says what KIND an address is.** Seats, groups, boxes and channels are
-  all drawn from one flat string space with no marker distinguishing them,
-  which is what let a human form `admin@webone` from `project = admin` in the
-  first place. The clearest evidence is the grave: `admin` appears in the
-  register as an address carrying a provider and a project — a seat — while
-  `admin` is simultaneously the group address every session on that project
-  listens on. (Not yet confirmed which that row actually is; the hazard holds
-  either way, because **from the string alone the two are
-  indistinguishable**.) Fix: serve a `kind` (`seat`/`group`/`box`/`channel`)
-  on every register row. Then a picker renders `maintenance-claude (seat)`
-  beside `admin (group)` and the bad form is never typed; and ADDR-2's
-  warning becomes specific — *"`admin` is a GROUP address; `@host` qualifies
-  a SEAT. Did you mean `maintenance-claude-webone`?"* — a typo report rather
-  than a shrug. Documents the rule at the point of use instead of in a doc
-  nobody reads while typing.
+  all drawn from one flat string space with no marker distinguishing them, so
+  no surface can tell a caller what it is looking at. Evidence: `admin`
+  appears in the register as an address carrying a provider and a project —
+  a seat — while `admin` is simultaneously the group address every session on
+  that project listens on. From the string alone the two are
+  indistinguishable, and one of them is a grave quiet ~43h.
+  ⛔ **Also re-scoped:** the `kind` field must NOT encode "a project cannot be
+  host-qualified" — it can, and that is now the restored convention. What it
+  should express is which strings are addresses **of what sort**, so a picker
+  can render `maintenance-claude (seat)` beside `admin (group)` and
+  `admin@webone (group on host)`. The value is naming the kinds, not policing
+  a form that turned out to be legitimate.
 
-- **DEPLOY-3** The spokes' watcher cannot report itself, so the roster's
-  watcher field is a false negative fleet-wide. webone, dbone and haos-host
-  all run `/opt/srv/engram` at `7376ea2` (2026-07-21); the watcher beat
-  shipped in `a70c67d` (2026-07-25). Verified two ways: `7376ea2` is a
-  genuine ancestor of `a70c67d`, and the beat call is absent from the
-  deployed bridge source on all three. Those watchers run correctly and are
-  structurally incapable of announcing it, so `no watcher seen` on any spoke
-  means nothing and misled two sessions in one hour.
-  ⚠️ **Read the scope narrowly — it is announcement, not liveness.** Two
-  separate paths, and only one is broken: watcher→inbox (receive + wake) works
-  on every spoke, polls the API directly, and does not involve the beat;
-  watcher→register (self-announce) is the missing half. A spoke session is
-  awake and reachable, it just cannot say so. Established by measurement after
-  I claimed the opposite: a spoke woke on a DM within seconds of `created_at`,
-  three times in one session. Do NOT tell spokes to poll manually — a working
-  watcher already covers it.
-  ⚠️ **Blast radius is a peer's unbuilt feature:** AgentBeast asked
-  (2026-07-28, LIVE-2 residual) for `watcher_last_seen` on `/session/seats`
-  to compute liveness for *remote hand-launched sessions* — precisely these
-  boxes. Built against today's fleet it would read every spoke session as
-  watcher-dead and drop live sessions from their picker, which is the failure
-  the picker exists to prevent. **The field is not trustworthy until the
-  spokes are deployed; that deploy is the owner's.** Corrects the standing
-  note that the spokes sit at `f61bf55` — that SHA does not exist in this
-  repo.
+- **TREE-1** The hub's bridge executes a DEV working tree, and nothing says
+  so. Measured 2026-08-06 by the interpreter's own resolution
+  (`python -c "import engram_mcp.identity as m; print(m.__file__)"`) in each
+  box's `cc-memory-3.12`:
+  ```
+  macmini  → ~/projects/engram/.../engram_mcp/identity.py    (DEV)
+  spokes   → /opt/srv/engram/.../engram_mcp/identity.py      (PROD)
+  ```
+  So every session on the box that HOSTS prod engram has been running
+  uncommitted working-tree edits — an editor mid-thought changes live
+  sessions at their next start — and conversely, anything landed in
+  `/opt/srv/engram` has never affected the hub's own sessions. Both trees are
+  editable installs, so no reinstall gates it; a session restart is enough.
+  ⚠️ **It nearly shipped a half-deploy.** A peer caught it *before* the
+  deploy step was written, and noted their own confirmation of a diagnosis
+  had been read out of a tree their session does not execute. Without that,
+  the fix would have landed on one admin box and not the other, and the
+  symptom would have read as "the fix didn't work."
+  Mitigated for now by deploying BOTH macmini trees to the same commit.
+  **The decision — should the hub import dev or prod — is the owner's**, and
+  is not made. Whichever way it goes, the resolution should be *observable*
+  rather than inferred from install layout.
 
 - **HUD-2** Adding a participant to a running thread works, and nobody can
   find it. Membership is not frozen at creation, contrary to the tool's own
@@ -175,8 +180,11 @@
   DERIVABLE (beat interval × a small missed-beat count), and SEAT-13's
   revocation gap closes as a side effect (revocation currently heals only a
   session that goes on to do work — the population least likely to be falsely
-  declared dead). One item sitting underneath the picker, SEAT-13, SEAT-15
-  and DEPLOY-3.
+  declared dead). One item sitting underneath the picker, SEAT-13 and
+  SEAT-15.
+  ⓘ Its fleet-wide half is gone: every spoke ran a pre-beat bridge until
+  2026-08-06, which made `no watcher seen` a false negative on three boxes.
+  The whole fleet is now current, so that field means what it says.
   ★ **Caveat, so nobody builds on it unwarned:** a background beat tracks the
   BRIDGE PROCESS, not the agent. A wedged session with a healthy bridge would
   beat happily. It moves the unknown, it does not delete it — the ownership
