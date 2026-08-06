@@ -49,6 +49,66 @@
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
+- **ADDR-2** A send to an address nobody holds succeeds silently. Measured
+  2026-08-06: a private huddle named two participants in the form
+  `<project>@<host>` — a shape that resolves to nothing, because the valid
+  qualified form is `<SEAT>@<host>` and a project name is a bare group
+  address. Delivery returned no error, so from the convener's side "never
+  invited" and "slow to answer" were indistinguishable, and the huddle waited
+  ~12 minutes on a session that was never in it. One of the two invalid names
+  happened to have a working twin in the same list, which is the only reason
+  the room was not empty.
+  **Warn, do not reject** — sending to an address with nobody behind it is
+  deliberate and load-bearing (mail queues durably for a session that is
+  dormant or has not started; the handoff pattern depends on it). Proposal:
+  when a destination matches no address in the register, return an advisory
+  naming the address and the live seats on that project, via the existing
+  `*_warnings` channel. Additive, no behaviour change. Pairs with **SEC-9** —
+  one is silence on read, the other silence on send; in both, an empty result
+  and a wrong query are indistinguishable. The `@host` trap deserves its own
+  line in the fix: the invalid form reads as *more* precise to a human.
+
+- **DEPLOY-3** The spokes' watcher cannot report itself, so the roster's
+  watcher field is a false negative fleet-wide. webone, dbone and haos-host
+  all run `/opt/srv/engram` at `7376ea2` (2026-07-21); the watcher beat
+  shipped in `a70c67d` (2026-07-25). Verified two ways: `7376ea2` is a
+  genuine ancestor of `a70c67d`, and the beat call is absent from the
+  deployed bridge source on all three. Those watchers run correctly and are
+  structurally incapable of announcing it, so `no watcher seen` on any spoke
+  means nothing and misled two sessions in one hour.
+  ⚠️ **Read the scope narrowly — it is announcement, not liveness.** Two
+  separate paths, and only one is broken: watcher→inbox (receive + wake) works
+  on every spoke, polls the API directly, and does not involve the beat;
+  watcher→register (self-announce) is the missing half. A spoke session is
+  awake and reachable, it just cannot say so. Established by measurement after
+  I claimed the opposite: a spoke woke on a DM within seconds of `created_at`,
+  three times in one session. Do NOT tell spokes to poll manually — a working
+  watcher already covers it.
+  ⚠️ **Blast radius is a peer's unbuilt feature:** AgentBeast asked
+  (2026-07-28, LIVE-2 residual) for `watcher_last_seen` on `/session/seats`
+  to compute liveness for *remote hand-launched sessions* — precisely these
+  boxes. Built against today's fleet it would read every spoke session as
+  watcher-dead and drop live sessions from their picker, which is the failure
+  the picker exists to prevent. **The field is not trustworthy until the
+  spokes are deployed; that deploy is the owner's.** Corrects the standing
+  note that the spokes sit at `f61bf55` — that SHA does not exist in this
+  repo.
+
+- **CHAN-1** There is no in-session channel join, and the workaround creates
+  listening the register cannot see. A running seat cannot subscribe to a
+  channel it was not spawned with — membership arrives once, at launch, via
+  `ENGRAM_CHANNELS`. The only workaround found in the field is
+  `engram-inbox-wait --address '<csv>'`, which overrides the watched
+  listen_set and restores wake-on-message without a restart. But it restores
+  *hearing*, not *presence*: the roster still does not show the seat on that
+  address, so a session can be listening somewhere nobody can discover.
+  That is addressing state living in a process argument instead of in the
+  register — the exact inverse of **ADDR-2** (mail sent where nobody listens
+  vs. listening nobody can find), and silent in the same way. Reported by a
+  spoke maintenance session 2026-08-06 after it tried to reach a huddle
+  through a channel that did not exist. An in-session join/leave belongs in
+  the tool surface.
+
 - **WATCH-1** The watcher accepts an inherited identity that contradicts its
   own `--project-dir`, and says nothing. Env wins over the flag, so a watcher
   launched for project A while the environment still names address B listens
