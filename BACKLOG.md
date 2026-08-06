@@ -110,8 +110,43 @@
   note that the spokes sit at `f61bf55` — that SHA does not exist in this
   repo.
 
+- **HUD-2** Adding a participant to a running thread works, and nobody can
+  find it. Membership is not frozen at creation, contrary to the tool's own
+  description: `participants` is stored PER MESSAGE, and a fan-out send
+  carrying an existing `thread_id` with a wider recipient list widens
+  membership from that message forward (not retroactively — replies to
+  earlier messages still reach the original set). Demonstrated live
+  2026-08-06 on a huddle three sessions had all concluded was unfixable —
+  including this one, which owns the code and stated the false limitation
+  three times before reading it.
+  ⚠️ **The real hazard is two membership records.** A consumer keeping its
+  own huddle table (create/rename/close, no add) will disagree with the
+  transport the moment a re-send widens a thread, and both layers will
+  believe they are right — the defect class of the whole day. Any
+  add-participant feature built above should be a thin call onto this
+  behaviour, with the consumer's record FOLLOWING delivery rather than
+  paralleling it. One source of truth: the messages.
+  Fix here is documentation plus possibly an explicit verb — not new
+  plumbing. Also correct the `memory_send`/`memory_reply` docstrings, which
+  currently assert the opposite of what the code does and are what misled
+  three sessions.
+
 - **BEAT-1** The bridge has no background beat, so "last spoke" measures
-  ACTIVITY, not PRESENCE. Every heartbeat rides a tool call, so the register
+  ACTIVITY, not PRESENCE.
+  ★ **PROMOTED 2026-08-06 — this now gates how much of the fleet is
+  discoverable at all.** A peer's spawn table turns out to be HUB-LOCAL: a
+  session it launched itself on a spoke is absent from it. That makes
+  engram's register the ONLY source spanning nodes, so the register's known
+  incompleteness stops being tolerable. Coverage today:
+  `remote + has spoken` is covered by the register; **`remote + never spoken`
+  is invisible to both sources.** A timer beat closes that quadrant for any
+  session with a running bridge.
+  It also **dissolves SEAT-15 rather than deciding it**: the first beat
+  claims the seat, so lazy-vs-eager stops being a policy question. Both
+  maintainers leaned "stay lazy" on the reasoning that an address exists to
+  participate in messaging and a silent session is not a participant — sound
+  while the register was not the discovery surface, and that premise has now
+  changed. Every heartbeat rides a tool call, so the register
   records sessions that used a memory tool — not sessions that exist. A live
   session on a long build is indistinguishable from a corpse, and the
   population this hides is the one most worth reaching: an idle session is
