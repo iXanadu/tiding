@@ -31,6 +31,7 @@ def test_identity_from_engram_cfg_when_no_env(monkeypatch):
     assert listen_set == [
         "beastchat-app",
         "beastchat",
+        "beastchat@macmini",
         "machine:macmini",
         "beastchat-app@macmini",
     ]
@@ -54,12 +55,72 @@ def test_override_gives_distinct_identity_but_keeps_project_group(monkeypatch):
     assert reader == "beastchat-app@macmini"
     # ...but still listens on the shared project group for broadcasts
     assert "beastchat" in listen_set
+    # ...and on the project's HOST-QUALIFIED group address, which names "the
+    # beastchat session on macmini" without knowing its seat.
     assert listen_set == [
         "beastchat-app",
         "beastchat",
+        "beastchat@macmini",
         "machine:macmini",
         "beastchat-app@macmini",
     ]
+
+
+def test_seated_session_still_answers_to_project_at_host(monkeypatch):
+    """A launcher-assigned seat must not cost a session its `<project>@<host>`.
+
+    The operator addresses maintenance sessions as `admin@webone` and
+    `admin@macmini` — one per box, distinct, and knowable without asking what
+    seat a launcher happened to inject. That address is this module's
+    documented contract (see the header) and an UNSEATED session has always
+    had it.
+
+    A SEATED session did not, until 2026-08-06: the override branch added the
+    seat's qualified form and dropped the project's. When the launcher began
+    seating every session it spawned, `admin@<host>` silently ceased to exist
+    fleet-wide — no rejection, no error, simply no listener. This test is the
+    regression guard for that address, expressed in the operator's own terms.
+    """
+    _host(monkeypatch)
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "maintenance-claude-webone")
+    monkeypatch.setattr(identity, "derive_project_name", lambda _d: "admin")
+    reader, listen_set = compute_identity("/whatever")
+
+    # The seat still names this session precisely — seats are not weakened.
+    assert reader == "maintenance-claude-webone@macmini"
+    assert "maintenance-claude-webone" in listen_set
+
+    # ...and the operator's convention answers again.
+    assert "admin@macmini" in listen_set
+
+    # The group address is NOT a substitute: it reaches every box, so it
+    # cannot distinguish the macmini session from the webone one. That
+    # inability is the whole reason the host-qualified form exists.
+    assert "admin" in listen_set
+
+
+def test_two_boxes_get_distinct_project_at_host_addresses(monkeypatch):
+    """`admin@macmini` and `admin@webone` must name DIFFERENT sessions.
+
+    The operator's requirement is that a sender/receiver id be unique and say
+    who it is and where it is. Two seated maintenance sessions on two boxes
+    are the case that failed today, so assert it directly rather than trusting
+    that per-host formatting implies per-host distinctness.
+    """
+    monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "maintenance-claude")
+    monkeypatch.setattr(identity, "derive_project_name", lambda _d: "admin")
+
+    monkeypatch.setattr(identity, "hostname", lambda: "macmini")
+    _, on_macmini = compute_identity("/whatever")
+    monkeypatch.setattr(identity, "hostname", lambda: "webone")
+    _, on_webone = compute_identity("/whatever")
+
+    assert "admin@macmini" in on_macmini
+    assert "admin@webone" in on_webone
+    # Neither box answers to the other's address — that is what makes the
+    # convention addressable rather than ambiguous.
+    assert "admin@webone" not in on_macmini
+    assert "admin@macmini" not in on_webone
 
 
 def test_override_equal_to_project_is_a_noop(monkeypatch):
@@ -327,7 +388,11 @@ class TestRuntimeSeat:
         reader, listen = compute_identity("/whatever")
         assert reader == "meidura-audit@macmini"
         assert listen == [
-            "meidura-audit", "meidura", "machine:macmini", "meidura-audit@macmini",
+            "meidura-audit",
+            "meidura",
+            "meidura@macmini",
+            "machine:macmini",
+            "meidura-audit@macmini",
         ]
 
     def test_project_group_survives_so_broadcasts_still_land(self, monkeypatch):

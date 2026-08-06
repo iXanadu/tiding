@@ -781,9 +781,39 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     if override and override != project:
         reader = f"{override}@{host}"
         # precise identity first, then the project GROUP address (broadcasts to
-        # all sessions on the project still land), then machine, then self,
-        # then coalition channels.
-        return (reader, [override, project, f"machine:{host}", reader, *channels])
+        # all sessions on the project still land), then the project's
+        # HOST-QUALIFIED group address, then machine, then self, then coalition
+        # channels.
+        #
+        # `<project>@<host>` is load-bearing and was missing here until
+        # 2026-08-06. It is this module's documented contract (see the header:
+        # an admin session listens on ``admin@<host>``) and the convention the
+        # operator addresses by: `admin@webone` and `admin@macmini` name the
+        # maintenance session on each box, distinctly, without anyone knowing
+        # what seat a launcher happened to assign.
+        #
+        # An unseated session got it from the branch below. A SEATED session
+        # did not — so the moment a launcher began injecting
+        # ENGRAM_INBOX_IDENTITY for every session it spawned, that address
+        # silently stopped existing fleet-wide. Nothing rejected mail sent to
+        # it; there was simply no longer a listener, which is the quietest way
+        # for an address to die. Seats were the right change; dropping the
+        # address underneath them was not.
+        #
+        # Additive by construction: the seat, the seat@host, the group and the
+        # box are all still here, so restoring this cannot regress addressing
+        # that works today.
+        return (
+            reader,
+            [
+                override,
+                project,
+                f"{project}@{host}",
+                f"machine:{host}",
+                reader,
+                *channels,
+            ],
+        )
     reader = f"{project}@{host}"
     return (reader, [project, f"machine:{host}", reader, *channels])
 

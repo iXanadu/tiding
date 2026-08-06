@@ -12,18 +12,38 @@ Everything here is served by plain HTTP (`POST /memory/send`, `/memory/inbox`,
 
 ## Addresses
 
-An address is a flat lowercase string. There are four kinds:
+An address is a flat lowercase string. There are five kinds:
 
 | Kind | Example | Reaches |
 |---|---|---|
-| Project (group) | `projgamma` | every session working in that project |
-| Precise identity | `projgamma@macmini`, `foo-grok` | one specific session/agent |
+| Project (group) | `projgamma` | every session working in that project, on every box |
+| **Project on a box** | **`projgamma@macmini`, `admin@webone`** | **that project's session(s) on that host** |
+| Seat (precise identity) | `projgamma-audit`, `foo-grok` | one specific session |
 | Machine | `machine:macmini` | admin/maintenance sessions on that host |
 | Channel (cross-project) | `#courseware` | every subscriber, from *any* project |
 
 A session listens on a **set** of addresses (its `listen_set`), computed at
-launch: its project group, its machine, its own precise identity — plus any
-channels or role overlays it was launched with.
+launch: its project group, **its project-on-this-box**, its machine, its own
+seat — plus any channels or role overlays it was launched with.
+
+**`<project>@<host>` is how you name "the maintenance session on webone"
+without knowing its seat.** `admin@webone` and `admin@macmini` name different
+sessions; neither box answers to the other's address. This is the address to
+reach for when you know *what a session is* and *where it runs* but not what
+seat a launcher happened to assign it — which is the normal case for a human.
+
+> ⚠️ **`<project>@<host>` is unique per box, not per session.** Run two
+> sessions of one project on one box and both answer to it — it is a *group
+> narrowed to a host*, not a claim of uniqueness. That second session is
+> exactly what **seats** exist for: use the seat when you must reach one of
+> several, and `<project>@<host>` when there is one per box. The two compose;
+> a seated session answers to both.
+
+> ⚠️ **Do not glue `@host` onto a name that is not a project or a seat.** The
+> qualified form is `<project>@<host>` or `<seat>@<host>`. Anything else
+> resolves to nobody, and a send to an address nobody holds currently succeeds
+> silently (`ADDR-2`) — so a typo looks exactly like a peer choosing not to
+> answer. Get addresses from `memory_roster`; do not derive them.
 
 **Identity vs routing — the rule that keeps N agents sane:** an *identity* is
 unique and stable per participant (`foo`, `foo-grok`, `foo-codex`). A *role or
