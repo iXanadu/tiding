@@ -119,34 +119,45 @@
   2026-08-06 on a huddle three sessions had all concluded was unfixable —
   including this one, which owns the code and stated the false limitation
   three times before reading it.
-  ⚠️ **The real hazard is two membership records.** A consumer keeping its
-  own huddle table (create/rename/close, no add) will disagree with the
-  transport the moment a re-send widens a thread, and both layers will
-  believe they are right — the defect class of the whole day. Any
-  add-participant feature built above should be a thin call onto this
-  behaviour, with the consumer's record FOLLOWING delivery rather than
-  paralleling it. One source of truth: the messages.
-  Fix here is documentation plus possibly an explicit verb — not new
-  plumbing. Also correct the `memory_send`/`memory_reply` docstrings, which
-  currently assert the opposite of what the code does and are what misled
-  three sessions.
+  ⚠️ **The real hazard is two membership records** — a consumer keeping its
+  own room table will disagree with the transport the moment a re-send
+  widens a thread, and both layers will believe they are right.
+  ⛔ **The obvious fix is wrong, and knowing why sets the shape.** First
+  instinct was to make the consumer's record FOLLOW delivery — one source of
+  truth, the messages. A consumer refuted it decisively: **only their list
+  can generate the room owner's outbound traffic.** Delivery can be observed
+  but never originates, so a record that merely follows could not answer
+  "who does the owner's next post go to." **The consumer's list is rightly
+  the writable master.**
+  ★ **So the divergence reverses, and that half is engram's:** with their
+  list as master, this per-message widening becomes a SIDE DOOR that opens
+  against it — as happened live, a re-send widened a managed room without
+  the master knowing. The fix is therefore not "expose the mechanism" but
+  **make an unmanaged widening either impossible or visible to whoever owns
+  the room.** Needs a design call.
+  Independent of that, and cheap: correct the `memory_send` /`memory_reply`
+  docstrings, which assert the opposite of what the code does and are what
+  misled three sessions.
 
 - **BEAT-1** The bridge has no background beat, so "last spoke" measures
   ACTIVITY, not PRESENCE.
-  ★ **PROMOTED 2026-08-06 — this now gates how much of the fleet is
-  discoverable at all.** A peer's spawn table turns out to be HUB-LOCAL: a
-  session it launched itself on a spoke is absent from it. That makes
-  engram's register the ONLY source spanning nodes, so the register's known
-  incompleteness stops being tolerable. Coverage today:
-  `remote + has spoken` is covered by the register; **`remote + never spoken`
-  is invisible to both sources.** A timer beat closes that quadrant for any
-  session with a running bridge.
-  It also **dissolves SEAT-15 rather than deciding it**: the first beat
-  claims the seat, so lazy-vs-eager stops being a policy question. Both
-  maintainers leaned "stay lazy" on the reasoning that an address exists to
-  participate in messaging and a silent session is not a participant — sound
-  while the register was not the discovery surface, and that premise has now
-  changed. Every heartbeat rides a tool call, so the register
+  ⛔ **A promotion was written here on 2026-08-06 and RETRACTED the same
+  hour — recorded because the retraction is the useful part.** The claim was
+  that this gates fleet-wide discoverability, on the premise that a peer's
+  spawn table is hub-local and engram's register is therefore the only
+  cross-node source. **The premise was wrong.** That peer measured a routed
+  per-node call returning a remote session's full row from its own node's
+  spawn table, so `remote + launched + never-spoke` is covered by them, and
+  the residual is only *a session no launcher started anywhere that has also
+  never touched engram*. Small. The error was mine and it was second-hand: I
+  built a coverage table from another session's measurement of the HUB-LOCAL
+  endpoint and generalised it without checking what population that
+  measurement covered.
+  **What survives:** the original rationale above, unchanged and still worth
+  fixing. **What does not:** any claim that this outranks ADDR-2/ADDR-3.
+  Also still true, and independent of the retraction: a timer beat would
+  **dissolve SEAT-15 rather than decide it** — the first beat claims the
+  seat, so lazy-vs-eager stops being a policy question. Every heartbeat rides a tool call, so the register
   records sessions that used a memory tool — not sessions that exist. A live
   session on a long build is indistinguishable from a corpse, and the
   population this hides is the one most worth reaching: an idle session is
