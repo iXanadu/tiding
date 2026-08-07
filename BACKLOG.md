@@ -92,28 +92,16 @@
   `admin@webone (group on host)`. The value is naming the kinds, not policing
   a form that turned out to be legitimate.
 
-- **TREE-1** The hub's bridge executes a DEV working tree, and nothing says
-  so. Measured 2026-08-06 by the interpreter's own resolution
-  (`python -c "import engram_mcp.identity as m; print(m.__file__)"`) in each
-  box's `cc-memory-3.12`:
-  ```
-  macmini  → ~/projects/engram/.../engram_mcp/identity.py    (DEV)
-  spokes   → /opt/srv/engram/.../engram_mcp/identity.py      (PROD)
-  ```
-  So every session on the box that HOSTS prod engram has been running
-  uncommitted working-tree edits — an editor mid-thought changes live
-  sessions at their next start — and conversely, anything landed in
-  `/opt/srv/engram` has never affected the hub's own sessions. Both trees are
-  editable installs, so no reinstall gates it; a session restart is enough.
-  ⚠️ **It nearly shipped a half-deploy.** A peer caught it *before* the
-  deploy step was written, and noted their own confirmation of a diagnosis
-  had been read out of a tree their session does not execute. Without that,
-  the fix would have landed on one admin box and not the other, and the
-  symptom would have read as "the fix didn't work."
-  Mitigated for now by deploying BOTH macmini trees to the same commit.
-  **The decision — should the hub import dev or prod — is the owner's**, and
-  is not made. Whichever way it goes, the resolution should be *observable*
-  rather than inferred from install layout.
+- **VERIFY-1** Confirm the identity-anchor fix in the wild, then delete this
+  line. Deployed 2026-08-06 to all five trees but proven only by unit tests
+  and a simulation — every session running at deploy time started before it,
+  so nothing has yet exercised it live. The check is two calls on any session
+  that has restarted since: make one memory call scoped to a DIFFERENT
+  project, then read `listen_set` on the next call. Both the bare project
+  group and `<project>@<host>` must still be present. That is the exact
+  disturbance that was measured, so it is the exact assertion.
+  ⚠️ Until a session restarts it still runs the OLD bridge — a deployed tree
+  is not deployed behaviour, and the two were confused earlier the same day.
 
 - **HUD-2** Adding a participant to a running thread works, and nobody can
   find it. Membership is not frozen at creation, contrary to the tool's own
