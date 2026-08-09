@@ -26,41 +26,26 @@
   (wiring Mail endpoints/tabs to the filter, or removing the tab) is
   AB/app's.
 
-- **MODEL-RECORD-1** No record anywhere says WHICH MODEL did a piece of work.
-  Raised by AgentBeast + AB-app 2026-08-09 (their ID, kept so we don't
-  diverge). A Cursor subscription put a 1-to-many harness on the fleet:
-  one `cursor-agent` session can run several vendors' models, and
-  `session/set_model` was measured succeeding MID-SESSION. That separated two
-  things that had always coincided — HARNESS (stable for a session) and
-  MODEL/VENDOR (not stable) — and revealed the model was never recorded for
-  ANY provider. It only felt answerable because one-token-per-provider made
-  the principal imply the model.
-  **Spec questions already ANSWERED (2026-08-09, no owner call needed):**
-  `principal` is the CREDENTIAL axis, never the harness one — three-axes
-  doctrine holds, and binding a credential to a harness would force it to
-  change mid-conversation. `provider` IS the harness axis and always was
-  (`resolve_provider()`, identity.py:775, launch-injected like the seat).
-  Self-report is the intended pattern: presence is already explicitly
-  self-reported and engram never scrapes or infers.
-  **What is actually OPEN — and it is bigger than "a field beside
-  `provider`", because that premise is false.** `provider` lives ONLY on
-  presence and seat rows (models.py:624, 819, 697, 881) — session state. It
-  is on NO memory write and NO message; a consumer's per-message provider
-  badge is a join against session state by identity. So there are two shapes:
-  (a) session-scoped current model in presence metadata — cheap, mirrors
-  `provider`; (b) a per-event model stamp on memory rows — which needs the
-  per-event PROVENANCE channel the three-axes north star contemplates
-  ("writer principal becomes provenance, not a partition gate") and which
-  does not exist for any field today.
-  ⚠️ **(a) does not answer the question that motivates this.** A presence row
-  is a snapshot with no history, so a session that ran one vendor and
-  switched reports only the current one — the same no-history defect under
-  BEAT-1 and SEAT-13. If the driver is privacy, only (b) answers it.
-  ★ **OWNER DECISION, and the reason it is not just hygiene:** the new
-  harness exposes 10 models with NO zero-data-retention guarantee. Once one
-  is reachable from a seat pointed at private repos, "which vendor saw this
-  code" is a privacy answer, not a curiosity — and today, for every provider,
-  the honest answer is "we don't know."
+- **MODEL-RECORD-1** *(memory writes SHIPPED + fleet-deployed 2026-08-09,
+  `ea7fc76`. What remains is below.)* **Messages carry no model.** The
+  provenance header now rides EVERY bridge call, but only the memory-write
+  path reads it — so a memory row records what wrote it and an inbox message
+  does not. Mail is the surface where a claim gets acted on, so it is
+  arguably where authorship matters most. Small: read the same two headers on
+  the send path. Pairs with **RELAY-1** — both are "the envelope should say
+  who really produced this, rather than a reader inferring it."
+  ⓘ Also open, and deliberately not guessed at: a **declared** model is
+  unverified by construction. `ENGRAM_MODEL` is the only channel for a
+  harness that records nothing (Cursor), so a wrong or stale value is
+  indistinguishable from a right one. `model_source` makes that legible
+  rather than fixing it — a reader can tell `declared` from `transcript` and
+  weigh them differently. Whether `declared` should ever be trusted for
+  privacy-grade questions is the owner's call, not the store's.
+  ⚠️ Backfill is POSSIBLE but not done, and the window is uneven: Claude and
+  codex stamp per turn so their history is fully recoverable; grok stamps
+  `_meta.modelId` on only a handful of update records (its actual message log
+  carries none) so grok history is coarse; Cursor records nothing, so for
+  Cursor there is no past to recover — only what is captured from now on.
 
 - **RELAY-1** Authorship of a relayed message lives in BODY PROSE, so a peer
   can wear the owner's stamp. Proposed by AgentBeast 2026-08-07 (their pin,
