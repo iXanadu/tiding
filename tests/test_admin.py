@@ -702,3 +702,50 @@ async def test_metadata_survives_upsert(client):
         assert item["metadata"]["machine"] == "box2"
     finally:
         await _cleanup(client, [key])
+
+
+@pytest.mark.asyncio
+async def test_metadata_records_model_and_source(client):
+    """MODEL-RECORD-1: the model that wrote a row is stamped on that row."""
+    key = "meta-model-test"
+    resp = await client.post(
+        "/memory/set",
+        json={"namespace": NS, "key": key, "value": "written by a model",
+              "expiration_days": 0},
+        headers={"X-Engram-Model": "claude-opus-5",
+                 "X-Engram-Model-Source": "transcript"},
+    )
+    assert resp.status_code == 200
+    try:
+        resp = await client.get("/admin/memories",
+                                params={"namespace": NS, "key_prefix": key})
+        item = resp.json()["items"][0]
+        assert item["metadata"]["model"] == "claude-opus-5"
+        assert item["metadata"]["model_source"] == "transcript"
+    finally:
+        await _cleanup(client, [key])
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_still_records_that_we_looked(client):
+    """A blank model must stay distinguishable from nobody having looked.
+
+    The source is recorded even with no model, so a reader can tell
+    "this harness records nothing" from "this row predates the stamp".
+    """
+    key = "meta-model-unknown-test"
+    resp = await client.post(
+        "/memory/set",
+        json={"namespace": NS, "key": key, "value": "model not knowable",
+              "expiration_days": 0},
+        headers={"X-Engram-Model-Source": "unknown"},
+    )
+    assert resp.status_code == 200
+    try:
+        resp = await client.get("/admin/memories",
+                                params={"namespace": NS, "key_prefix": key})
+        item = resp.json()["items"][0]
+        assert item["metadata"]["model_source"] == "unknown"
+        assert "model" not in item["metadata"]
+    finally:
+        await _cleanup(client, [key])

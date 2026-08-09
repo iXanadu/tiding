@@ -4,6 +4,7 @@ import socket
 import httpx
 
 from engram_mcp.identity import derive_project_name, remember_project_dir
+from engram_mcp.model import resolve_model
 
 
 class MemoryClient:
@@ -35,10 +36,25 @@ class MemoryClient:
         before this call, so this only reads the effective directory.
         """
         effective = remember_project_dir(project_dir)
-        return {
+        headers = {
             "X-Engram-Project": derive_project_name(effective),
             "X-Engram-Cwd": (effective or "").strip(),
         }
+        # MODEL-RECORD-1. Which MODEL did this, read from the harness's own
+        # record — never asked of the agent (no tokens, not self-attestation)
+        # and re-read per call, because the model can change mid-session.
+        # `provider` cannot answer this any more: it names the HARNESS, and a
+        # harness is no longer one model.
+        #
+        # The source travels WITH the value and is sent even when the model is
+        # unknown. Without it, a blank field is ambiguous between "ran an
+        # unrecorded model" and "nobody looked" — the exact half-populated
+        # provenance field found on a peer's wire the same day this shipped.
+        model, source = resolve_model()
+        headers["X-Engram-Model-Source"] = source
+        if model:
+            headers["X-Engram-Model"] = model
+        return headers
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         """Send a request with one retry on transient connection/timeout errors."""

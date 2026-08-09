@@ -118,6 +118,24 @@ async def set_memory(req: MemorySetRequest, request: Request):
     cwd = request.headers.get("x-engram-cwd")
     if cwd:
         metadata["cwd"] = cwd
+    # MODEL-RECORD-1: which MODEL wrote this row. `principal` says who
+    # authenticated and the provider says which harness drove — neither
+    # answers what was thinking, and nothing did until now.
+    #
+    # Recorded PER ROW rather than on the session, because a session is not one
+    # model: measured 2026-08-09, 45 of 237 transcripts on one box changed model
+    # mid-session, one of them after 29 turns and then for 549 more. A
+    # session-level stamp would have confidently misattributed whichever side of
+    # that switch it missed, and a confident wrong provenance is worse than none.
+    #
+    # `model_source` is stored even when the model is unknown, so a reader can
+    # always tell "we looked and there was nothing to read" from "nobody looked".
+    model_source = request.headers.get("x-engram-model-source")
+    if model_source:
+        metadata["model_source"] = model_source
+    model = request.headers.get("x-engram-model")
+    if model:
+        metadata["model"] = model
     owner = principal["name"] if principal else None
     try:
         key, created, version = await memory_set(
