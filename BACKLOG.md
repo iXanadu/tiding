@@ -26,6 +26,28 @@
   (wiring Mail endpoints/tabs to the filter, or removing the tab) is
   AB/app's.
 
+- **RELAY-1** Authorship of a relayed message lives in BODY PROSE, so a peer
+  can wear the owner's stamp. Proposed by AgentBeast 2026-08-07 (their pin,
+  same ID; found by the owner 2026-08-01). Every huddle message the relay
+  forwards arrives stamped as the owner, whoever actually wrote it — the only
+  discriminator is a `[huddle relay · from <identity>]` line in the body.
+  Measured that night: 7 relayed messages, 5 written by a peer agent, 4 of
+  them carrying the owner's verified stamp. **Consequence class is escalation,
+  not cosmetics**: owner authority lifts gates, so a dropped, reworded or
+  spoofed prose line hands a peer's words that authority. It already caused a
+  live misattribution — a session credited the owner's correct diagnosis to
+  an agent and argued against it.
+  Proposal: a first-class ENVELOPE field, `relayed_from: <identity>`,
+  settable ONLY when the authenticated sender is the relay (owner-token
+  path), rendered by `memory_inbox` as part of `From` — e.g.
+  `From: <peer> [via huddle relay, owner-verified]`. A spoofed body line then
+  becomes inert because the envelope disagrees with it. The consumer half
+  (relay populates the field) is theirs and lands the day the field exists.
+  ⓘ The shape looks right — authorship is envelope data and body prose was
+  never a trust boundary — and the "only when authenticated as the relay"
+  constraint is the correct gate. Quarantined here as addressing; the owner
+  reopens it by name.
+
 - **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the
