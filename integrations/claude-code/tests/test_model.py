@@ -3,6 +3,7 @@
 import engram_mcp.model as model
 from engram_mcp.model import (
     SOURCE_DECLARED,
+    SOURCE_HARNESS_CONFIG,
     SOURCE_TRANSCRIPT,
     SOURCE_UNKNOWN,
     resolve_model,
@@ -68,10 +69,50 @@ def test_declared_serves_a_harness_that_records_nothing(monkeypatch):
     assert resolve_model("cursor") == ("composer-2.5", SOURCE_DECLARED)
 
 
-def test_unknown_provider_reports_unknown_never_a_default(monkeypatch):
+def test_unknown_provider_reports_unknown_never_a_default(monkeypatch, tmp_path):
     _clear_env(monkeypatch)
-    assert resolve_model("cursor") == (None, SOURCE_UNKNOWN)
+    monkeypatch.setattr(model.Path, "home", staticmethod(lambda: tmp_path))
     assert resolve_model("grok") == (None, SOURCE_UNKNOWN)
+    assert resolve_model("codex") == (None, SOURCE_UNKNOWN)
+    # cursor with no config file to read is also unknown, not a guess
+    assert resolve_model("cursor") == (None, SOURCE_UNKNOWN)
+
+
+def _cursor_config(tmp_path, monkeypatch, payload):
+    d = tmp_path / ".cursor"
+    d.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    (d / "cli-config.json").write_text(_json.dumps(payload))
+    monkeypatch.setattr(model.Path, "home", staticmethod(lambda: tmp_path))
+
+
+def test_cursor_model_comes_from_cli_config_marked_as_harness_config(tmp_path, monkeypatch):
+    """Cursor records no per-session model; its global selection is the best available."""
+    _clear_env(monkeypatch)
+    _cursor_config(tmp_path, monkeypatch, {"model": {"modelId": "grok-4.5"}})
+    assert resolve_model("cursor") == ("grok-4.5", SOURCE_HARNESS_CONFIG)
+
+
+def test_declared_outranks_cursor_config(tmp_path, monkeypatch):
+    """A driver setting the model per session knows better than a shared file."""
+    _clear_env(monkeypatch)
+    _cursor_config(tmp_path, monkeypatch, {"model": {"modelId": "grok-4.5"}})
+    monkeypatch.setenv("ENGRAM_MODEL", "composer-2.5")
+    assert resolve_model("cursor") == ("composer-2.5", SOURCE_DECLARED)
+
+
+def test_malformed_cursor_config_is_unknown(tmp_path, monkeypatch):
+    _clear_env(monkeypatch)
+    d = tmp_path / ".cursor"; d.mkdir(parents=True)
+    (d / "cli-config.json").write_text("{not json")
+    monkeypatch.setattr(model.Path, "home", staticmethod(lambda: tmp_path))
+    assert resolve_model("cursor") == (None, SOURCE_UNKNOWN)
+
+
+def test_cursor_config_without_model_key_is_unknown(tmp_path, monkeypatch):
+    _clear_env(monkeypatch)
+    _cursor_config(tmp_path, monkeypatch, {"version": 1})
+    assert resolve_model("cursor") == (None, SOURCE_UNKNOWN)
 
 
 def test_missing_session_env_is_unknown_not_a_guess(tmp_path, monkeypatch):

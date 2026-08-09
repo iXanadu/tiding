@@ -34,6 +34,11 @@ from pathlib import Path
 # Source values, ordered by how much a reader should trust them.
 SOURCE_TRANSCRIPT = "transcript"  # read from the harness's own per-turn record
 SOURCE_DECLARED = "declared"      # ENGRAM_MODEL, stated by whatever launched us
+# The harness's CURRENT GLOBAL SELECTION, not a per-session record. Correct for
+# one session at a time and stale for any other running concurrently, so it is
+# named apart from `transcript` rather than folded into it — a reader that must
+# not over-trust it can tell, which is the whole point of carrying a source.
+SOURCE_HARNESS_CONFIG = "harness-config"
 SOURCE_UNKNOWN = "unknown"        # nothing to read; say so rather than guess
 
 # Only the tail matters: the CURRENT model is the last one stamped. Reading a
@@ -97,6 +102,36 @@ def _claude_transcript() -> Path | None:
     return Path.home() / ".claude" / "projects" / slug / f"{sid}.jsonl"
 
 
+def _cursor_selected_model() -> str | None:
+    """Cursor's currently selected model, from its CLI config.
+
+    Cursor writes NO model into its session records — ``acp-sessions/<id>/
+    meta.json`` is ``{schemaVersion, cwd}`` and its worker log carries none —
+    so there is no per-session record to read, unlike Claude Code and codex.
+    What exists is this global selection, which the CLI rewrites when the model
+    changes.
+
+    It is therefore right for one session and wrong for any other running at
+    the same time, and it does not follow an ACP ``session/set_model``. That is
+    why it reports ``harness-config`` and not ``transcript``, and why an
+    explicitly declared ``ENGRAM_MODEL`` outranks it: a driver that sets the
+    model per session knows better than a file shared by all of them.
+    """
+    path = Path.home() / ".cursor" / "cli-config.json"
+    try:
+        import json
+
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    model = data.get("model")
+    if isinstance(model, dict):
+        got = (model.get("modelId") or "").strip()
+        return got or None
+    return None
+
+
 def resolve_model(provider: str | None = None) -> tuple[str | None, str]:
     """Return ``(model, source)`` for the session driving this bridge.
 
@@ -125,9 +160,16 @@ def resolve_model(provider: str | None = None) -> tuple[str | None, str]:
             if found:
                 return found, SOURCE_TRANSCRIPT
 
-    # Deliberately no fallback. Other harnesses either record nothing the bridge
-    # can locate (Cursor) or record it too sparsely to trust as "current" (grok
-    # stamps `_meta.modelId` on a handful of update records, and its actual
-    # message log carries none). Those want ENGRAM_MODEL, or a reader that is
-    # honest about not knowing.
+    if provider == "cursor":
+        found = _cursor_selected_model()
+        if found:
+            return found, SOURCE_HARNESS_CONFIG
+
+    # Deliberately no fallback beyond this. grok records `_meta.modelId` on only
+    # a handful of update records — its actual message log carries none — so
+    # three samples across a session could miss a switch entirely; reading it
+    # would look authoritative while being unreliable, which is the failure this
+    # module exists to avoid. grok and codex want ENGRAM_MODEL until their
+    # per-session records are located properly, or a reader honest about not
+    # knowing.
     return None, SOURCE_UNKNOWN

@@ -198,9 +198,13 @@ pair.
 > defeats every per-launch override, with no error and no banner. Grok already
 > pins `ENGRAM_IDENTITY` (the *credential selector*) there, which is correct
 > and must stay; seats and channels must not join it. Claude Code has no such
-> block, so this asymmetry is Grok-specific. Verified by controlled probe
-> 2026-07-23: Grok inherits the full parent environment and merges the config
-> block **on top**.
+> block. Verified by controlled probe 2026-07-23: Grok inherits the full parent
+> environment and merges the config block **on top**.
+>
+> **Cursor is stricter, and the rule inverts there — see the Cursor section
+> below.** It passes an MCP server *only* what its config block lists, so a
+> launch-injected value never arrives at all. Under Cursor, pinning is not a
+> hazard to avoid but the only delivery channel that exists.
 
 **The safety net — collision detection.** Auto-allocation prevents collisions
 for any session that claims a seat, which is the normal path. Two kinds of
@@ -241,6 +245,88 @@ watcher yourself. The seat file is read defensively: missing, unreadable or
 malformed all resolve to "no file" rather than an error, because a watcher
 listening on a *stale* seat still catches project-addressed mail, while a dead
 one catches nothing.
+
+## Wiring Cursor (`cursor-agent`) — and the two rules that differ
+
+Cursor onboards like any other provider — mint a principal, point it at the
+server — but it breaks two assumptions the rest of this page is built on, both
+verified by controlled probe 2026-08-09. Read these before wiring it.
+
+```bash
+scripts/wire-provider.sh cursor --kind http --admin-token "$ADMIN_TOKEN" \
+  --read "fleet,claude-web,grok,beast" --write "fleet"
+```
+
+Then `~/.cursor/mcp.json` (Cursor reads a global one and a per-project
+`.cursor/mcp.json`):
+
+```json
+{ "mcpServers": { "engram": {
+    "type": "stdio",
+    "command": "<venv>/bin/python",
+    "args": ["-m", "engram_mcp.server"],
+    "env": { "ENGRAM_IDENTITY": "cursor", "ENGRAM_PROVIDER": "cursor" }
+} } }
+```
+
+**1. The config `env` block is the ONLY channel to the bridge.** Cursor does not
+pass the parent environment through at all — not "config wins", but "parent
+never arrives". Probe: with `ENGRAM_INBOX_IDENTITY` exported in the parent, the
+session listened on its default address; with the identical variable in the
+config block, it listened on the injected one. A third run with `env` omitted
+delivered nothing.
+
+Consequences, in order of how easily they bite:
+
+- **`ENGRAM_IDENTITY` must be in the block.** Without it the bridge falls back to
+  the default identity file — so Cursor would authenticate as *another
+  provider's principal*, silently. That breaks "share the bucket, never the
+  identity" with no error.
+- **`ENGRAM_PROVIDER` belongs there too.** It does not vary per launch (a
+  `cursor-agent` session is always `cursor`), so it is the same safe category as
+  the credential selector — unlike seats and channels.
+- **A launcher cannot prefer a seat.** `ENGRAM_INBOX_IDENTITY` in the parent
+  environment is simply lost. Note what this does *not* mean: sessions still
+  **auto-allocate** seats server-side (`myproject-cursor`, then `-2`), so
+  co-working works and addresses never collide. What you lose is *choosing* the
+  name — role seats such as `myproject-audit`. A driver that needs a specific
+  seat must write it into the config block, and should prefer a per-project
+  `.cursor/mcp.json`: the global file is shared, so per-spawn rewrites race.
+
+**2. There is no in-session watcher, so the wake path lives outside Cursor.**
+Cursor has no blocking-stream equivalent to Claude Code's Monitor or Grok's
+`monitor` — its hooks and `/loop` fire on turn boundaries or a timer, and none
+of them is an external event entering a dormant session. Under ACP, though, the
+**client owns turn initiation**: a driver holding `engram-inbox-wait --follow`
+can issue `session/prompt` when mail lands. So a Cursor seat is a full peer
+*when something drives it over ACP*, and a hand-launched terminal Cursor session
+has no wake path at all — it can be addressed, and will read its mail whenever
+it is next prompted.
+
+**Global agent rules.** Cursor reads `~/.cursor/AGENTS.md`; symlink it to the
+canonical file the way the other providers do, so one edit reaches every
+harness:
+
+```bash
+ln -s ~/.agents/AGENTS.md ~/.cursor/AGENTS.md
+```
+
+**Model reporting.** Cursor is *1-to-many* — one session can run several
+vendors' models and `session/set_model` succeeds mid-session — and it records no
+model in its session files. The bridge therefore reads its current selection
+from `~/.cursor/cli-config.json` and reports it as `harness-config`, a source
+deliberately named apart from `transcript`: that file is a global selection, so
+it is right for one session and stale for any other running concurrently, and it
+does not follow an ACP `set_model`. **A driver that sets the model per session
+should pass `ENGRAM_MODEL` in the config block** (reported as `declared`, and it
+outranks the config read) — and must re-set it when it changes the model, or it
+will assert a model the session has left behind, which is worse than reporting
+nothing.
+
+Whatever the source, it is stored on the memory row it wrote, as
+`metadata.model` alongside `metadata.model_source`. The source is recorded
+**even when the model is unknown**, so a reader can always tell "this harness
+records nothing" from "nobody looked". Messages do not carry it yet.
 
 ## Collaboration topologies (both live-proven)
 
