@@ -108,17 +108,6 @@
   death the watcher signal goes stale in ≈4m24s against ≈9m24s for presence —
   more than twice as sharp, which is the argument for serving it at all.
 
-- **VERIFY-1** Confirm the identity-anchor fix in the wild, then delete this
-  line. Deployed 2026-08-06 to all five trees but proven only by unit tests
-  and a simulation — every session running at deploy time started before it,
-  so nothing has yet exercised it live. The check is two calls on any session
-  that has restarted since: make one memory call scoped to a DIFFERENT
-  project, then read `listen_set` on the next call. Both the bare project
-  group and `<project>@<host>` must still be present. That is the exact
-  disturbance that was measured, so it is the exact assertion.
-  ⚠️ Until a session restarts it still runs the OLD bridge — a deployed tree
-  is not deployed behaviour, and the two were confused earlier the same day.
-
 - **HUD-2** Adding a participant to a running thread works, and nobody can
   find it. Membership is not frozen at creation, contrary to the tool's own
   description: `participants` is stored PER MESSAGE, and a fan-out send
