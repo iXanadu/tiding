@@ -1169,10 +1169,48 @@ def _format_inbox_message(m: dict) -> str:
         badge = " [unverified]"
     intent = f"\nIntent: {m['intent']}" if m.get("intent") else ""
     header = (
-        f"**{m['id']}**{thread}\nFrom: {sender}{badge}  →  {m['to']}"
+        f"**{m['id']}**{thread}\nFrom: {sender}{badge}{_origin(m)}  →  {m['to']}"
         f"\nSubject: {subject}{intent}{_age_line(m)}"
     )
     return f"{header}\n\n{_fence_body(m.get('body', ''))}"
+
+
+#: Model sources that are read from a harness's own record. Anything else is
+#: asserted by the sender or unknown, and gets called out in the render.
+_TRUSTED_MODEL_SOURCES = {"transcript"}
+
+
+def _origin(m: dict) -> str:
+    """What produced this message, and from which box — provenance, not proof.
+
+    Rendered beside the verified-principal badge because it answers a different
+    question: the badge says WHO authenticated, this says WHAT wrote the words.
+    They came apart the moment one harness stopped meaning one model.
+
+    Two deliberate choices about volume:
+
+    * The model is shown whenever it is known, and a QUALIFIER is appended only
+      when its source is weaker than a harness transcript — so the trustworthy
+      case stays quiet and the ones a reader should discount announce
+      themselves. `declared` is the sender's word; `harness-config` is a global
+      selection that is stale for any concurrent session.
+    * Absence is never used to mean "trusted". An unknown model renders
+      explicitly rather than silently, because a blank that could mean either
+      "nothing recorded it" or "nobody looked" is the exact ambiguity this
+      provenance exists to remove — and it is what makes a half-populated field
+      worse than none.
+    """
+    bits: list[str] = []
+    model = (m.get("model") or "").strip()
+    source = (m.get("model_source") or "").strip()
+    if model:
+        bits.append(model if source in _TRUSTED_MODEL_SOURCES else f"{model} ({source or 'unattributed'})")
+    elif source:
+        bits.append(f"model {source}")
+    machine = (m.get("machine") or "").strip()
+    if machine:
+        bits.append(f"on {machine}")
+    return f" [{_defang(' · '.join(bits))}]" if bits else ""
 
 
 def _age_line(m: dict) -> str:

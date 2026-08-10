@@ -1365,3 +1365,62 @@ async def test_explicit_thread_id_is_respected(client, db_pool):
     })
     assert resp.json()["messages"][0]["thread_id"] == "inbox/existing-thread"
     await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_message_records_what_produced_it(client, db_pool):
+    """MODEL-RECORD-1: mail carries the model, and MSG-10's machine surfaces."""
+    resp = await client.post(
+        "/memory/send",
+        json={"to": "engram", "subject": "s", "body": "b", "from_": "peer@box"},
+        headers={"X-Engram-Model": "claude-opus-5",
+                 "X-Engram-Model-Source": "transcript",
+                 "X-Engram-Machine": "macmini"},
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    m = resp.json()["messages"][0]
+    assert m["model"] == "claude-opus-5"
+    assert m["model_source"] == "transcript"
+    # MSG-10 stored this but never surfaced it; it is readable now.
+    assert m["machine"] == "macmini"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_message_with_unknown_model_still_says_we_looked(client, db_pool):
+    """A blank model must not be ambiguous with 'this predates the stamp'."""
+    resp = await client.post(
+        "/memory/send",
+        json={"to": "engram", "subject": "s", "body": "b", "from_": "peer@box"},
+        headers={"X-Engram-Model-Source": "unknown"},
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    m = resp.json()["messages"][0]
+    assert m["model"] is None
+    assert m["model_source"] == "unknown"
+    await _cleanup_inbox(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_legacy_message_without_provenance_headers(client, db_pool):
+    """A sender on an older bridge sends no headers — that must stay valid."""
+    resp = await client.post(
+        "/memory/send",
+        json={"to": "engram", "subject": "s", "body": "b", "from_": "peer@box"},
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["engram"], "reader_identity": "engram@macmini",
+        "unread_only": True,
+    })
+    m = resp.json()["messages"][0]
+    assert m["model"] is None and m["model_source"] is None
+    await _cleanup_inbox(db_pool)

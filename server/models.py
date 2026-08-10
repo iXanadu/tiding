@@ -500,6 +500,16 @@ class InboxMessage(BaseModel):
     # and cannot be spoofed by the client.
     from_principal: str | None = None  # which principal actually sent it (None = unverified/legacy/anon)
     authority: bool = False            # the sending principal is an owner (is_admin)
+    # Client-supplied provenance — recorded, never proof (contrast
+    # `from_principal`, which is derived from the token). `machine` is which box
+    # sent it; `model` is what produced it, read by the bridge from the harness's
+    # own record. `model_source` (transcript | declared | harness-config |
+    # unknown) says how well that model is known, and is present even when
+    # `model` is None so a blank stays legible as a blank rather than ambiguous
+    # between "records nothing" and "predates the stamp".
+    machine: str | None = None
+    model: str | None = None
+    model_source: str | None = None
     intent: str | None = None          # fyi | action | proceed | escalate | authority-directive
     subject: str
     body: str

@@ -592,6 +592,14 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         from_=md.get("from"),
         from_principal=md.get("from_principal"),
         authority=bool(md.get("authority", False)),
+        # MSG-10 stored `machine` but never surfaced it, so a five-box fleet
+        # still could not see which box a message came from — the same
+        # dropped-at-the-last-step shape that item was written to fix, one layer
+        # later. Mapped here with the model fields rather than left for a third
+        # pass over the same two functions.
+        machine=md.get("machine"),
+        model=md.get("model"),
+        model_source=md.get("model_source"),
         intent=md.get("intent"),
         subject=md.get("subject", ""),
         body=row["value"],
@@ -622,6 +630,8 @@ async def inbox_send(
     intent: str | None = None,
     participants: list[str] | None = None,
     machine: str | None = None,
+    model: str | None = None,
+    model_source: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -654,6 +664,19 @@ async def inbox_send(
         # set it to anything. Useful for "where did this come from", never for
         # a trust decision.
         "machine": machine,
+        # MODEL-RECORD-1: which MODEL produced this message. Memory rows have
+        # carried it since ea7fc76 while mail did not, so the surface where a
+        # claim gets ACTED on was the one that could not say what produced it.
+        #
+        # Like `machine` and unlike `from_principal`, this is client-supplied
+        # provenance, not proof — the bridge reads it from the harness's own
+        # record rather than asking the agent, but nothing server-side verifies
+        # it. Good for "what wrote this", never for a trust decision.
+        #
+        # `model_source` is stored even when the model is unknown, so a reader
+        # can tell "that harness records nothing" from "this predates the stamp".
+        "model": model,
+        "model_source": model_source,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,
