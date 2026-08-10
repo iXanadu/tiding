@@ -547,6 +547,16 @@
   incident fix. Resolve/lifecycle for a writer's OWN rows (the original MEM-3
   ask) also still open; supersede covers the cross-writer half only.
 
+- **DB-2** Decide `idle_in_transaction_session_timeout` (currently 0 =
+  disabled, along with idle_session_timeout and tcp_keepalives_idle).
+  Measured by the admin session 2026-08-10: connections healthy today (10/100,
+  oldest idle 52s, zero idle-in-transaction) — the old "lingers for hours"
+  report does NOT reproduce and is closed. What remains is the missing
+  insurance: a client dying mid-transaction would hold locks and pin the
+  vacuum horizon indefinitely, showing up as bloat before it shows up as an
+  error. Owner of the workload picks the number; it only ever fires on
+  something already broken.
+
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
   zero failures), captured onsite and offsite, and a dump already rotated off
