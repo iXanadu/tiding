@@ -26,15 +26,10 @@
   (wiring Mail endpoints/tabs to the filter, or removing the tab) is
   AB/app's.
 
-- **MODEL-RECORD-1** *(memory writes SHIPPED + fleet-deployed 2026-08-09,
-  `ea7fc76`. What remains is below.)* **Messages carry no model.** The
-  provenance header now rides EVERY bridge call, but only the memory-write
-  path reads it — so a memory row records what wrote it and an inbox message
-  does not. Mail is the surface where a claim gets acted on, so it is
-  arguably where authorship matters most. Small: read the same two headers on
-  the send path. Pairs with **RELAY-1** — both are "the envelope should say
-  who really produced this, rather than a reader inferring it."
-  ⓘ Also open, and deliberately not guessed at: a **declared** model is
+- **MODEL-RECORD-1** *(memory rows `ea7fc76`, Cursor `9214ffe`, messages +
+  MSG-10's read half `9ebe73f` — all SHIPPED and fleet-deployed 2026-08-09.
+  Only the item below remains.)*
+  ⓘ Open, and deliberately not guessed at: a **declared** model is
   unverified by construction. `ENGRAM_MODEL` is the only channel for a
   harness that records nothing (Cursor), so a wrong or stale value is
   indistinguishable from a right one. `model_source` makes that legible
