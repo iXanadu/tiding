@@ -105,6 +105,10 @@ class MemorySearchRequest(_NamespacedRequest):
     # Truncation is always ANNOUNCED in the value — a partial read must never
     # look like a complete one.
     snippet_lines: int | None = Field(default=None, ge=1, le=500)
+    # MEM-3: superseded rows are hidden by default — a corrected note that
+    # still ranks is still giving instructions. True returns them, marked
+    # (item.status == "superseded"), for audit/history reads.
+    include_superseded: bool = False
 
     @field_validator("query", mode="before")
     @classmethod
@@ -148,6 +152,9 @@ class MemoryItem(BaseModel):
     # write to make that write conditional — the read-modify-write guard for
     # callers that edit part of a shared document.
     version: str | None = None
+    # MEM-3 lifecycle. None = live (every pre-lifecycle row). "superseded"
+    # appears only on include_superseded reads — default search excludes them.
+    status: str | None = None
 
 
 class InboxBanner(BaseModel):
@@ -190,6 +197,10 @@ class MemorySetResponse(BaseModel):
     # server emits and an old one cannot: absence of `true` here means the
     # guard did NOT run. Never read a missing field as success.
     if_match_applied: bool | None = None
+    # MEM-3 honesty: non-empty when this project-scope write has same-key
+    # siblings under OTHER writers — the caller just forked (or re-forked) a
+    # duplicate key and should know the other rows exist.
+    partition_warnings: list[str] = []
     # SEC-7: set when the request carried fields this server does not know —
     # almost always a misspelled option (`if_matched`). The write succeeded
     # WITHOUT those fields; this line is what turns "why do my merges never
@@ -201,6 +212,11 @@ class MemorySetResponse(BaseModel):
 class MemoryGetResponse(BaseModel):
     status: str
     memory: MemoryItem | None = None
+    # MEM-3 honesty: on a not_found where the SAME key exists under other
+    # writers in this project, name them — a partition miss must not be
+    # indistinguishable from the key not existing (measured stalling a
+    # cleanup for a full session, 2026-08-10).
+    partition_warnings: list[str] = []
 
 
 class MemorySearchResponse(BaseModel):
@@ -212,6 +228,35 @@ class MemorySearchResponse(BaseModel):
 class MemoryForgetResponse(BaseModel):
     status: str
     key: str
+    # MEM-3 honesty — same contract as MemoryGetResponse.partition_warnings.
+    partition_warnings: list[str] = []
+
+
+class MemorySupersedeRequest(_NamespacedRequest):
+    """Mark another writer's project row as superseded (MEM-3).
+
+    scope is fixed to 'project' server-side: user/machine scopes are personal
+    and no peer gets a lifecycle verb over them. The row is kept verbatim —
+    this changes what default search RETURNS, never what history recorded.
+    """
+    namespace: str
+    key: str
+    project: str | None = Field(default=None, max_length=MAX_ADDR)
+    # The WRITER whose row is being retired — from search results' user_id.
+    target_user_id: str = Field(max_length=MAX_ADDR)
+    # Required: becomes the audit trail a future reader sees.
+    reason: str = Field(min_length=3, max_length=2000)
+    # The key that replaces it, when one exists — renders as a redirect.
+    replacement_key: str | None = Field(default=None, max_length=MAX_KEY)
+
+
+class MemorySupersedeResponse(BaseModel):
+    status: str
+    key: str
+    target_user_id: str
+    # Canonical namespace the row was found in (may differ from the request's).
+    namespace: str | None = None
+    guidance: str | None = None
 
 
 # --- Admin models ---

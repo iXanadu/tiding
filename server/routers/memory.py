@@ -12,6 +12,8 @@ from server.dependencies import (
     resolve_read_namespaces,
 )
 from server.models import (
+    MemorySupersedeRequest,
+    MemorySupersedeResponse,
     InboxAckRequest,
     InboxAckResponse,
     InboxBanner,
@@ -70,6 +72,8 @@ from server.services.memory_service import (
     memory_get,
     memory_search,
     memory_set,
+    memory_supersede,
+    partition_siblings,
     presence_farewell,
     presence_update,
     presence_watcher_beat,
@@ -98,6 +102,20 @@ def _reject_reserved_scope(scope: str | None) -> None:
         )
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+
+async def _probe_namespaces(principal, fallback_ns: str) -> list[str]:
+    """Namespaces to probe for same-key siblings.
+
+    The probe is advisory, so it must never make a request fail that would
+    otherwise succeed: an anonymous caller (legacy no-auth mode) has no
+    principal to resolve, and resolve_read_namespaces correctly refuses to
+    guess for search — but here the honest fallback is simply the namespace
+    the request itself named.
+    """
+    if principal is None:
+        return [fallback_ns]
+    return await resolve_read_namespaces(principal)
 
 
 @router.post("/set", response_model=MemorySetResponse)
@@ -182,12 +200,31 @@ async def set_memory(req: MemorySetRequest, request: Request):
             f"unknown fields ignored: {', '.join(extras)} — check spelling "
             f"(e.g. the concurrency guard is 'if_match')"
         ) if extras else None
+        # MEM-3 honesty: writing to a key another writer also holds in this
+        # project says "Stored" and silently forks a duplicate. The write is
+        # legitimate (partitions exist on purpose) — the SILENCE was not:
+        # measured 2026-08-10, an agent overrode 7 stale keys believing it had
+        # replaced them, and both rows then competed in search unmarked.
+        fork_warnings: list[str] = []
+        if req.scope == "project":
+            readable = await _probe_namespaces(principal, req.namespace)
+            others = await partition_siblings(
+                readable, req.key, req.project, exclude_user_id=req.user_id
+            )
+            fork_warnings = [
+                f"'{req.key}' ALSO exists in this project under writer '{w}'. "
+                f"Your write updated only YOUR row — both now rank in search. "
+                f"If theirs is stale, retire it: memory/supersede with "
+                f"target_user_id='{w}'."
+                for w in others
+            ]
         return MemorySetResponse(
             status="ok",
             key=key,
             namespace=req.namespace,
             created=created,
             version=version,
+            partition_warnings=fork_warnings,
             # Positive confirmation that the guard ran. A client MUST treat
             # anything other than True as "not guarded" — on a server that
             # predates MEM-4 this field is simply absent, which is precisely
@@ -261,7 +298,24 @@ async def get_memory(req: MemoryGetRequest, request: Request):
         )
         if item:
             return MemoryGetResponse(status="ok", memory=item)
-        return MemoryGetResponse(status="not_found")
+        # MEM-3 honesty: a partition miss must not read as the key not
+        # existing. Same key under another writer in this project → say so,
+        # with the exact call that works (measured 2026-08-10: three verbs
+        # reported a cross-writer collision as a clean slate).
+        warnings: list[str] = []
+        if req.scope == "project":
+            principal = get_current_principal(request)
+            readable = await _probe_namespaces(principal, req.namespace)
+            others = await partition_siblings(
+                readable, req.key, req.project, exclude_user_id=req.user_id
+            )
+            warnings = [
+                f"'{req.key}' exists in this project under writer '{w}' — "
+                f"your get resolved to partition '{req.user_id}'. Read theirs "
+                f"with user_id='{w}'."
+                for w in others
+            ]
+        return MemoryGetResponse(status="not_found", partition_warnings=warnings)
     except Exception as e:
         logger.exception("memory_get failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
@@ -324,6 +378,7 @@ async def search_memory(req: MemorySearchRequest, request: Request):
             user_id=req.user_id,
             project=req.project,
             limit=req.limit,
+            include_superseded=req.include_superseded,
         )
         if req.snippet_lines:
             results = [_snippet(r, req.snippet_lines) for r in results]
@@ -361,6 +416,19 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
             project=req.project,
         )
         status = "ok" if deleted else "not_found"
+        forget_warnings: list[str] = []
+        if not deleted and req.scope == "project":
+            readable = await _probe_namespaces(principal, req.namespace)
+            others = await partition_siblings(
+                readable, req.key, req.project, exclude_user_id=req.user_id
+            )
+            forget_warnings = [
+                f"'{req.key}' exists in this project under writer '{w}', which "
+                f"this principal cannot delete. To retire a stale row you do "
+                f"not own, use memory/supersede (keeps it as history, hides it "
+                f"from default search)."
+                for w in others
+            ]
         # AUDIT-1: deletes are the rows the trail exists for — this exact
         # call was provable but undatable during the 2026-07-25 incident.
         # Misses are recorded too: an attempted delete of a key that is not
@@ -370,10 +438,70 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
             "user_id": req.user_id, "project": req.project,
             "deleted": deleted,
         })
-        return MemoryForgetResponse(status=status, key=req.key)
+        return MemoryForgetResponse(
+            status=status, key=req.key, partition_warnings=forget_warnings
+        )
     except Exception as e:
         logger.exception("memory_forget failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/supersede", response_model=MemorySupersedeResponse)
+async def supersede_memory(req: MemorySupersedeRequest, request: Request):
+    """MEM-3: retire another writer's stale project row without deleting it.
+
+    Permission is READ on the row's namespace — deliberately not write/delete.
+    OWN-1 still owns the VALUE; this stamps lifecycle metadata beside it, fully
+    attributed, and default search stops returning the row. Scope is fixed to
+    'project': shared work is correctable by the project, personal scopes are
+    not touchable by peers. The row is kept verbatim (audit trail); readers
+    wanting history pass include_superseded=true.
+    """
+    principal = get_current_principal(request)
+    # READ gate, checked against the caller's whole readable set — the row may
+    # live in a namespace the caller reads but does not write (that is the
+    # normal cross-provider case this exists for).
+    check_namespace_access(principal, req.namespace, "read")
+    ns_candidates = [req.namespace]
+    try:
+        row = await memory_supersede(
+            namespaces=ns_candidates,
+            key=req.key,
+            project=req.project,
+            target_user_id=req.target_user_id,
+            actor_principal=(principal or {}).get("name"),
+            reason=req.reason,
+            replacement_key=req.replacement_key,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    # AUDIT-1: a supersede is an edit to what readers will retrieve — exactly
+    # the class of action the trail exists for.
+    await audit("memory.supersede", principal, {
+        "key": req.key, "project": req.project,
+        "target_user_id": req.target_user_id,
+        "reason": req.reason, "replacement_key": req.replacement_key,
+        "found": row is not None,
+    })
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no live row '{req.key}' under writer '{req.target_user_id}' "
+                f"in project '{req.project}' within your readable namespaces "
+                f"(already superseded rows are not re-stamped)"
+            ),
+        )
+    return MemorySupersedeResponse(
+        status="ok",
+        key=row["key"],
+        target_user_id=row["user_id"],
+        namespace=row["namespace"],
+        guidance=(
+            "The row is retired from default search but KEPT — readers can "
+            "still reach it via include_superseded=true. Nothing was deleted."
+        ),
+    )
 
 
 # --- Inbox endpoints ----------------------------------------------------

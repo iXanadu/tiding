@@ -426,6 +426,30 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def supersede(
+        self,
+        key: str,
+        namespace: str,
+        project: str | None,
+        target_user_id: str,
+        reason: str,
+        replacement_key: str | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        body: dict = {
+            "namespace": namespace,
+            "key": key,
+            "project": project,
+            "target_user_id": target_user_id,
+            "reason": reason,
+        }
+        if replacement_key:
+            body["replacement_key"] = replacement_key
+        return await self._request(
+            "POST", "/memory/supersede", json=body,
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def forget(
         self,
         key: str,

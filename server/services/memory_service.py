@@ -439,8 +439,14 @@ async def memory_search(
     user_id: str = "default",
     project: str | None = None,
     limit: int = 5,
+    include_superseded: bool = False,
 ) -> list[MemoryItem]:
     """Hybrid vector + trigram search, scoped to namespace(s) and user.
+
+    Superseded rows are EXCLUDED by default (MEM-3): a corrected note that
+    still ranks in search is still giving instructions — measured 2026-08-10
+    beating its own correction at every startup-sweep limit. History is not
+    gone: ``include_superseded=True`` returns them, marked, for audit reads.
 
     ``user_id="*"`` spans every writer in the partition. It is honored ONLY for
     ``scope=project``, where the ``project`` column already does the scoping and
@@ -469,6 +475,7 @@ async def memory_search(
                 SELECT
                     namespace, key, value, scope, user_id, project, tags, tags_search,
                     created_at,
+                    metadata->>'status' AS lifecycle_status,
                     1 - (embedding <=> $1) AS vec_score,
                     similarity(search_text, $2) AS trgm_score
                 FROM memories
@@ -478,6 +485,7 @@ async def memory_search(
                   AND scope <> 'inbox'
                   AND ($11 OR user_id IS NOT DISTINCT FROM $5)
                   AND project IS NOT DISTINCT FROM $6
+                  AND ($12 OR COALESCE(metadata->>'status', '') <> 'superseded')
                 ORDER BY embedding <=> $1
                 LIMIT $7 * 3
             )
@@ -499,6 +507,7 @@ async def memory_search(
             settings.vector_threshold,
             settings.trigram_threshold,
             all_writers,
+            include_superseded,
         )
 
         results = []
@@ -516,6 +525,7 @@ async def memory_search(
                     tags_search=row["tags_search"],
                     score=round(float(row["combined_score"]), 4),
                     created_at=row["created_at"],
+                    status=row["lifecycle_status"],
                 )
             )
             keys_to_update.setdefault(row["namespace"], []).append(row["key"])
@@ -562,6 +572,115 @@ async def memory_forget(
             project,
         )
     return result == "DELETE 1"
+
+
+async def partition_siblings(
+    namespaces: list[str],
+    key: str,
+    project: str | None,
+    exclude_user_id: str | None = None,
+) -> list[str]:
+    """Writers OTHER than the caller holding this same key in one project.
+
+    Project memory is partitioned per writer, so the same key can exist once
+    per principal — and every verb that resolves by key sees only one
+    partition. This helper is what lets those verbs be HONEST about it: a get
+    or forget that misses can say "exists under writer X" instead of "not
+    found", and a store can say "you just forked a duplicate" instead of
+    "stored". Measured 2026-08-10 (softphone): all three verbs reported a
+    cross-writer collision as a clean slate, and the cleanup stalled on it.
+    """
+    _, key, scope, exclude, project = _normalize_key_fields(
+        key=key, scope="project", user_id=exclude_user_id or "", project=project
+    )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT user_id FROM memories
+            WHERE namespace = ANY($1::text[]) AND key = $2 AND scope = 'project'
+              AND project IS NOT DISTINCT FROM $3
+              AND user_id IS DISTINCT FROM $4
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY user_id
+            """,
+            [ns.lower() for ns in namespaces],
+            key,
+            project,
+            exclude or None,
+        )
+    return [r["user_id"] for r in rows]
+
+
+async def memory_supersede(
+    namespaces: list[str],
+    key: str,
+    project: str | None,
+    target_user_id: str,
+    actor_principal: str | None,
+    reason: str,
+    replacement_key: str | None = None,
+) -> dict | None:
+    """Mark ANOTHER writer's project row as superseded — correction, not deletion.
+
+    MEM-3, built the day it bit (2026-08-10): a departed agent's project notes
+    went stale, the successor could neither edit them (owner-enforced) nor
+    delete them (partition-scoped), and its correction rows ranked BELOW the
+    stale text in the searches every startup sweep runs. Agents trust project
+    notes precisely because agents wrote them, so a stale row left retrievable
+    is an instruction to the next reader.
+
+    The design line: **corrections change what readers retrieve, not what
+    history recorded.** The row is kept verbatim — value untouched, writer
+    untouched, retrievable via include_superseded — and gains lifecycle
+    metadata naming who superseded it, when, why, and what replaces it. That
+    is the before/after audit trail. Default search stops returning it, which
+    is the channel that actually misleads (corrections-beside-stale measured
+    losing at startup limits).
+
+    Permission: the caller needs READ on the row's namespace, nothing more.
+    This is deliberate and narrower than it looks — scope is fixed to
+    'project' (user/machine scopes are personal and keep their privacy), the
+    content is untouched, the action is fully attributed to the authenticated
+    principal, and OWN-1's ownership gate still protects the row's VALUE. A
+    project's members were always allowed to disagree with a note; this makes
+    the disagreement machine-readable instead of a losing race in vector
+    space. Copies the inbox lifecycle pattern (same table, metadata status,
+    no schema migration; NULL status reads as live, so it is back-compatible).
+    """
+    _, key, _, target, project = _normalize_key_fields(
+        key=key, scope="project", user_id=target_user_id, project=project
+    )
+    if not (reason or "").strip():
+        raise ValueError("supersede requires a reason — it becomes the audit trail")
+    stamp = {
+        "status": "superseded",
+        "superseded_at": datetime.now(timezone.utc).isoformat(),
+        "superseded_by_principal": actor_principal,
+        "superseded_reason": reason.strip(),
+    }
+    if replacement_key:
+        stamp["superseded_by_key"] = replacement_key.strip()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE memories
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
+            WHERE namespace = ANY($1::text[]) AND key = $2 AND scope = 'project'
+              AND user_id IS NOT DISTINCT FROM $3
+              AND project IS NOT DISTINCT FROM $4
+              AND COALESCE(metadata->>'status', '') <> $5
+            RETURNING namespace, key, user_id, project
+            """,
+            [ns.lower() for ns in namespaces],
+            key,
+            target,
+            project,
+            "superseded",
+            json.dumps(stamp),
+        )
+    return dict(row) if row else None
 
 
 # --- Inbox operations ----------------------------------------------------

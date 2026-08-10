@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient
@@ -820,7 +821,10 @@ async def memory_get(
         project_dir=project_dir or None,
     )
     if result["status"] == "not_found":
-        return f"No memory found with key '{key}'"
+        # The miss may be a PARTITION miss — the server now says so
+        # (`partition_warnings`); dropping that here would recreate the
+        # measured 2026-08-10 trap where "not found" meant "owned by grok".
+        return _append_guidance(f"No memory found with key '{key}'", result)
     mem = result["memory"]
     tags = f"\nTags: {mem['tags']}" if mem.get("tags") else ""
     recency = _format_recency(mem.get("created_at"))
@@ -863,8 +867,65 @@ async def memory_forget(
         project_dir=project_dir or None,
     )
     if result["status"] == "not_found":
-        return f"No memory found with key '{key}'"
+        return _append_guidance(f"No memory found with key '{key}'", result)
     return f"Deleted memory '{key}'"
+
+
+@mcp.tool()
+async def memory_supersede(
+    key: str,
+    target_user_id: str,
+    reason: str,
+    replacement_key: str = "",
+    namespace: str = "",
+    project_dir: str = "",
+) -> str:
+    """Retire ANOTHER writer's stale project memory without deleting it.
+
+    Use when a search returns a row that is now WRONG and you are not its
+    writer (its user_id is not you): memory_forget cannot touch it and
+    memory_store to the same key only forks a duplicate. Supersede keeps the
+    row as history, records who/why/when, and removes it from default search
+    so the next session stops retrieving the stale text.
+
+    Args:
+        key: The stale row's exact key (from search results)
+        target_user_id: The row's WRITER — the user_id shown on the search hit
+        reason: Required. Why it is stale — becomes the audit trail
+        replacement_key: Optional key of the row that replaces it
+        namespace: The row's namespace as shown on the search hit, when it
+            differs from this bridge's default (cross-provider rows often do)
+        project_dir: Your working directory path (scopes to the right project)
+    """
+    try:
+        _, _, project = await _resolve_partition_with_identity(
+            "project", project_dir or None
+        )
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
+    try:
+        result = await _client.supersede(
+            key=key,
+            namespace=namespace or settings.memory_namespace,
+            project=project,
+            target_user_id=target_user_id,
+            reason=reason,
+            replacement_key=replacement_key or None,
+            project_dir=project_dir or None,
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return (
+                f"No live row '{key}' under writer '{target_user_id}' here. "
+                f"Check the search hit's user_id and namespace fields — and "
+                f"note an already-superseded row is not re-stamped."
+            )
+        raise
+    return _append_guidance(
+        f"Superseded '{key}' (writer: {result.get('target_user_id')}) — kept "
+        f"as history, hidden from default search.",
+        result,
+    )
 
 
 @mcp.tool()
