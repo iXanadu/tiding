@@ -258,40 +258,30 @@
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **CURSOR-IDENT-1** A global `engram` entry in `~/.cursor/mcp.json` shadows
-  the per-session one a driver injects, so an AB-spawned Cursor session reads
-  mail at the wrong address. Measured 2026-08-10 by both AB sessions and
-  reproduced here: one `cursor-agent` with TWO engram MCP children, both
-  registered under the name `engram` — `ENGRAM_IDENTITY=cursor` (the global,
-  ours) and `ENGRAM_INBOX_IDENTITY=<project>-cursor` (the driver's). The
-  global wins. The session then reads mail for `cursor` while every surface
-  advertises its per-session seat; the owner DM'd the published address and
-  the session honestly answered "inbox empty for this seat". Cost him a live
-  session. The global entry exists because Cursor passes an MCP server ONLY
-  what its config block lists, so it was the only way a hand-launched session
-  could reach engram at all.
-  ⛔ **The obvious fix must not go first, and this is the whole item.** The
-  driver's per-session block sets `ENGRAM_INBOX_IDENTITY` and
-  `ENGRAM_PROVIDER` but NOT `ENGRAM_IDENTITY`, and the selector falls back to
-  the legacy identity file → the `claude-code` principal. Verified against
-  the running process and the resolver. So the global entry winning is the
-  ONLY reason those sessions authenticate as `cursor` today. Remove it alone
-  and the failure INVERTS: right seat, wrong principal — every Cursor write
-  and message attributed to Claude, with nothing erroring. **Today's bug is
-  loud** (a session says its inbox is empty, which is how it was found);
-  **the naive fix is silent.** Sequence: the driver adds
-  `ENGRAM_IDENTITY: cursor` FIRST, then the global entry goes.
-  ⓘ Cost of removal, accepted: `cursor-agent` has no launch-time MCP config
-  flag, so a hand-launched session gets servers only from `.cursor/mcp.json`
-  or the global file — removing the global leaves hand-launched Cursor
-  without engram. Replacement is a per-project `.cursor/mcp.json` in repos
-  where hand-launch is wanted, with the caveat that a driver must then not
-  spawn managed sessions into such a repo, or the same collision returns
-  per-repo. Needs documenting in `docs/multi-provider.md` when it lands.
-  ★ Two-servers-one-name resolves SILENTLY — the losing child just sits
-  there. That is why a peer found the hazard, filed it as "harmless, slightly
-  noisy", and it went on to break a session twelve hours later. The gap is
-  Cursor's (a name collision should be reportable), not the peer's attention.
+- **CURSOR-IDENT-1** *(collision FIXED and verified end-to-end 2026-08-10 —
+  the driver added a credential selector, engram's global `~/.cursor/mcp.json`
+  entry was removed, and a live session then showed ONE engram child carrying
+  the right principal and its per-session seat. What remains is below.)*
+  **Hand-launched Cursor now has no engram at all.** `cursor-agent` has no
+  launch-time MCP config flag, so a session gets servers only from
+  `~/.cursor/mcp.json` or a per-project `.cursor/mcp.json` — and BOTH collide
+  with a driver-injected server, because Cursor spawns every declared server
+  and routes by NAME. The old file is parked at
+  `~/.cursor/mcp.json.disabled-CURSOR-IDENT-1`.
+  Decide which the owner actually wants: (a) leave hand-launched Cursor without
+  engram, driver-spawned only — the state today, and free; (b) a per-project
+  `.cursor/mcp.json` in repos where hand-launch is wanted, with a standing rule
+  never to spawn managed sessions into such a repo; (c) ask Cursor for a
+  launch-time config flag, which is the only option that actually separates the
+  two cases.
+  ⚠️ **(b) is a landmine with a delay fuse** and the reason this needs a
+  decision rather than a default: it fails not when someone adds the file but
+  at the next spawn into that repo, looking exactly like the original bug — and
+  it would be added by someone who has never heard of any of this.
+  ⓘ Not engram's, but pinned so it is not rediscovered: a seat in a driver's
+  config block is a PREFERENCE, ordinal-suffixed when taken, so a driver that
+  advertises what it injected can name a different session. Flagged to the
+  driver 2026-08-10; documented in `docs/multi-provider.md`.
 
 - **LOG-1** Verify log rotation on ALREADY-INSTALLED boxes. `install.sh` writes
   `/etc/newsyslog.d/engram.conf` (10MB, keep 5, gzip) — but this box's install

@@ -257,8 +257,19 @@ scripts/wire-provider.sh cursor --kind http --admin-token "$ADMIN_TOKEN" \
   --read "fleet,claude-web,grok,beast" --write "fleet"
 ```
 
-Then `~/.cursor/mcp.json` (Cursor reads a global one and a per-project
-`.cursor/mcp.json`):
+⛔ **Do NOT put an engram entry in the GLOBAL `~/.cursor/mcp.json` if anything
+also spawns Cursor sessions with their own engram server** (a driver over ACP
+does exactly that). Cursor spawns **both** and routes by NAME, so two servers
+called `engram` means the global silently wins and the session reads mail at
+the wrong address while every surface advertises its per-session seat. Measured
+2026-08-10; it cost a live session. The same applies to a per-project
+`.cursor/mcp.json`, which loads **alongside** the global rather than replacing
+it — so a repo that grows one later reintroduces the collision, and it fails at
+the next *spawn* rather than at the edit.
+
+Use the block below only where NOTHING else injects an engram server — a box
+with hand-launched Cursor only. Where a driver is in play, the driver's
+per-session block is the whole configuration and this file should not exist:
 
 ```json
 { "mcpServers": { "engram": {
@@ -290,8 +301,18 @@ Consequences, in order of how easily they bite:
   **auto-allocate** seats server-side (`myproject-cursor`, then `-2`), so
   co-working works and addresses never collide. What you lose is *choosing* the
   name — role seats such as `myproject-audit`. A driver that needs a specific
-  seat must write it into the config block, and should prefer a per-project
-  `.cursor/mcp.json`: the global file is shared, so per-spawn rewrites race.
+  seat must write it into the config block; it must NOT rewrite the shared
+  global file per spawn (concurrent launches race, and see the collision
+  warning above).
+  ⚠️ **And a seat in that block is still only a PREFERENCE.** The server grants
+  it when free and ordinal-suffixes it when taken, so a driver that advertises
+  the value it injected can be naming a *different session*. Measured
+  2026-08-10: a live session injected `proj-cursor` and was granted
+  `proj-cursor-7`, while `proj-cursor` belonged to an older session — mail to
+  the advertised address would have reached the wrong one, the same symptom as
+  the collision above with the collision removed. **Read the granted seat back
+  from `POST /session/seats` keyed on the `session_key` you injected, and
+  render that** — see [Reading the granted seat](#reading-the-granted-seat-launchers-and-uis).
 
 **2. There is no in-session watcher, so the wake path lives outside Cursor.**
 Cursor has no blocking-stream equivalent to Claude Code's Monitor or Grok's
