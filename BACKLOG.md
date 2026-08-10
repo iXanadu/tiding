@@ -283,6 +283,34 @@
   advertises what it injected can name a different session. Flagged to the
   driver 2026-08-10; documented in `docs/multi-provider.md`.
 
+- **SEAT-16** The derived `session_key` names a PROCESS, which is what its own
+  contract forbids. `auto_session_key_for()` builds
+  `auto-<host>-<pid>-<starttime>` from the harness process, while the contract
+  states a session key "MUST survive a respawn (a dead-process reattach
+  reloads the SAME session from disk), so the key is derived from the handle
+  and never from the process". For a harness whose sessions are REVIVABLE, one
+  logical session therefore arrives as a new identity on every revive and
+  claims another address. Measured 2026-08-10: a single owner session accounted
+  for several of nine ordinals on one project — diagnosed by AgentBeast, who
+  noticed every key embedded a different pid.
+  ⚠️ **The docstring is the dangerous half:** it says the derived key "gives a
+  HAND-LAUNCHED session the same guarantees" as a launcher-injected one. It
+  does not, for any harness that reattaches a session into a fresh process —
+  so a reader is told the case is covered exactly where it is not.
+  Measured grant semantics, for whoever fixes this: a claim is idempotent on
+  `session_key` while the registration row EXISTS (same seat, `is_new=false`,
+  no ordinal burned), and continuity is destroyed by RELEASE — a returning key
+  re-enters allocation as a stranger and takes the lowest free candidate.
+  ⓘ Careful with the obvious test: release a key and immediately re-claim it
+  and it gets its old name back — by allocation coincidence, because
+  low-water-mark hands out the base name first, NOT by key continuity. Put
+  another session on the name while the key is away or the test proves nothing.
+  ⓘ Fixed for Cursor on the driver's side (it now injects a handle-derived
+  `ENGRAM_SESSION_KEY`), so this bites only harnesses that inject nothing.
+  Not measured: whether a STALE-but-present row still grants continuity. The
+  claim path documents idempotency as unconditional (SEAT-9, one-way door
+  rather than a liveness window), so it should — unverified.
+
 - **LOG-1** Verify log rotation on ALREADY-INSTALLED boxes. `install.sh` writes
   `/etc/newsyslog.d/engram.conf` (10MB, keep 5, gzip) — but this box's install
   predated that step, so the file was ABSENT and nothing ever rotated:
