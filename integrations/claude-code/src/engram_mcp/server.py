@@ -682,6 +682,15 @@ async def memory_store(
     # option). One visible line here is the whole point of the feature.
     if result.get("warning"):
         head = f"⚠ {result['warning']}\n{head}"
+    # Advisory fields (`*_warnings`) — e.g. "you just forked a key another
+    # writer holds". This tool builds its own reply string, so unlike the
+    # tools that return the raw result it must ask for advisories EXPLICITLY.
+    # Measured dropped in the wild (softphone, 2026-08-10) within hours of the
+    # server growing the field: the third drop-at-the-last-step instance, and
+    # the reason _advisories exists as a callable and not just a convention.
+    advisory = _advisories(result)
+    if advisory:
+        head = f"{head}\n\n{advisory}"
     return banner_text + head if banner_text else head
 
 
@@ -893,8 +902,12 @@ async def memory_supersede(
         target_user_id: The row's WRITER — the user_id shown on the search hit
         reason: Required. Why it is stale — becomes the audit trail
         replacement_key: Optional key of the row that replaces it
-        namespace: The row's namespace as shown on the search hit, when it
-            differs from this bridge's default (cross-provider rows often do)
+        namespace: The row's namespace EXACTLY as shown on the search hit.
+            Usually omit: another writer's rows in your project most often
+            live in YOUR shared write namespace (they wrote through the same
+            bridge), under their user_id. The whoami read-namespace list says
+            nothing about where a writer's rows sit — inferring "writer grok
+            => namespace grok" 404s (measured 2026-08-10)
         project_dir: Your working directory path (scopes to the right project)
     """
     try:

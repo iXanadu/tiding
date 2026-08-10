@@ -142,3 +142,32 @@ async def test_store_warns_when_forking_anothers_key(client, db_pool):
         assert body["partition_warnings"] == []
     finally:
         await _cleanup(client, db_pool)
+
+
+@pytest.mark.asyncio
+async def test_forget_success_names_surviving_siblings(client, db_pool):
+    """Deleting your own row under a shared key must say the key lives on.
+
+    The measured trap: an agent used forget as a LOOKUP on a shared key and
+    silently destroyed its own correction, receiving plain success.
+    """
+    try:
+        await _seed(client, "decision/shared", "grok's stale claim", "grok")
+        await _seed(client, "decision/shared", "claude's correction", "claude-code")
+        resp = await client.post("/memory/forget", json={
+            "namespace": NS, "key": "decision/shared", "scope": "project",
+            "user_id": "claude-code", "project": PROJECT,
+        })
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert any("STILL exists" in w and "grok" in w
+                   for w in body["partition_warnings"])
+        # Deleting a key with NO siblings stays quiet.
+        await _seed(client, "decision/solo", "v", "claude-code")
+        resp = await client.post("/memory/forget", json={
+            "namespace": NS, "key": "decision/solo", "scope": "project",
+            "user_id": "claude-code", "project": PROJECT,
+        })
+        assert resp.json()["partition_warnings"] == []
+    finally:
+        await _cleanup(client, db_pool)

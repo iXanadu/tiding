@@ -417,18 +417,32 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
         )
         status = "ok" if deleted else "not_found"
         forget_warnings: list[str] = []
-        if not deleted and req.scope == "project":
+        if req.scope == "project":
             readable = await _probe_namespaces(principal, req.namespace)
             others = await partition_siblings(
                 readable, req.key, req.project, exclude_user_id=req.user_id
             )
-            forget_warnings = [
-                f"'{req.key}' exists in this project under writer '{w}', which "
-                f"this principal cannot delete. To retire a stale row you do "
-                f"not own, use memory/supersede (keeps it as history, hides it "
-                f"from default search)."
-                for w in others
-            ]
+            if deleted:
+                # The delete SUCCEEDING is the sharper trap: an agent probing
+                # a shared key deletes ITS OWN row — possibly its own
+                # correction — and gets plain success. Measured 2026-08-10:
+                # a session used forget as a lookup and silently destroyed
+                # its own mitigation. Say whose row died and whose survive.
+                forget_warnings = [
+                    f"Deleted YOUR row ('{req.user_id}') — '{req.key}' STILL "
+                    f"exists in this project under writer '{w}'. If you meant "
+                    f"to retire theirs, that is memory/supersede, and your "
+                    f"deleted row may have been a correction worth restoring."
+                    for w in others
+                ]
+            else:
+                forget_warnings = [
+                    f"'{req.key}' exists in this project under writer '{w}', "
+                    f"which this principal cannot delete. To retire a stale "
+                    f"row you do not own, use memory/supersede (keeps it as "
+                    f"history, hides it from default search)."
+                    for w in others
+                ]
         # AUDIT-1: deletes are the rows the trail exists for — this exact
         # call was provable but undatable during the 2026-07-25 incident.
         # Misses are recorded too: an attempted delete of a key that is not
