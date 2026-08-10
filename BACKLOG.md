@@ -536,14 +536,16 @@
   SQL. The real form of this capability is not a multi-session nicety; it is
   "did an agent's work survive its own shutdown."
 
-- **MEM-3** A lifecycle verb for memories — resolve/supersede, copying the
-  inbox's existing pattern rather than inventing one (same table, same
-  metadata status field; a row with no status reads as live, so it is
-  back-compatible). Today memories have only create and delete, so the sole
-  way to stop stale handoffs accumulating is `memory_forget`, which destroys
-  the history. "Delete is the only lifecycle verb" is a shape worth removing
-  after the 2026-07-23 incident. Natural pair with MEM-2 (same part of the
-  codebase; together they make memory provable and curatable).
+- **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
+  built the day it bit — a departed agent's stale project notes were
+  uncorrectable by its successor and out-ranked their own corrections at
+  startup-sweep limits. What remains:)* the search-time collapse of same-key
+  duplicates across writers. Supersede removes the need for the incident case
+  (the stale twin drops out of default search), but two LIVE rows sharing a
+  key still both rank with nothing marking which is authoritative — a
+  ranking-layer design question, deliberately not smuggled in under the
+  incident fix. Resolve/lifecycle for a writer's OWN rows (the original MEM-3
+  ask) also still open; supersede covers the cross-writer half only.
 
 - **DR-3** Consider enabling WAL archiving. The backup chain itself is
   sound and was drilled end-to-end 2026-07-25: dumps every 30 min (114 runs,
