@@ -51,8 +51,10 @@ if ! tar -xzOf "$TARGET/base.tar.gz" backup_label >/dev/null 2>&1; then
     exit 1
 fi
 
-# Retention: newest KEEP bases stay, older go.
-ls -d "$BASE_DIR"/base-* 2>/dev/null | sort | head -n -"$KEEP" | while read -r old; do
+# Retention: newest KEEP bases stay, older go. (sort -r newest-first, then
+# skip the first KEEP — 'head -n -K' is a GNU-ism BSD/macOS head rejects,
+# caught live on this script's first run.)
+ls -d "$BASE_DIR"/base-* 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) | while read -r old; do
     echo "pg-basebackup: pruning old base $old"
     rm -rf "$old"
 done
