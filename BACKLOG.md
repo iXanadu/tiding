@@ -258,37 +258,6 @@
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **PART-1** *(FOUND LIVE 2026-08-11, during a startup that ran while the DB
-  was down.)* A single transient `/whoami` failure permanently demotes a
-  session's write partition to `user_id='unknown'`, and the session keeps
-  working. `_get_principal_name()` sets `_PRINCIPAL_FETCHED = True` BEFORE
-  the fetch it guards (`server.py:97`, ahead of the try), so a failure caches
-  `None` with no expiry and no retry — line 95 then short-circuits every later
-  call for the life of the bridge process. The NEGATIVE result is the one
-  cached forever.
-  Measured this session: Postgres was down at bridge start, so the first
-  `/whoami` lost its connection; after Postgres and engram were both healthy
-  again, `memory_whoami` correctly reported principal `claude-code` (it calls
-  the server fresh) while `memory_get` on the same session still resolved to
-  partition `unknown`. **Two identity answers in one session, one right and one
-  latched wrong** — and the wrong one is the one that decides where rows land.
-  ⚠️ **The silence is the hazard, not the misfile.** An existing key produced
-  a good advisory ("exists under writer `claude-code` — your get resolved to
-  partition `unknown`"), which is the only reason this was caught at all. A
-  session storing a NEW key gets no such signal: the write succeeds, reports
-  success, and lands where the next session's startup sweep does not look.
-  A wrapup written in this state is lost without ever erroring — the failure
-  mode is a session's whole night of notes, filed under a partition nobody
-  reads.
-  ⓘ Read side measured directly; write side shares
-  `_resolve_partition_with_identity`, so it is the same resolver, not a second
-  guess. Workaround while it stands: pass `user_id='claude-code'` explicitly on
-  `scope=project` calls, or restart the session (the cache is per bridge
-  process). Shape of the fix: latch only on SUCCESS, or cache the negative with
-  a short TTL — a store that cannot name its writer should retry, not decide.
-  ⓘ Also seen and NOT diagnosed, possibly the same class: `memory_status`
-  reported `seat claim: FAILING (1 consecutive)` and still reported it
-  unchanged after the service was healthy again.
 
 - **CURSOR-IDENT-1** *(collision FIXED and verified end-to-end 2026-08-10 —
   the driver added a credential selector, engram's global `~/.cursor/mcp.json`

@@ -414,6 +414,83 @@ async def test_search_narrows_when_read_list_set(respx_mock):
     assert body["namespaces"] == ["claude-code", "beast"]
 
 
+# --- PART-1: a transient /whoami failure must not latch user_id='unknown' ---
+
+def _whoami_ok():
+    return httpx.Response(200, json={
+        "name": "claude-code", "type": "agent", "is_admin": False,
+        "read_namespaces": ["fleet"], "write_namespaces": ["fleet"],
+    })
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_transient_whoami_failure_recovers_after_retry_window(respx_mock, tmp_path):
+    """Store down at first resolution → 'unknown' once, NOT for the session.
+
+    Found live 2026-08-11: two sessions whose bridges started during a power-cut
+    outage misfiled every scope=project write for their whole lives, silently,
+    because the first failed /whoami was cached with no expiry.
+    """
+    import engram_mcp.server as server_mod
+    (tmp_path / ".engram.cfg").write_text("project = spantest\n")
+    # Two failures: the client's own single HTTP-layer retry (client.py) must
+    # also fail before _get_principal_name sees a transient error at all.
+    whoami = respx_mock.get("/whoami").mock(
+        side_effect=[
+            httpx.ConnectError("store down"),
+            httpx.ConnectError("store down"),
+            _whoami_ok(),
+        ]
+    )
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"})
+    )
+    with patch.object(cfg, "memory_api_token", "engram_test"):
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+        body = json.loads(route.calls.last.request.content)
+        assert body["user_id"] == "unknown"  # degraded while the store is down
+        # Retry window elapses (deadline is monotonic; rewind it instead of sleeping)
+        server_mod._PRINCIPAL_RETRY_AT = 0.0
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+    assert whoami.call_count == 3  # fail + HTTP-layer retry, then the healing attempt
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "claude-code"  # healed — the old code stayed 'unknown' forever
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_whoami_failure_not_hammered_within_retry_window(respx_mock, tmp_path):
+    """Between retries the cached negative answers — no per-call /whoami storm."""
+    (tmp_path / ".engram.cfg").write_text("project = spantest\n")
+    whoami = respx_mock.get("/whoami").mock(side_effect=httpx.ConnectError("store down"))
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"})
+    )
+    with patch.object(cfg, "memory_api_token", "engram_test"):
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+    # One resolver attempt = 2 HTTP calls (the client retries once). The second
+    # store must add none — the cached negative answers inside the window.
+    assert whoami.call_count == 2
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "unknown"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_whoami_success_still_latches_for_process_life(respx_mock, tmp_path):
+    """The fix must not turn the cache into a per-call fetch."""
+    (tmp_path / ".engram.cfg").write_text("project = spantest\n")
+    whoami = respx_mock.get("/whoami").mock(return_value=_whoami_ok())
+    route = respx_mock.post("/memory/set").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "key": "k"})
+    )
+    with patch.object(cfg, "memory_api_token", "engram_test"):
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+        await memory_store(key="k", value="v", scope="project", project_dir=str(tmp_path))
+    assert whoami.call_count == 1
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "claude-code"
+
+
 # --- project reads span all writers (MEM-5) ---
 
 @respx.mock(base_url="http://localhost:8920")

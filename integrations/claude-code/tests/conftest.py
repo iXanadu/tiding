@@ -62,6 +62,29 @@ def _isolate_seat_files(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _reset_principal_cache():
+    """Isolate the /whoami principal cache between tests.
+
+    All three are module globals with process lifetime. Without a reset, the
+    first test to resolve a project partition decides what every later test
+    sees: a latched success leaks a principal name, and (pre-PART-1) a latched
+    failure leaked user_id='unknown'. The retry deadline is monotonic-clock
+    based, so a failure in one test could also silently suppress the /whoami
+    attempt of a test running within the retry window.
+    """
+    import engram_mcp.server as server_mod
+
+    def _reset():
+        server_mod._PRINCIPAL_CACHE = None
+        server_mod._PRINCIPAL_FETCHED = False
+        server_mod._PRINCIPAL_RETRY_AT = 0.0
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _reset_identity_pin(monkeypatch):
     """Isolate the session-scoped identity anchors before each test.
 

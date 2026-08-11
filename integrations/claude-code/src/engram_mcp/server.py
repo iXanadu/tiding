@@ -39,7 +39,9 @@ from engram_mcp.scoping import (
 
 
 _PRINCIPAL_CACHE: dict | None = None
-_PRINCIPAL_FETCHED = False
+_PRINCIPAL_FETCHED = False  # latches only on a DEFINITIVE answer — see _get_principal_name
+_PRINCIPAL_RETRY_AT = 0.0  # monotonic deadline gating the next attempt after a transient failure
+PRINCIPAL_RETRY_SECONDS = 30.0
 
 # Per-process nonce: lets the server distinguish two live sessions sharing
 # one inbox identity (seat-collision detection). Regenerated per bridge start.
@@ -90,17 +92,34 @@ async def _get_principal_name() -> str | None:
     running anonymously / token invalid. Logs nothing — we don't want to
     fail memory ops just because /whoami isn't reachable; downstream
     falls back to ``user_id='unknown'`` in that case.
+
+    Only a DEFINITIVE answer latches the cache: a successful /whoami (the
+    server answered, whatever it said) or a missing token (config, which
+    cannot heal within a process). A TRANSIENT failure — store down at
+    session start, restarting mid-call — is retried after
+    ``PRINCIPAL_RETRY_SECONDS`` instead of being cached forever. Latching
+    the negative permanently demoted every write the session ever made to
+    ``user_id='unknown'``, silently (PART-1, found live 2026-08-11 after
+    a power cut took the store down: two sessions started against the
+    dead store misfiled everything while memory_whoami — a fresh call —
+    reported the correct principal).
     """
-    global _PRINCIPAL_CACHE, _PRINCIPAL_FETCHED
+    global _PRINCIPAL_CACHE, _PRINCIPAL_FETCHED, _PRINCIPAL_RETRY_AT
     if _PRINCIPAL_FETCHED:
         return _PRINCIPAL_CACHE.get("name") if _PRINCIPAL_CACHE else None
-    _PRINCIPAL_FETCHED = True
     if not settings.memory_api_token:
+        _PRINCIPAL_FETCHED = True
+        return None
+    now = time.monotonic()
+    if now < _PRINCIPAL_RETRY_AT:
         return None
     try:
         _PRINCIPAL_CACHE = await _client.whoami()
     except Exception:
         _PRINCIPAL_CACHE = None
+        _PRINCIPAL_RETRY_AT = now + PRINCIPAL_RETRY_SECONDS
+        return None
+    _PRINCIPAL_FETCHED = True
     return _PRINCIPAL_CACHE.get("name") if _PRINCIPAL_CACHE else None
 
 
