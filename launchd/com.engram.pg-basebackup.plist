@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly physical base backup for PITR (DR-3). Install:
+       sudo cp launchd/com.engram.pg-basebackup.plist /Library/LaunchDaemons/
+       sudo launchctl bootstrap system /Library/LaunchDaemons/com.engram.pg-basebackup.plist
+     Sundays 03:30 local. The doctor's basebackup_fresh check pages if a week
+     passes without a new base, so a silently broken schedule cannot rot. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.engram.pg-basebackup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/srv/engram/scripts/pg-basebackup.sh</string>
+    </array>
+    <key>UserName</key>
+    <string>ixanadu</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/ixanadu</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/opt/srv/engram/logs/pg-basebackup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/srv/engram/logs/pg-basebackup.log</string>
+</dict>
+</plist>

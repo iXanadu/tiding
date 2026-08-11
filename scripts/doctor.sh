@@ -37,7 +37,9 @@ CRASHLOOP_WINDOW_MIN="${CRASHLOOP_WINDOW_MIN:-10}"
 # Stable prod path for the manifest — the scheduler invokes THIS install.
 SELF="/opt/srv/engram/scripts/doctor.sh"
 
-CHECKS=(engram_health postgres_up postgres_owner postgres_crashloop backup_fresh log_rotation disk_headroom)
+CHECKS=(engram_health postgres_up postgres_owner postgres_crashloop backup_fresh log_rotation disk_headroom archiver_ok basebackup_fresh)
+BASE_DIR="${BASE_DIR:-$DUMP_DIR/base}"
+BASE_MAX_AGE_DAYS="${BASE_MAX_AGE_DAYS:-8}"   # weekly cadence + 1 day of grace
 
 # Each check sets CH_STATUS (ok|crit|unknown) and CH_DETAIL.
 CH_STATUS=""
@@ -156,6 +158,51 @@ check_disk_headroom() {
     fi
 }
 
+# WAL archiver health (DR-3): a failing archive_command means postgres
+# retries forever while pg_wal grows — invisible until disk pressure unless
+# surfaced here. pg_stat_archiver is the authority.
+check_archiver_ok() {
+    local row mode
+    mode=$("$PG_BIN/psql" -d engram -h localhost -Atc "SHOW archive_mode" 2>/dev/null)
+    if [ -z "$mode" ]; then
+        CH_STATUS=unknown; CH_DETAIL="cannot query postgres for archiver state"
+        return
+    fi
+    if [ "$mode" != "on" ] && [ "$mode" != "always" ]; then
+        CH_STATUS=crit; CH_DETAIL="archive_mode=$mode — WAL archiving is OFF, PITR chain broken (DR-3)"
+        return
+    fi
+    row=$("$PG_BIN/psql" -d engram -h localhost -Atc \
+        "SELECT COALESCE(failed_count,0), COALESCE(last_failed_wal,''), (last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_failed_time > last_archived_time)) FROM pg_stat_archiver" 2>/dev/null)
+    if [ -z "$row" ]; then
+        CH_STATUS=unknown; CH_DETAIL="pg_stat_archiver unreadable"
+        return
+    fi
+    local failed_count last_failed failing
+    IFS='|' read -r failed_count last_failed failing <<< "$row"
+    if [ "$failing" = "t" ]; then
+        CH_STATUS=crit; CH_DETAIL="archiver FAILING (last failure newer than last success, wal=$last_failed, failed_count=$failed_count) — pg_wal is growing"
+    else
+        CH_STATUS=ok; CH_DETAIL="archiving (failed_count=$failed_count historical)"
+    fi
+}
+
+# Weekly base backup freshness (DR-3): WAL archives are unrestorable without
+# a base image to replay onto; a silently broken schedule must page.
+check_basebackup_fresh() {
+    if [ ! -d "$BASE_DIR" ]; then
+        CH_STATUS=crit; CH_DETAIL="$BASE_DIR absent — no base backup has ever run (DR-3)"
+        return
+    fi
+    local newest
+    newest=$(find "$BASE_DIR" -maxdepth 1 -name "base-*" -type d -mtime -"$BASE_MAX_AGE_DAYS" 2>/dev/null | head -1)
+    if [ -n "$newest" ]; then
+        CH_STATUS=ok; CH_DETAIL="base backup younger than ${BASE_MAX_AGE_DAYS}d present"
+    else
+        CH_STATUS=crit; CH_DETAIL="no base backup younger than ${BASE_MAX_AGE_DAYS}d in $BASE_DIR — WAL archives have no base to restore onto"
+    fi
+}
+
 json_escape() {
     # Details are controlled strings, but STALE-file heads etc. can carry
     # arbitrary text — strip what would break a hand-rolled JSON literal.
@@ -229,6 +276,24 @@ emit_manifest() {
       "summary": "datadir volume below ${DISK_MAX_PCT}%",
       "invoke": {"binary": "$SELF", "args": ["check", "disk_headroom"], "timeout_s": 20, "requires_root": false},
       "interval_s": 900,
+      "severity": "critical",
+      "alert_on": ["crit", "unknown"],
+      "dedup_window_s": 21600
+    },
+    {
+      "name": "archiver_ok",
+      "summary": "WAL archiver healthy (archive_mode on, no failure newer than last success)",
+      "invoke": {"binary": "$SELF", "args": ["check", "archiver_ok"], "timeout_s": 20, "requires_root": false},
+      "interval_s": 900,
+      "severity": "critical",
+      "alert_on": ["crit", "unknown"],
+      "dedup_window_s": 3600
+    },
+    {
+      "name": "basebackup_fresh",
+      "summary": "physical base backup younger than ${BASE_MAX_AGE_DAYS}d exists (WAL is unrestorable without one)",
+      "invoke": {"binary": "$SELF", "args": ["check", "basebackup_fresh"], "timeout_s": 20, "requires_root": false},
+      "interval_s": 3600,
       "severity": "critical",
       "alert_on": ["crit", "unknown"],
       "dedup_window_s": 21600
