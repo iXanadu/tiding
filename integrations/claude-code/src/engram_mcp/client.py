@@ -171,6 +171,35 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def keys(
+        self,
+        prefix: str,
+        scope: str,
+        user_id: str,
+        project: str | None = None,
+        limit: int = 500,
+        namespaces: list[str] | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        """Deterministic key enumeration under a prefix (MEM-2). No embedding;
+        key-ordered; response carries `total` so truncation is legible."""
+        body: dict = {
+            "prefix": prefix,
+            "scope": scope,
+            "user_id": user_id,
+            "limit": limit,
+        }
+        if project is not None:
+            body["project"] = project
+        if namespaces:
+            body["namespaces"] = namespaces
+        return await self._request(
+            "POST",
+            "/memory/keys",
+            json=body,
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def whoami(self) -> dict:
         """Return the authenticated principal record. Requires a valid
         bearer token; returns 401 if anonymous."""

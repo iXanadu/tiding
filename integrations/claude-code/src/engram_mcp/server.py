@@ -815,6 +815,90 @@ async def memory_search(
 
 
 @mcp.tool()
+async def memory_keys(
+    prefix: str = "",
+    scope: str = "",
+    project_dir: str = "",
+    project: str = "",
+    user_id: str = "",
+    limit: int = 200,
+) -> str:
+    """List every key under a prefix — deterministic, key-ordered, complete.
+
+    The verb between memory_get (exact key) and memory_search (semantic).
+    Use it when the QUESTION is "what exists" rather than "what is relevant":
+    every open handoff under 'wip/', every 'fix/' story, or — with an empty
+    prefix — everything a partition holds, e.g. "did that agent store
+    anything before it was shut down?". Semantic search cannot answer those:
+    it ranks, it does not enumerate, and an empty search result is evidence
+    of absence, never proof. Superseded rows are listed and marked.
+
+    Args:
+        prefix: Literal key prefix to match (e.g. "wip/"). Empty lists the
+            whole partition.
+        scope: machine (default), shared (all machines), or project (current project)
+        project_dir: Required when scope=project. Pass your working directory path so project memories are scoped correctly.
+        project: Admin override — enumerate this project instead of the auto-resolved one. Only valid with scope=project.
+        user_id: Admin override — enumerate under this user_id instead of the auto-resolved principal name.
+        limit: Max keys returned (default 200); the reply states the full
+            count, so a truncated listing says so.
+    """
+    caller_pinned_writer = bool(user_id)
+    try:
+        resolved_scope, user_id, project = await _resolve_partition_with_identity(
+            scope or None,
+            project_dir or None,
+            user_id_override=user_id or None,
+            project_override=project or None,
+        )
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
+    # Same MEM-5 rule as search: a project's memory belongs to the PROJECT,
+    # so enumeration spans every writer unless the caller pinned one.
+    if resolved_scope == "project" and not caller_pinned_writer:
+        user_id = "*"
+    read_ns = [ns.strip() for ns in settings.memory_read_namespaces.split(",") if ns.strip()]
+    await _heartbeat(project_dir or None)
+    result = await _client.keys(
+        prefix=prefix,
+        namespaces=read_ns or None,
+        scope=resolved_scope,
+        user_id=user_id,
+        project=project,
+        limit=limit,
+        project_dir=project_dir or None,
+    )
+
+    if result.get("status") != "ok":
+        return f"Key listing failed: {result}"
+    keys = result.get("keys", [])
+    total = result.get("total", len(keys))
+    where = f"scope={resolved_scope}" + (f", project={project}" if project else "")
+    if not keys:
+        # SEC-9 discipline: an empty enumeration IS a definitive answer, but
+        # only for the partition actually searched — name it.
+        return (
+            f"No keys matching prefix {prefix!r} ({where}, "
+            f"user_id={user_id}). This listing is deterministic — unlike "
+            f"search, an empty result here proves absence in this partition."
+        )
+    lines = []
+    for k in keys:
+        recency = _format_recency(k.get("created_at"))
+        bits = [b for b in (
+            f"{k.get('value_chars', 0)}ch",
+            recency or None,
+            k.get("user_id") if resolved_scope == "project" else None,
+            "SUPERSEDED" if k.get("status") == "superseded" else None,
+        ) if b]
+        lines.append(f"{k['key']}  ({' · '.join(bits)})")
+    head = f"{total} key(s) matching prefix {prefix!r} ({where})"
+    if len(keys) < total:
+        head += f" — SHOWING FIRST {len(keys)}; raise limit for the rest"
+    return head + ":\n" + "\n".join(lines)
+
+
+@mcp.tool()
 async def memory_get(
     key: str,
     scope: str = "",

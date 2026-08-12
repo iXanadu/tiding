@@ -14,6 +14,7 @@ MAX_ADDR = 256            # one address / identity / project name
 MAX_LIST = 64             # listen_set / channels / overlays element count
 MAX_SEARCH_LIMIT = 200
 MAX_INBOX_LIMIT = 500
+MAX_KEYS_LIMIT = 2000     # MEM-2 enumeration cap; `total` makes truncation legible
 MAX_EXPIRY_DAYS = 36_500  # ~100 years
 
 
@@ -223,6 +224,52 @@ class MemorySearchResponse(BaseModel):
     status: str
     results: list[MemoryItem]
     inbox_banner: InboxBanner | None = None
+
+
+class MemoryKeysRequest(_NamespacedRequest):
+    """MEM-2: deterministic key enumeration — the verb between get and search."""
+    namespace: str | None = None
+    namespaces: list[str] | None = None
+    prefix: str = Field(default="", max_length=MAX_KEY)
+    scope: str = "user"
+    user_id: str = Field(default="default", max_length=MAX_ADDR)
+    project: str | None = Field(default=None, max_length=MAX_ADDR)
+    limit: int = Field(default=500, ge=1, le=MAX_KEYS_LIMIT)
+
+    def explicit_namespaces(self) -> list[str] | None:
+        """Namespaces the client explicitly asked for, or None to let the
+        server resolve from the principal — same contract as search."""
+        if self.namespaces:
+            return self.namespaces
+        if self.namespace:
+            return [self.namespace]
+        return None
+
+
+class KeyEntry(BaseModel):
+    namespace: str
+    key: str
+    scope: str
+    user_id: str | None = None
+    project: str | None = None
+    tags: str = ""
+    created_at: datetime | None = None
+    last_used_at: datetime | None = None
+    # An index entry, not the content: enumeration answers "what exists",
+    # memory_get answers "what does it say". The length is served so a reader
+    # can tell a one-line stub from a real note without fetching either.
+    value_chars: int = 0
+    # Lifecycle, unfiltered: superseded rows are listed and MARKED, because a
+    # census that hides corrected rows cannot prove a write ever happened.
+    status: str | None = None
+
+
+class MemoryKeysResponse(BaseModel):
+    status: str
+    keys: list[KeyEntry]
+    # Full match count. When len(keys) < total the listing is truncated at
+    # the requested limit — served so truncation is legible, never silent.
+    total: int = 0
 
 
 class MemoryForgetResponse(BaseModel):

@@ -547,6 +547,93 @@ async def memory_search(
     return results
 
 
+async def memory_keys(
+    namespaces: list[str],
+    prefix: str = "",
+    scope: str = "user",
+    user_id: str = "default",
+    project: str | None = None,
+    limit: int = 500,
+) -> tuple[list[dict], int]:
+    """Deterministic key enumeration under a prefix (MEM-2).
+
+    The verb between ``memory_get`` (exact match) and ``memory_search``
+    (semantic): "list every key under ``wip/``", in key order, ALL matches,
+    no embedding involved. Semantic search cannot establish ABSENCE — eight
+    differently-phrased searches returning nothing is evidence, not proof —
+    and the live case this exists for is "an agent was shut down mid-job:
+    did it store anything?", which previously took direct SQL.
+
+    Returns ``(entries, total)``. ``total`` is the full match count so a
+    truncated listing can SAY it is truncated — a capped enumeration that
+    looks complete would be the exact failure this verb exists to end.
+
+    Deliberate choices:
+    - Values are NOT returned (only their length). This is an index;
+      ``memory_get`` is for reading. Keeps an unbounded-prefix listing from
+      hauling the whole partition into a context window.
+    - Superseded rows ARE listed, marked via ``status`` — a census that hides
+      corrected rows could not prove a write happened, which is the question.
+    - ``user_id="*"`` spans writers under exactly the search rule (MEM-5):
+      honored only for ``scope=project``, ignored elsewhere.
+    - Empty prefix lists the whole partition — that IS the absence check.
+    """
+    _, _, scope, user_id, project = _normalize_key_fields(
+        scope=scope, user_id=user_id, project=project
+    )
+    all_writers = user_id == "*" and scope == "project"
+    namespaces = [ns.lower() for ns in namespaces]
+    # LIKE-escape the prefix so 'wip_' means those four characters, not
+    # "wip followed by anything" — a prefix is a literal, never a pattern.
+    escaped = (
+        prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            r"""
+            SELECT namespace, key, scope, user_id, project, tags, created_at,
+                   last_used_at, length(value) AS value_chars,
+                   metadata->>'status' AS lifecycle_status,
+                   count(*) OVER () AS total
+            FROM memories
+            WHERE (expires_at IS NULL OR expires_at > NOW())
+              AND namespace = ANY($1::text[])
+              AND scope = $2
+              AND scope <> 'inbox'
+              AND ($5 OR user_id IS NOT DISTINCT FROM $3)
+              AND project IS NOT DISTINCT FROM $4
+              AND key LIKE $6 ESCAPE '\'
+            ORDER BY key, namespace, user_id
+            LIMIT $7
+            """,
+            namespaces,
+            scope,
+            user_id,
+            project,
+            all_writers,
+            f"{escaped}%",
+            limit,
+        )
+    total = rows[0]["total"] if rows else 0
+    entries = [
+        {
+            "namespace": r["namespace"],
+            "key": r["key"],
+            "scope": r["scope"],
+            "user_id": r["user_id"],
+            "project": r["project"],
+            "tags": r["tags"],
+            "created_at": r["created_at"],
+            "last_used_at": r["last_used_at"],
+            "value_chars": r["value_chars"],
+            "status": r["lifecycle_status"],
+        }
+        for r in rows
+    ]
+    return entries, total
+
+
 async def memory_forget(
     namespace: str,
     key: str,

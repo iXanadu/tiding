@@ -313,6 +313,32 @@ curl -X POST http://localhost:8920/memory/search \
   -d '{"namespace": "my-agent", "query": "where do I live", "limit": 3}'
 ```
 
+#### `POST /memory/keys`
+
+Deterministic key enumeration under a prefix — the verb between `get` (exact
+match) and `search` (semantic). Every key under the prefix, in key order, no
+embedding involved. Semantic search cannot establish *absence*; this can:
+an empty listing proves nothing exists in the partition it names. Superseded
+rows are listed and marked (a census that hides corrected rows cannot prove a
+write happened). Values are not returned — only their length; `memory_get`
+reads the content. Namespace permissions are enforced exactly as search
+enforces them, including implicit namespace resolution from the principal.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` / `namespaces` | string / string[] | optional | As in search; omit both to resolve from the principal |
+| `prefix` | string | `""` | Literal key prefix (`"wip/"`). Empty lists the whole partition |
+| `scope` | string | `"user"` | Scope filter |
+| `user_id` | string | `"default"` | Identity within namespace; `"*"` spans writers (scope=project only, as in search) |
+| `project` | string | `null` | Project filter (for scope=project) |
+| `limit` | int | `500` | Max keys returned; `total` in the response always carries the full match count, so truncation is legible |
+
+```bash
+curl -X POST http://localhost:8920/memory/keys \
+  -H "Content-Type: application/json" \
+  -d '{"namespace": "my-agent", "prefix": "wip/", "scope": "project", "project": "myproj", "user_id": "*"}'
+```
+
 #### `POST /memory/forget`
 
 Delete a memory by key.
@@ -562,7 +588,7 @@ The MCP bridge resolves project identity from `.engram.cfg` in the repo root (wa
 project = my-project-name
 ```
 
-**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, `memory_forget`; the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
+**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, **`memory_keys`** (deterministic prefix listing — "every key under `wip/`", or with an empty prefix "did that agent store anything?"; search ranks, this enumerates), `memory_forget`; the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
 
 The bridge also installs the **`engram-inbox-wait`** console script — arm it at session start (under Claude Code's Monitor tool) so the session wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake watcher](#inbox-inter-agent-messaging).
 

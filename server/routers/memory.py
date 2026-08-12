@@ -33,6 +33,9 @@ from server.models import (
     MemoryForgetResponse,
     MemoryGetRequest,
     MemoryGetResponse,
+    MemoryKeysRequest,
+    MemoryKeysResponse,
+    KeyEntry,
     MemorySearchRequest,
     MemorySearchResponse,
     MemorySetRequest,
@@ -70,6 +73,7 @@ from server.services.memory_service import (
     inbox_send,
     memory_forget,
     memory_get,
+    memory_keys,
     memory_search,
     memory_set,
     memory_supersede,
@@ -398,6 +402,47 @@ async def search_memory(req: MemorySearchRequest, request: Request):
         return MemorySearchResponse(status="ok", results=results, inbox_banner=banner)
     except Exception as e:
         logger.exception("memory_search failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/keys", response_model=MemoryKeysResponse)
+async def list_keys(req: MemoryKeysRequest, request: Request):
+    """Deterministic key enumeration under a prefix (MEM-2).
+
+    The verb between /memory/get (exact) and /memory/search (semantic):
+    every key under a prefix, key-ordered, no embedding, with a `total` so a
+    truncated listing can never pass as a complete one. Exists because
+    semantic search cannot establish ABSENCE — "did a shut-down agent store
+    anything?" previously took direct SQL. Namespace permissions are enforced
+    exactly as search enforces them.
+    """
+    principal = get_current_principal(request)
+    explicit = req.explicit_namespaces()
+    if explicit is None:
+        ns_list = await resolve_read_namespaces(principal)
+    else:
+        ns_list = explicit
+        check_namespaces_access(principal, ns_list, "read")
+    logger.debug(
+        f"KEYS ns={ns_list} prefix={req.prefix!r} scope={req.scope} "
+        f"user_id={req.user_id}"
+    )
+    try:
+        entries, total = await memory_keys(
+            namespaces=ns_list,
+            prefix=req.prefix,
+            scope=req.scope,
+            user_id=req.user_id,
+            project=req.project,
+            limit=req.limit,
+        )
+        return MemoryKeysResponse(
+            status="ok",
+            keys=[KeyEntry(**e) for e in entries],
+            total=total,
+        )
+    except Exception:
+        logger.exception("memory_keys failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 

@@ -12,6 +12,7 @@ from engram_mcp.server import (
     VERSION,
     memory_store,
     memory_search,
+    memory_keys,
     memory_get,
     memory_forget,
     memory_status,
@@ -916,3 +917,89 @@ async def test_admin_fallback_banner_silent_for_project_and_seated_sessions(
     finally:
         identity.clear_seat()
         identity.reset_session_pin()
+
+
+# --- memory_keys (MEM-2) ---------------------------------------------------
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_keys_lists_and_formats(respx_mock):
+    route = respx_mock.post("/memory/keys").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "total": 2,
+                "keys": [
+                    {
+                        "namespace": "fleet", "key": "wip/alpha",
+                        "scope": "machine", "user_id": "macmini",
+                        "value_chars": 120,
+                        "created_at": "2026-08-12T12:00:00+00:00",
+                        "status": None,
+                    },
+                    {
+                        "namespace": "fleet", "key": "wip/beta",
+                        "scope": "machine", "user_id": "macmini",
+                        "value_chars": 40,
+                        "created_at": "2026-08-01T12:00:00+00:00",
+                        "status": "superseded",
+                    },
+                ],
+            },
+        )
+    )
+    result = await memory_keys(prefix="wip/")
+    assert "wip/alpha" in result and "wip/beta" in result
+    assert "2 key(s)" in result
+    assert "SUPERSEDED" in result  # a corrected row is listed AND marked
+    body = json.loads(route.calls.last.request.content)
+    assert body["prefix"] == "wip/"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_keys_empty_result_names_the_partition(respx_mock):
+    """SEC-9 discipline: a deterministic empty answer proves absence, but
+    only for the partition it actually searched — the reply must name it."""
+    respx_mock.post("/memory/keys").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "total": 0, "keys": []})
+    )
+    result = await memory_keys(prefix="wip/")
+    assert "proves absence" in result
+    assert "scope=machine" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_keys_truncation_is_announced(respx_mock):
+    respx_mock.post("/memory/keys").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "total": 300,
+                "keys": [
+                    {"namespace": "fleet", "key": f"k/{i}", "scope": "machine",
+                     "user_id": "macmini", "value_chars": 1, "status": None}
+                    for i in range(200)
+                ],
+            },
+        )
+    )
+    result = await memory_keys(prefix="k/")
+    assert "SHOWING FIRST 200" in result
+    assert "300 key(s)" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_keys_project_scope_spans_writers(respx_mock):
+    """Same MEM-5 rule as search: unpinned project enumeration spans every
+    writer — the project's memory belongs to the project."""
+    route = respx_mock.post("/memory/keys").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "total": 0, "keys": []})
+    )
+    with patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_keys(
+            scope="project", project_dir="/Users/ixanadu/projects/engram"
+        )
+    body = json.loads(route.calls.last.request.content)
+    assert body["user_id"] == "*"

@@ -457,25 +457,6 @@
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
-- **MEM-2** Key-prefix enumeration — a deterministic "list every key under
-  `wip/`" that returns ALL matches in key order with no embedding involved.
-  `memory_get` is exact-match, `memory_search` is semantic, and there is
-  nothing in between; measured live, handoff notes score 0.51 while an
-  unrelated five-month-old note scores 0.45, so "read all the open handoffs"
-  is not reliably expressible and a missing one is indistinguishable from
-  none. Would honor namespace read perms exactly as search does. Requested by
-  AgentBeast 2026-07-24. **Justified today, independent of any multi-session
-  design** — sibling `wip/*` keys have sat unread for weeks in a
-  single-session world because `/startup` fetches exact keys and everything
-  else is invisible by construction. What the owner's handoff direction gates
-  is this item's PRIORITY, not its validity.
-  **Live incident the same evening:** an agent was shut down mid-job and the
-  question "did it store anything?" could not be answered from any client —
-  semantic search cannot establish absence, and eight differently-phrased
-  searches returning nothing is evidence, not proof. Answering it took direct
-  SQL. The real form of this capability is not a multi-session nicety; it is
-  "did an agent's work survive its own shutdown."
-
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
   uncorrectable by its successor and out-ranked their own corrections at
