@@ -989,6 +989,13 @@ class SeatEntry(BaseModel):
     # A fact about the key's minting, not a verdict (additive; WIRE-1 rule:
     # fields are added with defaults, never removed on one consumer's say-so).
     session_key_generated: bool = False
+    # SEATS-1: the watcher's beat for this seat, in the roster's three-valued
+    # vocabulary — True: beat within the freshness window, mail will wake it;
+    # False: a watcher has beaten here before and went quiet; None: no watcher
+    # has EVER beaten here (no basis — an unarmed session or a pre-beat
+    # bridge). None must never be read as False: absent is not dead.
+    watcher_alive: bool | None = None
+    watcher_last_seen: str | None = None
     # Both `is_live` and `reclaimable` were removed 2026-08-01. Each was a
     # threshold applied to `age_seconds` and nothing else, so exporting them
     # sent the same bit twice — once as a fact, once as a verdict. Consumers

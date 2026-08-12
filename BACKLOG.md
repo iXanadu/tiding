@@ -130,22 +130,6 @@
   `admin@webone (group on host)`. The value is naming the kinds, not policing
   a form that turned out to be legitimate.
 
-- **SEATS-1** Serve `watcher_last_seen` (and `watcher_alive`) per seat on
-  `/session/seats`. The roster has carried them since `a70c67d`; that payload
-  does not, so a consumer computing its own liveness verdict for sessions on
-  OTHER boxes has to fall back to a coarser signal. Requested by AgentBeast
-  2026-07-28, acknowledged, not shipped. Small and additive.
-  ⓘ The reason it was held is now gone: it was unsafe while three spokes ran
-  pre-beat bridges, since the field would have read watcher-dead for every
-  remote session and dropped LIVE ones from their picker. The fleet is
-  uniform as of 2026-08-06, so the field means what it says. The agreed
-  contract if a mixed fleet ever recurs: mark pre-beat builds explicitly
-  null-AND-FLAGGED, so a consumer can tell "no beat exists on that box" from
-  "beat missed" — a distinction the raw field cannot express.
-  ⓘ Measured the same day, for whoever sizes the window: on an ungraceful box
-  death the watcher signal goes stale in ≈4m24s against ≈9m24s for presence —
-  more than twice as sharp, which is the argument for serving it at all.
-
 - **HUD-2** Adding a participant to a running thread works, and nobody can
   find it. Membership is not frozen at creation, contrary to the tool's own
   description: `participants` is stored PER MESSAGE, and a fan-out send

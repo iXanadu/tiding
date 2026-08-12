@@ -770,3 +770,84 @@ async def test_seats_payload_marks_generated_keys_as_a_fact(client, db_pool):
     assert generated["session_key_generated"] is True
     assert injected["session_key_generated"] is False
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_seats_serve_watcher_beat_in_the_rosters_vocabulary(
+    client, db_pool
+):
+    """SEATS-1 (requested by AgentBeast 2026-07-28): a picker for sessions on
+    OTHER boxes needs per-seat wake-ability from the seats payload it already
+    reads. Three-valued, exactly as the roster serves it: True = a watcher
+    beat within the freshness window; False = one has beaten here and went
+    quiet; None = no watcher has EVER beaten — and None is never coerced to
+    False, because absent is not dead (the conflation that once let a live
+    session's address be taken)."""
+    await _clear(db_pool)
+    from datetime import datetime, timedelta, timezone
+
+    fresh = (await _claim(client, "eared", session_nonce="E1")).json()["seat"]
+    quiet = (await _claim(client, "deafened", session_nonce="E2")).json()["seat"]
+    never = (await _claim(client, "earless", session_nonce="E3")).json()["seat"]
+
+    now = datetime.now(timezone.utc)
+    async with db_pool.acquire() as conn:
+        for seat, seen in (
+            (fresh, now.isoformat()),
+            (quiet, (now - timedelta(hours=3)).isoformat()),
+        ):
+            await conn.execute(
+                """
+                INSERT INTO memories
+                    (namespace, key, value, scope, user_id, project,
+                     tags, tags_search, search_text, embedding, metadata)
+                VALUES ($1, $2, 'running', 'presence', $3, $3,
+                        '', '', '', NULL, $4::jsonb)
+                """,
+                INBOX_NAMESPACE, f"presence/{seat}", PROJ,
+                f'{{"watcher_last_seen": "{seen}"}}',
+            )
+        # `never` gets a presence row with NO watcher_last_seen at all
+        await conn.execute(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            VALUES ($1, $2, 'running', 'presence', $3, $3, '', '', '', NULL,
+                    '{}'::jsonb)
+            """,
+            INBOX_NAMESPACE, f"presence/{never}", PROJ,
+        )
+
+    r = await client.post("/session/seats", json={"project": PROJ})
+    assert r.status_code == 200
+    by_seat = {s["seat"]: s for s in r.json()["seats"]}
+
+    assert by_seat[fresh]["watcher_alive"] is True
+    assert by_seat[fresh]["watcher_last_seen"] is not None
+    assert by_seat[quiet]["watcher_alive"] is False
+    assert by_seat[never]["watcher_alive"] is None, (
+        "no beat ever must read None, not False — absent is not dead"
+    )
+    assert by_seat[never]["watcher_last_seen"] is None
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = 'presence' AND user_id = $1",
+            PROJ,
+        )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_seat_without_presence_row_reads_watcher_none(client, db_pool):
+    """A seat whose session never heartbeat presence at all (claimed via the
+    registry, then silent) must read None/None — the join is LEFT, and a
+    missing row is 'no basis', not 'dead'."""
+    await _clear(db_pool)
+    seat = (await _claim(client, "rowless", session_nonce="R1")).json()["seat"]
+    r = await client.post("/session/seats", json={"project": PROJ})
+    entry = {s["seat"]: s for s in r.json()["seats"]}[seat]
+    assert entry["watcher_alive"] is None
+    assert entry["watcher_last_seen"] is None
+    await _clear(db_pool)

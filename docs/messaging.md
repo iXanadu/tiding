@@ -103,7 +103,11 @@ that conversation. The seat stays pure plumbing.
 
 **Launchers: read the granted seat, don't reconstruct it.** A launcher never
 calls `/session/claim` — the bridge inside the session does — so it cannot see
-the grant. Ask instead:
+the grant. Ask instead — the payload also carries per-seat `watcher_alive` /
+`watcher_last_seen` (SEATS-1) in the roster's three-valued vocabulary (true =
+a watcher beat recently, mail will wake it; false = one has beaten and went
+quiet; null = no watcher has ever beaten — never read null as dead), so a
+picker can render honest wake-ability for sessions on other boxes:
 
 ```bash
 curl -s ... -d '{"session_key":"claude-ab-projgamma"}' \

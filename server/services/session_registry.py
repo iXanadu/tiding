@@ -46,6 +46,7 @@ from server.services.memory_service import (
     SEAT_EXEMPT_IDENTITIES,
     SEAT_SCOPE,
     SEAT_USER_ID,
+    _watcher_state,
 )
 
 SEAT_NAMESPACE = INBOX_NAMESPACE
@@ -689,17 +690,29 @@ async def seat_list(
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # SEATS-1: join each seat to its presence row (`presence/<seat>` under
+        # the same project) so the payload can carry the watcher's beat. The
+        # roster has served these since a70c67d; a consumer building a picker
+        # for sessions on OTHER boxes had to fall back to a coarser signal.
         rows = await conn.fetch(
             """
-            SELECT key, project, metadata, last_used_at FROM memories
-            WHERE namespace = $1 AND scope = $2
-              AND ($3::text IS NULL OR project = $3)
-              AND ($4::text IS NULL OR metadata->>'session_key' = $4)
-            ORDER BY last_used_at DESC
+            SELECT s.key, s.project, s.metadata, s.last_used_at,
+                   p.metadata AS presence_metadata
+            FROM memories s
+            LEFT JOIN memories p
+              ON p.namespace = s.namespace
+             AND p.scope = $5
+             AND p.user_id = s.project
+             AND p.key = 'presence/' || substr(s.key, 6)
+            WHERE s.namespace = $1 AND s.scope = $2
+              AND ($3::text IS NULL OR s.project = $3)
+              AND ($4::text IS NULL OR s.metadata->>'session_key' = $4)
+            ORDER BY s.last_used_at DESC
             """,
             SEAT_NAMESPACE, SEAT_SCOPE,
             project.strip().lower() if project else None,
             session_key.strip().lower() if session_key else None,
+            PRESENCE_SCOPE,
         )
     now = datetime.now(timezone.utc)
     out = []
@@ -707,6 +720,18 @@ async def seat_list(
         md = _md(r)
         age = (now - r["last_used_at"]).total_seconds()
         key = md.get("session_key")
+        # SEATS-1: the watcher's beat, in the roster's exact three-valued
+        # vocabulary (_watcher_state): True = beat within the freshness
+        # window, mail will wake it; False = a watcher HAS beaten here and
+        # went quiet; None = no watcher has ever beaten — no basis. None is
+        # NEVER coerced to False: absent is not dead, and if a mixed fleet
+        # recurs (pre-beat bridges on some boxes) the agreed contract is
+        # exactly this — null means "no beat exists there", distinguishable
+        # from "beat missed".
+        pmd = r["presence_metadata"]
+        if isinstance(pmd, str):
+            pmd = json.loads(pmd)
+        watcher_alive, watcher_seen = _watcher_state(pmd or {}, now)
         out.append({
             "seat": r["key"].removeprefix("seat/"),
             "project": r["project"],
@@ -736,5 +761,13 @@ async def seat_list(
             # age_seconds, which is the correct place for it — same move as
             # dropping `state` from the roster, one layer up.
             "age_seconds": round(age, 1),
+            # SEATS-1 (requested by AgentBeast 2026-07-28). Unlike is_live/
+            # reclaimable these are not thresholds over age_seconds — the beat
+            # is an independent SIGNAL (the watcher process speaking), ~2×
+            # sharper than presence on an ungraceful death (measured: ≈4m24s
+            # vs ≈9m24s to go stale). Same fields, same vocabulary, same
+            # freshness window as the roster.
+            "watcher_alive": watcher_alive,
+            "watcher_last_seen": watcher_seen.isoformat() if watcher_seen else None,
         })
     return out
