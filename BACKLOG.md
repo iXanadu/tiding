@@ -468,24 +468,17 @@
   incident fix. Resolve/lifecycle for a writer's OWN rows (the original MEM-3
   ask) also still open; supersede covers the cross-writer half only.
 
-- **DB-2** Decide `idle_in_transaction_session_timeout` (currently 0 =
-  disabled, along with idle_session_timeout and tcp_keepalives_idle).
-  Measured by the admin session 2026-08-10: connections healthy today (10/100,
-  oldest idle 52s, zero idle-in-transaction) — the old "lingers for hours"
-  report does NOT reproduce and is closed. What remains is the missing
-  insurance: a client dying mid-transaction would hold locks and pin the
-  vacuum horizon indefinitely, showing up as bloat before it shows up as an
-  error. Owner of the workload picks the number; it only ever fires on
-  something already broken.
-
-
-- **DATA-1** Decide the fate of two sensitive local archives sitting
-  untracked at `~/projects/` top level (deliberately outside every git
-  repo, inside FleetBackup's source set): the 2026-07-23 inbox recovery
-  export, and the older pre-rewrite history bundle. Both contain verbatim
-  private conversation and neither is managed by any retention policy —
-  they persist until someone decides. Owner's call: keep, relocate to a
-  vault, or delete. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
+- **DATA-1** *(narrowed 2026-08-12: the pre-rewrite history bundle is
+  DELETED on the owner's word — its rollback purpose was spent. What
+  remains is a different decision than first framed.)* The 2026-07-23
+  inbox recovery export (two JSON files, untracked at `~/projects/` top
+  level, inside FleetBackup's source set) is the ONLY SURVIVING COPY of
+  the 69 messages that outlived the inbox bulk-delete incident — the
+  store deliberately does NOT hold them (re-import would wake every
+  addressed session with stale mail), and the other ~1664 rows are gone
+  permanently. So this is not "delete a redundant archive"; it is "keep
+  or erase the last copy of that history." Owner's call, made with that
+  fact stated. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
 ## Blocked-external
 
