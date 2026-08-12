@@ -392,27 +392,6 @@
 
 ## Needs-decision
 
-- **DEADMAN-1** Cross-box dead-man probe for macmini — ON HOLD by the owner
-  (2026-08-11), design notes kept so nothing is re-derived. THE REQUIREMENT
-  (from the 21h outage): when the store's box itself is dark, an alert must
-  reach the owner's phone via a delivery leg that does NOT live on that box —
-  the hub push path dies with the box, and box-level fleet heartbeats read
-  "ok" through a service-level outage. Probe half is trivial (remote box curls
-  the store's /health over tailscale, N consecutive failures → alert).
-  DESIGN OF RECORD (2026-08-11, after the owner asked "can the Beast network
-  accommodate this?" and the peer counter-proposed): spoke-side check on a
-  remote box probes the store's /health + the hub port; N consecutive
-  failures → ONE stateless Telegram sendMessage direct from that box to the
-  API (send has no single-poller constraint; hub uninvolved, so the leg is
-  provably independent of the monitored box). Wins over hosted-ntfy (the
-  prior recommendation, now the fallback) because it lands in the channel
-  the owner ALREADY watches — an unwatched channel is the dominant failure
-  mode of any alert path. Build is the PEER'S (their alert-path lane, with
-  their dedup/backoff); the store's half is only: keep /health cheap,
-  stable, and meaningful. Token placement via the fleet vault; alert text
-  generic (assume-public). Full exchange: inbox thread of 2026-08-11.
-  ⏸ Awaiting the owner's final nod on the channel; owner reopens by name.
-
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
   allocation backstop, and how. The goodbye now records `farewell_at` when a
   watcher observes its session's process exit, and any later evidence of life
