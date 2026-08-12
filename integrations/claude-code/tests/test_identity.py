@@ -657,6 +657,18 @@ class TestAutoSessionKey:
         monkeypatch.setenv(identity.SESSION_KEY_ENV, "claude-ab-engram")
         assert identity.resolve_session_key() == "claude-ab-engram"
 
+    def test_generated_keys_carry_the_instability_marker(self):
+        """SEAT-16: a generated key names a PROCESS, and must say so.
+
+        The `auto-` prefix is the contract a consumer reads to tell a
+        process-lifetime key from a launcher-injected stable one — the
+        distinction the server serves back as `session_key_generated`.
+        Asserted against the CONSTANT so the marker and the minting can
+        never drift apart silently.
+        """
+        key = identity.auto_session_key_for(99, "Mon Aug 10 09:00:00 2026", "box")
+        assert key.startswith(identity.AUTO_KEY_PREFIX)
+
     def test_orphan_has_no_derived_key(self, monkeypatch):
         """ppid <= 1 means no harness to anchor to — degrade, never guess."""
         monkeypatch.setattr(identity.os, "getppid", lambda: 1)

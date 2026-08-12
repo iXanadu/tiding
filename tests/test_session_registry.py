@@ -718,3 +718,55 @@ async def test_a_rename_never_frees_a_seat_holding_undelivered_mail(
         )
     assert kept == 1, "old seat with undelivered mail must age out, not free"
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_continuity_holds_even_when_the_seat_row_is_stale_past_grace(
+    client, db_pool
+):
+    """SEAT-16's unverified claim, now measured: continuity has NO age gate.
+
+    The claim path documents idempotency on session_key as unconditional —
+    a one-way door, not a liveness window — but until this test nobody had
+    proven that a row stale past the full 7d grace window still grants its
+    key the same seat back. It must: grace exists for STRANGERS taking over
+    an abandoned name, never for a returning key, and a returning session
+    that lost its address because it was quiet too long would be the exact
+    stolen-address failure the asymmetry rule forbids.
+    """
+    await _clear(db_pool)
+    first = (await _claim(client, "longsleep", session_nonce="N1")).json()
+    await _age_seat(db_pool, first["seat"], SEAT_GRACE_SECONDS * 2)
+
+    back = (await _claim(client, "longsleep", session_nonce="N1")).json()
+    assert back["seat"] == first["seat"], (
+        "a stale-past-grace row must still grant its own key continuity"
+    )
+    assert back["is_new"] is False
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_seats_payload_marks_generated_keys_as_a_fact(client, db_pool):
+    """SEAT-16: a consumer must be able to tell a process-derived key from a
+    launcher-injected one when reading a seat back.
+
+    A generated key (`auto-` prefix) names a harness PROCESS, so it changes
+    on every revive of a revivable session — the docstring used to promise
+    "the same guarantees" as an injected key, and a consumer inherited that
+    assumption into an ordinal pileup (measured 2026-08-10). The payload now
+    serves the minting as a fact; the verdict stays the consumer's.
+    """
+    await _clear(db_pool)
+    await _claim(client, "auto-testhost-4242-mon-jan-1-00-00-00-2026")
+    await _claim(client, "cursor-thread-abc123")
+
+    r = await client.post("/session/seats", json={"project": PROJ})
+    assert r.status_code == 200
+    by_key = {s["session_key"]: s for s in r.json()["seats"]}
+
+    generated = by_key["auto-testhost-4242-mon-jan-1-00-00-00-2026"]
+    injected = by_key["cursor-thread-abc123"]
+    assert generated["session_key_generated"] is True
+    assert injected["session_key_generated"] is False
+    await _clear(db_pool)

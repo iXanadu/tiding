@@ -287,6 +287,19 @@ _SESSION_SEAT: str | None = None
 # structural guarantee.
 SESSION_KEY_ENV = "ENGRAM_SESSION_KEY"
 
+# THE MARKER (SEAT-16). Every key this module GENERATES starts with this
+# prefix, and that prefix is a contract: a generated key names a PROCESS
+# (harness pid + start time), NOT a stable session handle. For a harness whose
+# sessions are revivable — a dead-process reattach that reloads the same
+# logical session into a fresh process — a generated key changes on every
+# revive, so each revive claims a NEW seat. A consumer reading a key back
+# (from /session/seats, a seat row, or the env) can therefore tell a
+# process-lifetime identity from a launcher-injected stable one instead of
+# inheriting the assumption that all keys survive respawn. Injected keys must
+# NOT use this prefix; the server serves the distinction as
+# ``session_key_generated`` on /session/seats.
+AUTO_KEY_PREFIX = "auto-"
+
 
 def _proc_info(pid: int) -> tuple[int, str] | None:
     """``(ppid, start_time)`` for ``pid`` via POSIX ps, or None.
@@ -317,10 +330,14 @@ def auto_session_key_for(pid: int, start: str, host: str | None = None) -> str:
     Shared vocabulary between the bridge (which knows the harness is its own
     parent) and the watcher (which must rediscover it by walking ancestors), so
     both name the same session without a launcher.
+
+    Carries ``AUTO_KEY_PREFIX`` deliberately: this key names a PROCESS, so it
+    is only as durable as that process. The prefix is the marker that says so
+    (SEAT-16) — never strip it, and never inject a key with this prefix.
     """
     host = host or hostname()
     safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in start).strip("-")
-    return f"auto-{host}-{pid}-{safe}".lower()
+    return f"{AUTO_KEY_PREFIX}{host}-{pid}-{safe}".lower()
 
 
 def derive_session_key() -> str | None:
@@ -351,12 +368,18 @@ def derive_session_key() -> str | None:
 
 
 def resolve_session_key() -> str | None:
-    """This session's stable key: launcher-injected, else derived.
+    """This session's key: launcher-injected, else derived.
 
     A launcher-injected key is preferred — AgentBeast's tmux name is unique per
-    box and survives a respawn, which a pid cannot. The derived key is what
-    gives a HAND-LAUNCHED session the same guarantees, since it has no launcher
-    to inject anything and cannot re-exec itself.
+    box and survives a respawn, which a pid cannot. The derived fallback gives
+    a hand-launched session a unique key, NOT the same guarantees: it names
+    the harness PROCESS, so it survives a bridge restart under a living
+    harness but NOT a harness respawn. A harness that revives sessions
+    (dead-process reattach into a fresh process) arrives with a new derived
+    key each time and claims a new seat — measured 2026-08-10 as an ordinal
+    pileup. Such a harness's launcher must inject a handle-derived
+    ``ENGRAM_SESSION_KEY``; the derived key's ``AUTO_KEY_PREFIX`` is the
+    marker that tells a consumer which kind it holds (SEAT-16).
     """
     env = (os.environ.get(SESSION_KEY_ENV) or "").strip().lower()
     if env:

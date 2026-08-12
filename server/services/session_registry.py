@@ -120,6 +120,16 @@ MAX_SEAT_ORDINAL = 64
 # without limit across many restarts.
 MAX_SUPERSEDED_NONCES = 8
 
+# The bridge's generated-key marker (SEAT-16). A session key with this prefix
+# was DERIVED from the harness process (pid + start time) because no launcher
+# injected one — it names a process, not a stable session handle, so it does
+# NOT survive a harness respawn. Served as a FACT (``session_key_generated``)
+# on the seats payload so a consumer can weigh continuity claims correctly;
+# the verdict — whether to trust such a key across a revive — stays the
+# consumer's, per the facts-not-verdicts rule. Mirrors AUTO_KEY_PREFIX in the
+# bridge's identity.py; injected keys must never use it.
+GENERATED_KEY_PREFIX = "auto-"
+
 
 def seat_candidates(project: str, provider: str, preferred: str | None = None):
     """Yield candidate seats, lowest ordinal first (low-water-mark allocation).
@@ -696,12 +706,21 @@ async def seat_list(
     for r in rows:
         md = _md(r)
         age = (now - r["last_used_at"]).total_seconds()
+        key = md.get("session_key")
         out.append({
             "seat": r["key"].removeprefix("seat/"),
             "project": r["project"],
             "provider": md.get("provider"),
             "host": md.get("host"),
-            "session_key": md.get("session_key"),
+            "session_key": key,
+            # SEAT-16: a generated key names a PROCESS and dies with it — a
+            # harness respawn arrives as a NEW key and a NEW seat. Serving
+            # the distinction is what lets a consumer stop assuming every
+            # key survives a revive. A fact about how the key was minted,
+            # not a liveness verdict.
+            "session_key_generated": bool(
+                key and key.startswith(GENERATED_KEY_PREFIX)
+            ),
             # `age_seconds` is the whole answer. Both flags that used to sit
             # here are gone (2026-08-01): `is_live` (age < 600) and then
             # `reclaimable` (age >= grace). Each was a THRESHOLD APPLIED TO

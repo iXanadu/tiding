@@ -144,6 +144,42 @@ Verified on the live tree: bridge `4830 → ppid 4813 = claude`.
 > here), which is shared by every tmux session on the box — it would hand all
 > sessions one key, the precise opposite of what is needed.
 
+### The derived key names a process, and says so (SEAT-16)
+
+The contract above says a session key "MUST survive a respawn". A derived key
+**cannot** honour that: it is built from the harness pid + start time, so it is
+a *process* name. For Claude/Grok that is fine — the harness process *is* the
+session. For a harness whose sessions are **revivable** (a dead-process
+reattach reloads the same logical session into a fresh process — Cursor via
+its driver, Codex threads), every revive arrives as a new key, and a new key
+cannot take a seat whose registration stands — it is handed an ordinal.
+Measured 2026-08-10: five revives in 33 minutes, one logical session holding
+several of nine ordinals on one project.
+
+The default cannot be fixed — there is no handle to derive from when nothing
+injects one. What ships instead (2026-08-12) is **legibility**:
+
+- The `auto-` prefix on every generated key is now a documented **marker**:
+  *this is not a stable identity*. `AUTO_KEY_PREFIX` in the bridge,
+  `GENERATED_KEY_PREFIX` on the server. Injected keys must never use it.
+- `/session/seats` serves `session_key_generated` per seat — a fact about the
+  key's minting, not a liveness verdict — so a consumer weighs continuity
+  claims instead of inheriting the "same guarantees" assumption the old
+  docstring promised (it lied; it is fixed).
+- Continuity's no-age-gate promise is now **tested**, not asserted: a seat row
+  stale past the full grace window still grants its own key the same seat
+  (grace is for strangers, never for a returning key).
+
+**The escape hatch for revivable harnesses, and its one gap.** A driver that
+cannot keep one key can route around: `release` the old key, then `claim` the
+new one with `preferred_seat` set to the old name — verified stable across two
+revives. Between the release and the claim the name is FREE; another session
+claiming in that project during the window is handed it by low-water-mark.
+Milliseconds, consumer-controlled, non-zero. If that ever bites in practice,
+the fix is a first-class "reclaim this name for a new key" operation —
+deliberately **not built speculatively**. The correct route remains: inject a
+handle-derived `ENGRAM_SESSION_KEY` (the Cursor driver now does).
+
 ## Making the watcher agree (R4)
 
 Three mechanisms, deliberately redundant, because a bridge seated correctly with

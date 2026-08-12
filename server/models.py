@@ -936,6 +936,12 @@ class SeatEntry(BaseModel):
     provider: str | None = None
     host: str | None = None
     session_key: str | None = None
+    # SEAT-16: True when session_key carries the bridge's generated-key marker
+    # (`auto-` prefix) — the key names a harness PROCESS and will not survive
+    # a respawn, so continuity claims against it are process-lifetime only.
+    # A fact about the key's minting, not a verdict (additive; WIRE-1 rule:
+    # fields are added with defaults, never removed on one consumer's say-so).
+    session_key_generated: bool = False
     # Both `is_live` and `reclaimable` were removed 2026-08-01. Each was a
     # threshold applied to `age_seconds` and nothing else, so exporting them
     # sent the same bit twice — once as a fact, once as a verdict. Consumers

@@ -77,9 +77,18 @@ kill. Roles are how you describe *why* you want several agents; you assign them
 in the **huddle** to whichever seats you picked, and the huddle thread carries
 that conversation. The seat stays pure plumbing.
 
-- **`session_key`** is stable per session (a launcher's, or derived from the
-  harness process). Re-claiming with it returns the *same* seat, so a bridge
-  restart never moves a running session's address.
+- **`session_key`** is what continuity keys on: re-claiming with it returns
+  the *same* seat, so a bridge restart never moves a running session's
+  address. A **launcher-injected** key (from the session handle — a tmux
+  slot, a thread id) is stable across a respawn. A **derived** key (no
+  launcher; `auto-` prefix) names the harness *process* and is stable only
+  while that process lives — a harness that *revives* sessions into fresh
+  processes arrives with a new derived key each revive and claims a new
+  seat. The `auto-` prefix is the marker, and `/session/seats` serves it as
+  the `session_key_generated` fact, so a consumer can tell which kind it is
+  reading instead of assuming every key survives a respawn. Launchers for
+  revivable harnesses must inject a handle-derived `ENGRAM_SESSION_KEY`
+  (never `auto-`-prefixed).
 - **`preferred_seat`** is a request, not an assignment — granted when free.
 - **`runtime_seat: true`** marks the preferred seat as a *deliberate
   mid-session choice* (`memory_take_seat`): the registry **moves** the
