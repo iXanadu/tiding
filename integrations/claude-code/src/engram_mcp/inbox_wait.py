@@ -87,11 +87,13 @@ def _identity_conflict(reader_identity: str, project: str,
         f"session's environment (a daemonized harness's frozen env, or a "
         f"stale seat file), and every DM to this session's real address "
         f"would silently miss.\n"
-        f"Fixes:\n"
-        f"  · intended {name!r}: relaunch with  --identity {name}\n"
-        f"  · intended this folder's identity: relaunch from a clean "
-        f"environment (unset ENGRAM_INBOX_IDENTITY), or pass "
-        f"--identity {project}"
+        f"THE FIX (almost always this one):\n"
+        f"    relaunch with  --identity {project}\n"
+        f"{name!r} is most likely LEAKED, not yours: unless YOU deliberately "
+        f"chose that exact name for THIS session, do NOT assert it — "
+        f"asserting a leaked name re-creates the silent misdelivery this "
+        f"refusal exists to stop. (Deliberately chose it? Then, and only "
+        f"then: --identity {name})"
     )
 
 _AUTH_FAIL_MSG = (
