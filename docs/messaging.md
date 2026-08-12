@@ -101,6 +101,18 @@ that conversation. The seat stays pure plumbing.
   reclaimed after a grace period — but **never** while undelivered mail is
   addressed to it.
 
+**Team group addresses (`groups =` in `.engram.cfg`).** A sub-team's folder
+can share its parent project's memory (`project = agentbeast`) while needing
+its own convening address. Declare it in the folder's cfg —
+`groups = agentbeast-app` (comma list, bare names, no `#`) — and **every**
+session resolving that folder listens on each group (and its `@<host>` form)
+in addition to its seat and project group, whatever seat a launcher injected.
+This is what makes "send to the app team" work without knowing which
+provider/session is driving. File-declared deliberately (unlike channels,
+which are env-only cross-project subscriptions): a team address is bound to
+the codebase, so the folder-walked file is the right authority. Takes effect
+at each session's next start.
+
 **Launchers: read the granted seat, don't reconstruct it.** A launcher never
 calls `/session/claim` — the bridge inside the session does — so it cannot see
 the grant. Ask instead — the payload also carries per-seat `watcher_alive` /

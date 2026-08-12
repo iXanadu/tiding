@@ -76,7 +76,7 @@ def write_project_cfg(directory: str, name: str) -> str:
     return path
 
 
-def _parse_engram_cfg(path: str, key: str = "project") -> str | None:
+def _parse_engram_cfg(path: str, key: str = "project", raw: bool = False) -> str | None:
     """Read a .engram.cfg file and return the value of ``key``, or None.
 
     Format: INI-ish, lines ``<key> = <value>``. ``#`` comments and blank lines
@@ -97,6 +97,11 @@ def _parse_engram_cfg(path: str, key: str = "project") -> str | None:
                 if k.strip().lower() != key:
                     continue
                 name = value.strip().strip('"').strip("'")
+                if raw:
+                    # Caller validates — used for LIST-valued keys (`groups`),
+                    # whose entries are checked one by one against the same
+                    # charset a single name must satisfy.
+                    return name
                 if _VALID_NAME.match(name):
                     return name
                 return None
@@ -179,6 +184,39 @@ def resolve_inbox_identity(project_dir: str | None) -> str | None:
     """
     path = _find_cfg_path(project_dir)
     return _parse_engram_cfg(path, "inbox_identity") if path else None
+
+
+def resolve_inbox_groups(project_dir: str | None) -> list[str]:
+    """Extra loose TEAM addresses from ``groups =`` in ``.engram.cfg``.
+
+    Comma-separated bare names (no ``#`` sigil — these are project-style
+    group addresses, not cross-project channels). Every session resolving
+    this folder listens on each of them IN ADDITION to its seat and its
+    project group, whatever seat a launcher injected.
+
+    Why this exists (GROUP-1, 2026-08-12): a sub-team's folder can share its
+    parent project's memory brain (``project = agentbeast``) while needing
+    its own convening address (``agentbeast-app``). ``inbox_identity`` was
+    that address until the seat era — a launcher-injected per-session seat
+    SHADOWS it, so with three app sessions running, a peer's natural send to
+    ``agentbeast-app`` reached whichever single session happened to hold
+    that exact seat string, or nobody. A group must not depend on which
+    session won a name.
+
+    File-declared deliberately, unlike channels (env-only): a team address
+    is bound to the CODEBASE — every session working this folder belongs on
+    it, whoever launched them and however many there are. That is exactly
+    the property a folder-walked file has and an env var does not.
+    """
+    path = _find_cfg_path(project_dir)
+    value = (_parse_engram_cfg(path, "groups", raw=True) if path else None) or ""
+    out: list[str] = []
+    for entry in value.split(","):
+        entry = entry.strip().lower()
+        if (entry and not entry.startswith("#")
+                and _VALID_NAME.match(entry) and entry not in out):
+            out.append(entry)
+    return out
 
 
 def ensure_project_identity(project_dir: str | None) -> str:

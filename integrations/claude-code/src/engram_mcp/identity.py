@@ -26,7 +26,11 @@ import os
 import socket
 import subprocess
 
-from engram_mcp.scoping import resolve_inbox_identity, resolve_project_name
+from engram_mcp.scoping import (
+    resolve_inbox_groups,
+    resolve_inbox_identity,
+    resolve_project_name,
+)
 
 ADMIN_NAME = "admin"
 
@@ -882,6 +886,17 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     project = derive_project_name(identity_anchor_dir())
     override = resolve_session_identity(project_dir) or ""
     channels = resolve_channels()
+    # GROUP-1: folder-declared TEAM addresses (`groups =` in .engram.cfg).
+    # Every session in this folder listens on each — whatever seat a launcher
+    # injected — so a peer's send to the team's natural name reaches the whole
+    # team instead of whichever session happened to win that exact seat
+    # string. Anchored like identity (the fixed anchor, not the per-call
+    # project_dir) so a cross-project memory call cannot move them.
+    groups: list[str] = []
+    for g in resolve_inbox_groups(identity_anchor_dir()):
+        if g != project and g != override and _is_valid_seat(g):
+            groups.append(g)
+            groups.append(f"{g}@{host}")
     if override and override != project:
         reader = f"{override}@{host}"
         # precise identity first, then the project GROUP address (broadcasts to
@@ -913,13 +928,14 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
                 override,
                 project,
                 f"{project}@{host}",
+                *groups,
                 f"machine:{host}",
                 reader,
                 *channels,
             ],
         )
     reader = f"{project}@{host}"
-    return (reader, [project, f"machine:{host}", reader, *channels])
+    return (reader, [project, *groups, f"machine:{host}", reader, *channels])
 
 
 def reader_to_address(reader_identity: str) -> str:

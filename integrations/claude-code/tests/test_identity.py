@@ -901,3 +901,65 @@ def test_no_notice_when_nothing_is_declared(monkeypatch):
 
     assert identity.resolve_session_identity("/x") == "env-name"
     assert identity.identity_override_notice() is None
+
+
+class TestFolderGroups:
+    """GROUP-1: `groups =` in .engram.cfg adds team addresses every session
+    in the folder listens on — whatever seat a launcher injected.
+
+    The case that forced it (2026-08-12): the app folder shares its parent
+    project's memory (project=agentbeast) and declared inbox_identity=
+    agentbeast-app as the team address — which launcher-injected seats then
+    SHADOWED, so with three app sessions live, mail to 'agentbeast-app'
+    reached whichever one held that exact seat, or nobody."""
+
+    def setup_method(self):
+        identity.clear_seat()
+        identity._DISCOVERED_SEAT_PATH = None
+
+    teardown_method = setup_method
+
+    def test_seated_session_still_hears_the_team_address(
+        self, monkeypatch, tmp_path
+    ):
+        proj = tmp_path / "AgentBeast-app"
+        proj.mkdir()
+        (proj / ".engram.cfg").write_text(
+            "project = agentbeast\ngroups = agentbeast-app\n"
+        )
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "agentbeast-app-grok")
+        monkeypatch.setattr(identity, "hostname", lambda: "macmini")
+        prev = identity._IDENTITY_ANCHOR
+        try:
+            identity._IDENTITY_ANCHOR = str(proj)
+            reader, listen = identity.compute_identity(str(proj))
+            assert reader == "agentbeast-app-grok@macmini"
+            # seat, project group, AND the team group — all present
+            assert "agentbeast-app-grok" in listen
+            assert "agentbeast" in listen
+            assert "agentbeast-app" in listen, (
+                "the folder's team address must be heard whatever the seat"
+            )
+            assert "agentbeast-app@macmini" in listen
+        finally:
+            identity._IDENTITY_ANCHOR = prev
+            identity.reset_session_pin()
+
+    def test_group_equal_to_project_or_seat_is_not_duplicated(
+        self, monkeypatch, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / ".engram.cfg").write_text(
+            "project = alpha\ngroups = alpha, alpha-app\n"
+        )
+        monkeypatch.setattr(identity, "hostname", lambda: "macmini")
+        prev = identity._IDENTITY_ANCHOR
+        try:
+            identity._IDENTITY_ANCHOR = str(proj)
+            _, listen = identity.compute_identity(str(proj))
+            assert listen.count("alpha") == 1
+            assert "alpha-app" in listen
+        finally:
+            identity._IDENTITY_ANCHOR = prev
+            identity.reset_session_pin()

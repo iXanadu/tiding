@@ -440,3 +440,30 @@ def test_server_path_unaffected_by_home_boundary(tmp_path, monkeypatch):
         (server / ".engram.cfg").unlink(missing_ok=True)
         server.rmdir()
         server.parent.rmdir()
+
+
+# --- GROUP-1: folder-declared team group addresses --------------------------
+
+from engram_mcp.scoping import resolve_inbox_groups
+
+
+def test_resolve_inbox_groups_parses_and_normalizes(tmp_path):
+    (tmp_path / ".engram.cfg").write_text(
+        "project = agentbeast\ngroups = AgentBeast-App,  extra-team ,\n"
+    )
+    assert resolve_inbox_groups(str(tmp_path)) == ["agentbeast-app", "extra-team"]
+
+
+def test_resolve_inbox_groups_absent_is_empty(tmp_path):
+    (tmp_path / ".engram.cfg").write_text("project = agentbeast\n")
+    assert resolve_inbox_groups(str(tmp_path)) == []
+
+
+def test_resolve_inbox_groups_rejects_channel_sigil(tmp_path):
+    """A '#name' is a cross-project channel, joined via ENGRAM_CHANNELS —
+    silently promoting it to a project-style group would blur the two
+    namespaces the sigil exists to separate."""
+    (tmp_path / ".engram.cfg").write_text(
+        "project = agentbeast\ngroups = #devagents, agentbeast-app\n"
+    )
+    assert resolve_inbox_groups(str(tmp_path)) == ["agentbeast-app"]
