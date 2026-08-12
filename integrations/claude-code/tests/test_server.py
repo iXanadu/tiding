@@ -1003,3 +1003,35 @@ async def test_memory_keys_project_scope_spans_writers(respx_mock):
         )
     body = json.loads(route.calls.last.request.content)
     assert body["user_id"] == "*"
+
+
+# --- BEAT-1: presence beats on a timer, not on tool calls -------------------
+
+
+async def test_background_beat_fires_without_any_tool_call(monkeypatch):
+    """An idle session must stay visible: the beat loop invokes the heartbeat
+    on a timer, immediately on start and again per interval — no tool call
+    involved. This is what keeps a live-but-quiet session on the picker."""
+    import asyncio as _asyncio
+    from engram_mcp import server as _srv
+
+    calls = []
+
+    async def fake_heartbeat(project_dir):
+        calls.append(project_dir)
+
+    monkeypatch.setattr(_srv, "_heartbeat", fake_heartbeat)
+    monkeypatch.setattr(_srv, "_HEARTBEAT_EVERY_SECONDS", 0.01)
+
+    task = _asyncio.create_task(_srv._background_beat())
+    await _asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except _asyncio.CancelledError:
+        pass
+
+    assert len(calls) >= 2, "the beat must fire repeatedly with zero tool calls"
+    assert all(pd is None for pd in calls), (
+        "timer beats must anchor to the session's own project (ROST-2)"
+    )

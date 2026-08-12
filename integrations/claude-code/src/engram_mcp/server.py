@@ -1,5 +1,6 @@
 """MCP server providing persistent semantic memory for Claude Code."""
 
+import asyncio
 import os
 import subprocess
 import time
@@ -1875,6 +1876,46 @@ async def memory_resolve_thread(
     return _append_guidance(head, result)
 
 
+async def _background_beat() -> None:
+    """BEAT-1: presence beats on a TIMER, not on tool calls.
+
+    Until this, every heartbeat rode a tool handler, so "last spoke" measured
+    ACTIVITY — an idle-but-alive session emitted nothing, aged past the
+    picker's freshness window in 10 minutes, and vanished from every surface
+    that renders existence from the register. The population that hid was the
+    one most worth reaching: an idle session is the cheap one to convene.
+    Measured as owner-facing UX 2026-08-12: live sessions dropping out of the
+    huddle picker while their owner watched.
+
+    The loop simply invokes the existing throttled heartbeat: the shared
+    ``_HEARTBEAT_EVERY_SECONDS`` throttle coordinates timer and tool-call
+    beats (whichever fired last suppresses the other), so cadence never
+    doubles. ``project_dir=None`` → the session's own anchor, so a beat can
+    never register this session on another project's roster (ROST-2).
+
+    Known limit, carried from the BACKLOG note verbatim: this tracks the
+    BRIDGE PROCESS, not the agent. A wedged session with a healthy bridge
+    beats happily. It moves the unknown; it does not delete it — AB owns the
+    liveness verdict, this only serves the fact under it.
+    """
+    # First beat immediately: a freshly-spawned session should be visible
+    # before its first tool call, not two minutes after.
+    while True:
+        try:
+            await _heartbeat(None)
+        except Exception:
+            pass  # presence is best-effort; the loop must outlive any blip
+        await asyncio.sleep(_HEARTBEAT_EVERY_SECONDS)
+
+
+async def _amain() -> None:
+    beat = asyncio.create_task(_background_beat())
+    try:
+        await mcp.run_stdio_async()
+    finally:
+        beat.cancel()
+
+
 def main():
     # Record the harness for the watcher, HERE and not on a heartbeat: our
     # parent is the session by construction only while we are the process the
@@ -1882,7 +1923,7 @@ def main():
     # watcher cannot work this out for itself — its own parent is a shell
     # wrapper in a different process group from the session.
     record_session_process()
-    mcp.run(transport="stdio")
+    asyncio.run(_amain())
 
 
 if __name__ == "__main__":

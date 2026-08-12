@@ -159,55 +159,6 @@
   docstrings, which assert the opposite of what the code does and are what
   misled three sessions.
 
-- **BEAT-1** The bridge has no background beat, so "last spoke" measures
-  ACTIVITY, not PRESENCE.
-  ⛔ **A promotion was written here on 2026-08-06 and RETRACTED the same
-  hour — recorded because the retraction is the useful part.** The claim was
-  that this gates fleet-wide discoverability, on the premise that a peer's
-  spawn table is hub-local and engram's register is therefore the only
-  cross-node source. **The premise was wrong.** That peer measured a routed
-  per-node call returning a remote session's full row from its own node's
-  spawn table, so `remote + launched + never-spoke` is covered by them, and
-  the residual is only *a session no launcher started anywhere that has also
-  never touched engram*. Small. The error was mine and it was second-hand: I
-  built a coverage table from another session's measurement of the HUB-LOCAL
-  endpoint and generalised it without checking what population that
-  measurement covered.
-  **What survives:** the original rationale above, unchanged and still worth
-  fixing. **What does not:** any claim that this outranks ADDR-2/ADDR-3.
-  Also still true, and independent of the retraction: a timer beat would
-  **dissolve SEAT-15 rather than decide it** — the first beat claims the
-  seat, so lazy-vs-eager stops being a policy question. Every heartbeat rides a tool call, so the register
-  records sessions that used a memory tool — not sessions that exist. A live
-  session on a long build is indistinguishable from a corpse, and the
-  population this hides is the one most worth reaching: an idle session is
-  the cheap one to convene, a busy one is the one you would rather not
-  interrupt. Same survivorship problem AgentBeast raised against their own
-  **SEAT-13** proposal (*"idle sessions contribute NO samples"*), now pointed
-  at the recipient picker, where it decides whether a live session is
-  offered at all.
-  ⚠️ **It also makes the staleness window unpickable from data that exists**:
-  presence rows hold ONE `last_used_at` (a snapshot, not a history) and
-  presence writes bypass `memory_set`, so `audit_log` has no trail. Any
-  window chosen today is a judgment dressed as a measurement.
-  A timer beat fixes all of it at once — staleness becomes a real proxy for
-  reachability, idle sessions stop being invisible, the window becomes
-  DERIVABLE (beat interval × a small missed-beat count), and SEAT-13's
-  revocation gap closes as a side effect (revocation currently heals only a
-  session that goes on to do work — the population least likely to be falsely
-  declared dead). One item sitting underneath the picker, SEAT-13 and
-  SEAT-15.
-  ⓘ Its fleet-wide half is gone: every spoke ran a pre-beat bridge until
-  2026-08-06, which made `no watcher seen` a false negative on three boxes.
-  The whole fleet is now current, so that field means what it says.
-  ★ **Caveat, so nobody builds on it unwarned:** a background beat tracks the
-  BRIDGE PROCESS, not the agent. A wedged session with a healthy bridge would
-  beat happily. It moves the unknown, it does not delete it — the ownership
-  split holds, AB owns the verdict and engram owns the facts under it.
-  Interim rule until it ships, from the asymmetry: a false INCLUDE costs one
-  harmlessly-queued message, a false EXCLUDE costs the 2026-08-06 incident.
-  Err loose, and never drop silently.
-
 - **CHAN-1** There is no in-session channel join, and the workaround creates
   listening the register cannot see. A running seat cannot subscribe to a
   channel it was not spawned with — membership arrives once, at launch, via
