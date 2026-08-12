@@ -704,6 +704,30 @@ def take_seat(name: str) -> str:
     return name
 
 
+def assert_local_seat(name: str) -> str:
+    """Assert an identity for THIS PROCESS ONLY (WATCH-1's --identity).
+
+    Same validation and precedence slot as ``take_seat`` — but it does NOT
+    write the seat file. The file is the SESSION's shared identity, followed
+    by the bridge; a watcher asserting its own identity through the file
+    would re-seat the whole session, which is the inheritance hijack this
+    flag exists to escape, pointed the other way. ``_SESSION_SEAT`` is a
+    module global, so in a separate watcher process it scopes exactly to
+    that process.
+    """
+    global _SESSION_SEAT
+    name = (name or "").strip().lower()
+    if not name:
+        raise ValueError("seat name is required")
+    if not _is_valid_seat(name):
+        raise ValueError(
+            "seat must be lowercase letters, digits, dot, underscore or hyphen "
+            "(it is matched as an exact inbox address)"
+        )
+    _SESSION_SEAT = name
+    return name
+
+
 def current_seat() -> str | None:
     """The runtime seat this session has taken, if any."""
     return _SESSION_SEAT

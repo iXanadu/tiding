@@ -40,6 +40,7 @@ from engram_mcp.identity import (
     discover_session_process,
     process_is_gone,
     reader_to_address,
+    assert_local_seat,
     set_identity_anchor,
 )
 
@@ -47,6 +48,51 @@ from engram_mcp.identity import (
 # session sees the watcher die with a reason instead of it silently
 # retrying forever while every wake is missed.
 EXIT_AUTH_FAILED = 2
+
+# WATCH-1: the watcher refused to start because the identity it inherited
+# contradicts the folder it was pointed at. Distinct code so a Monitor-armed
+# session wakes on the refusal instead of silently listening at the wrong
+# address for its whole life.
+EXIT_IDENTITY_CONFLICT = 3
+
+
+def _identity_conflict(reader_identity: str, project: str,
+                       explicit: bool) -> str | None:
+    """WATCH-1: is this watcher about to listen somewhere it wasn't pointed?
+
+    Measured four times (three on 2026-08-05, once on 2026-08-12): a watcher
+    launched through a shell inherits identity state from an environment that
+    predates it — a daemonized harness's frozen ``ENGRAM_INBOX_IDENTITY``, or
+    a stale seat file reachable through a shared parent — and listens at that
+    name while the session it serves is addressed at another. SILENT, because
+    project-group mail still lands; the session is "correctly named and deaf."
+
+    The rule: the winning identity must be the project's own name or a
+    seat derived from it (``<project>`` / ``<project>-<anything>``). Anything
+    else is cross-folder inheritance unless the operator ASSERTED it with
+    ``--identity`` — stating an intent differs from leaking one, and
+    co-working sessions depend on the explicit form.
+
+    Returns the refusal message, or None when the identity is coherent.
+    """
+    if explicit:
+        return None
+    name = reader_identity.split("@", 1)[0]
+    if name == project or name.startswith(f"{project}-"):
+        return None
+    return (
+        f"inbox-wait: REFUSING to start — resolved identity {name!r} "
+        f"contradicts --project-dir (which resolves to project {project!r}).\n"
+        f"This watcher would listen at an address inherited from another "
+        f"session's environment (a daemonized harness's frozen env, or a "
+        f"stale seat file), and every DM to this session's real address "
+        f"would silently miss.\n"
+        f"Fixes:\n"
+        f"  · intended {name!r}: relaunch with  --identity {name}\n"
+        f"  · intended this folder's identity: relaunch from a clean "
+        f"environment (unset ENGRAM_INBOX_IDENTITY), or pass "
+        f"--identity {project}"
+    )
 
 _AUTH_FAIL_MSG = (
     "inbox-wait: FATAL — server rejected this watcher's credentials ({code}). "
@@ -258,7 +304,26 @@ async def _run(args) -> int:
     # watcher has. Declare it once, before any identity is computed — the
     # bridge needs no equivalent, its spawn cwd already is the anchor.
     set_identity_anchor(args.project_dir or None)
+    # --identity is the operator's explicit assertion (WATCH-1). It takes the
+    # runtime-seat slot — the highest precedence resolve_session_identity
+    # knows — so it beats a poisoned env AND a stale seat file, the two
+    # inheritance vectors this flag exists to override.
+    explicit_identity = bool(getattr(args, "identity", "") or "")
+    if explicit_identity:
+        assert_local_seat(args.identity)
     reader_identity, listen_set = compute_identity(args.project_dir or None)
+
+    # WATCH-1: refuse a contradictory inherited identity at arm time, loudly,
+    # rather than listening at the wrong address for the session's whole life.
+    conflict = _identity_conflict(
+        reader_identity,
+        derive_project_name(args.project_dir or None),
+        explicit_identity,
+    )
+    if conflict:
+        print(conflict, file=sys.stderr, flush=True)
+        return EXIT_IDENTITY_CONFLICT
+
     if args.address:
         listen_set = [a.strip() for a in args.address.split(",") if a.strip()]
 
@@ -315,12 +380,33 @@ async def _run(args) -> int:
             if not args.address:
                 new_identity, new_listen = compute_identity(args.project_dir or None)
                 if new_identity != reader_identity:
-                    print(
-                        f"inbox-wait: seat changed {reader_identity!r} -> "
-                        f"{new_identity!r}; now listening on {new_listen}",
-                        file=sys.stderr, flush=True,
+                    # WATCH-1, mid-run edition: a re-resolved identity that
+                    # contradicts the project is NOT followed. At arm time we
+                    # refuse and exit; here the session is live and dying
+                    # would deafen it completely, so the watcher HOLDS its
+                    # coherent identity and says so each time. A legitimate
+                    # runtime re-seat is project-derived and follows normally.
+                    mid_conflict = _identity_conflict(
+                        new_identity,
+                        derive_project_name(args.project_dir or None),
+                        explicit_identity,
                     )
-                    reader_identity, listen_set = new_identity, new_listen
+                    if mid_conflict:
+                        print(
+                            f"inbox-wait: IGNORING seat change "
+                            f"{reader_identity!r} -> {new_identity!r} — the "
+                            f"new identity contradicts --project-dir; holding "
+                            f"{reader_identity!r}. If the change is "
+                            f"deliberate, re-arm with --identity.",
+                            file=sys.stderr, flush=True,
+                        )
+                    else:
+                        print(
+                            f"inbox-wait: seat changed {reader_identity!r} -> "
+                            f"{new_identity!r}; now listening on {new_listen}",
+                            file=sys.stderr, flush=True,
+                        )
+                        reader_identity, listen_set = new_identity, new_listen
             await _beat(client, reader_identity, args.project_dir or None)
             try:
                 fresh = await _poll(client, listen_set, reader_identity, seen)
@@ -374,6 +460,11 @@ def main() -> None:
     )
     p.add_argument("--project-dir", default="", help="working dir for identity (project/listen_set resolution)")
     p.add_argument("--address", default="", help="CSV override of the listen_set to watch")
+    p.add_argument("--identity", default="", help=(
+        "explicit identity assertion (WATCH-1): listen as this seat, "
+        "overriding any inherited env or seat file. Required when the "
+        "intended identity does not derive from the project name."
+    ))
     p.add_argument("--poll-interval", type=float, default=45.0, help="seconds between polls (default 45)")
     p.add_argument("--follow", action="store_true", help="keep running, emit a line per message (Monitor mode)")
     p.add_argument("--timeout", type=float, default=0.0, help="max seconds to wait in one-shot mode (0=forever)")

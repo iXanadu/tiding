@@ -223,22 +223,6 @@
   through a channel that did not exist. An in-session join/leave belongs in
   the tool surface.
 
-- **WATCH-1** The watcher accepts an inherited identity that contradicts its
-  own `--project-dir`, and says nothing. Env wins over the flag, so a watcher
-  launched for project A while the environment still names address B listens
-  as B — the session is then addressed at one place and listening at another,
-  which is SILENT because project mail still lands. **Measured three times on
-  2026-08-05**, all different causes: a harness that daemonised and froze a
-  peer's launch identity, then served it to every later session on the box; a
-  maintainer's own test that resolved to their address instead of the target's
-  and reported the wrong inbox; and the same trap again in a hand-run check.
-  The fix is a refusal, not a warning: if `ENGRAM_INBOX_IDENTITY` is inherited
-  (not explicitly passed) AND disagrees with the identity `--project-dir`
-  resolves to, refuse to start and name both. An explicitly-passed identity
-  must still win — stating an intent differs from leaking one, and co-working
-  sessions depend on the explicit form. Quarantined here because it is
-  addressing; recorded because it has now cost three separate people time in
-  one day and the failure looks like healthy operation from every angle.
 
 ## Blocking-ish — ops gaps that cost live sessions today
 

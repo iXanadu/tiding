@@ -374,3 +374,97 @@ async def test_beat_failure_never_stops_a_wake(respx_mock, capsys):
     rc = await _run(_Args(include_existing=True))
     assert rc == 0
     assert json.loads(capsys.readouterr().out.strip())["id"] == "inbox/7"
+
+
+# --- WATCH-1: refuse an inherited identity that contradicts --project-dir ---
+
+
+from engram_mcp import identity as _identity
+from engram_mcp.inbox_wait import (
+    EXIT_IDENTITY_CONFLICT,
+    _identity_conflict,
+)
+
+
+def test_conflict_predicate_project_and_derived_seats_are_coherent():
+    """The project's own name and any seat derived from it pass — this is
+    what keeps the documented co-working form (ENGRAM_INBOX_IDENTITY=
+    <project>-<role>) working unchanged."""
+    assert _identity_conflict("admin@box", "admin", False) is None
+    assert _identity_conflict("engram-claude-2@box", "engram", False) is None
+    assert _identity_conflict("engram-audit@box", "engram", False) is None
+
+
+def test_conflict_predicate_cross_folder_identity_is_refused():
+    """The measured hijack: a watcher for ~/maintenance (project=admin)
+    inheriting 'maintenance-grok' from a daemon's frozen env. Four incidents,
+    all silent; now a named refusal."""
+    msg = _identity_conflict("maintenance-grok@box", "admin", False)
+    assert msg is not None
+    assert "maintenance-grok" in msg and "admin" in msg
+    assert "--identity" in msg, "the refusal must name the escape hatch"
+
+
+def test_conflict_predicate_explicit_assertion_always_wins():
+    """Stating an intent differs from leaking one."""
+    assert _identity_conflict("maintenance-grok@box", "admin", True) is None
+
+
+async def test_run_refuses_inherited_conflicting_identity(
+    tmp_path, monkeypatch, capsys
+):
+    """Arm-time refusal, before any network I/O: exit EXIT_IDENTITY_CONFLICT
+    with a message naming both identities."""
+    proj = tmp_path / "alpha"
+    proj.mkdir()
+    (proj / ".engram.cfg").write_text("project = alpha\n")
+    monkeypatch.setenv("ENGRAM_INBOX_IDENTITY", "otherproj-grok")
+    _identity.clear_seat()
+    prev_anchor = _identity._IDENTITY_ANCHOR
+
+    try:
+        rc = await _run(_Args(project_dir=str(proj), address=""))
+        assert rc == EXIT_IDENTITY_CONFLICT
+        err = capsys.readouterr().err
+        assert "otherproj-grok" in err and "alpha" in err
+    finally:
+        _identity._IDENTITY_ANCHOR = prev_anchor
+        _identity.reset_session_pin()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_run_identity_flag_asserts_and_proceeds(
+    respx_mock, tmp_path, monkeypatch, capsys
+):
+    """--identity is the explicit channel: same poisoned env, but the
+    operator asserts the seat — the watcher starts, listens as asserted, and
+    does NOT write the session's shared seat file (a watcher re-seating the
+    whole session would be the hijack pointed the other way)."""
+    proj = tmp_path / "alpha"
+    proj.mkdir()
+    (proj / ".engram.cfg").write_text("project = alpha\n")
+    seats = tmp_path / "seats"
+    monkeypatch.setenv("ENGRAM_INBOX_IDENTITY", "otherproj-grok")
+    monkeypatch.setenv("ENGRAM_SEATS_DIR", str(seats))
+    _identity.clear_seat()
+    prev_anchor = _identity._IDENTITY_ANCHOR
+
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": []})
+    )
+    respx_mock.post("/memory/presence").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    rc = await _run(_Args(
+        project_dir=str(proj), address="", identity="otherproj-grok",
+        timeout=0.001, follow=True, include_existing=True,
+    ))
+    try:
+        assert rc == 0
+        assert not seats.exists() or not any(seats.iterdir()), (
+            "--identity must not write the session's shared seat file"
+        )
+    finally:
+        _identity.clear_seat()
+        _identity._IDENTITY_ANCHOR = prev_anchor
+        _identity.reset_session_pin()
