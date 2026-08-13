@@ -73,7 +73,9 @@ Auth modes:
 
 - `namespace` is **required** on all API calls — no default. Omitting it returns 422.
 - Pyscript `@service` decorators MUST use `supports_response="optional"` for HA 2024.10+.
-- Dev (`~/projects/engram`) and prod (`/opt/srv/engram`) can both be `pip install -e` in the same pyenv virtualenv — last install wins for import resolution. After editing locally, run `pip install -e .` from dev dir.
+- Dev (`~/projects/engram`) and prod (`/opt/srv/engram`) share the `engram-3.12` pyenv virtualenv, and only one can hold the editable install — last `pip install -e .` wins that mapping. **But the editable mapping does NOT decide which tree runs.** setuptools appends `_EditableFinder` to `sys.meta_path` *after* `PathFinder`, so anything reachable via `sys.path` beats it. In practice **CWD decides**: the LaunchDaemon sets `WorkingDirectory=/opt/srv/engram` and uvicorn does `sys.path.insert(0, app_dir)` with `app_dir` defaulting to `"."` (`uvicorn/main.py:528`), so prod imports `/opt/srv/engram/server` no matter where the editable mapping points. Verified 2026-08-13.
+  - Corollary for your own shell: `python -c "import server"` resolves to **the tree you are standing in**, falling back to the editable mapping only from a neutral cwd. A bare import test therefore tells you about your cwd, not about prod — `cd /opt/srv/engram` first, or you will "discover" that prod runs dev's code and be wrong.
+  - Prod's isolation is real but **incidental**: it rests entirely on that `WorkingDirectory`. If you ever change it, pass an explicit `--app-dir /opt/srv/engram`.
 - Project `user_id` for `scope=project` is resolved via `.engram.cfg` walk-up (see `integrations/claude-code/src/engram_mcp/scoping.py`). Basename is only a fallback — required because server layouts like `/var/www/site/prod` would otherwise collide. Projects with a clean `~/projects/<name>/` layout commit `.engram.cfg` at the repo root; ambiguous layouts (nested, domain-style, separate prod/dev clones) leave it absent and let the `/startup` flow ask the user on first use. Templates never ship a `.engram.cfg`.
 
 ## Related Projects
