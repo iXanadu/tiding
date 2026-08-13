@@ -434,14 +434,19 @@
   or erase the last copy of that history." Owner's call, made with that
   fact stated. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
-- **MEM-7** Shared lessons are write-mostly: 878 `lesson/*` keys exist in
-  scope=shared (counted 2026-08-13), but recall is semantic-search-only with
-  small limits — a typical startup sweep runs ONE shared query at limit 5, so
-  a lesson surfaces only if it out-ranks 873 siblings for that one query.
-  Owner's suspicion ("I'm not convinced shared lessons are being seen"),
-  confirmed by arithmetic. No read-side telemetry exists to measure which
-  lessons ever surface (reads are not audited), so the first step is
-  instrumentation or sampling, not a fix. Candidate directions, none chosen:
+- **MEM-7** Shared lessons are write-mostly — now MEASURED, not argued
+  (audit 2026-08-13, `audit/mem-7-lesson-corpus-2026-08-13` in project
+  memory). Telemetry already existed: search bumps `last_used_at` on
+  returned rows, so exposure is directly readable. 882 lessons: **370 (42%)
+  never surfaced by any search since creation; 217 (25%) not surfaced in
+  90+ days** — while a ~500-lesson working set IS served regularly. The
+  dead weight also dilutes ranking for the working set. The corpus has 0
+  superseded rows: the retirement verb exists and has never been used on
+  it. Curation plan (batched, never bulk — the tiny-lesson cluster sampled
+  heterogeneous: valid patterns, misfiled project content, platform-absorbed
+  process rules, dead tech facts): see the audit memory. The owner's index +
+  startup-taste build comes AFTER the batches — indexing today's corpus
+  would index the noise. Candidate directions, none chosen:
   task-shaped recall (query shared at task boundaries, not just startup),
   consolidation passes (many near-duplicate micro-lessons from the early
   months), usage-weighted ranking, or a curated class-lesson index. Related:
