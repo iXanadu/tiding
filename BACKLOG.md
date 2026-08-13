@@ -455,14 +455,18 @@
 
 - **ACCEPT-1** Per-provider identity acceptance harness — agreed with
   AgentBeast on-thread 2026-08-12 as the standing regression guard for the
-  seat/picker/wake stack; joint, not started. Per provider (claude, grok,
-  codex, cursor): spawn → register shows ONE seat → picker shows THAT name →
-  DM wakes the session → team group (`groups =` folder) is heard → stop →
-  picker drops it. Two assertions the night's incidents specifically earned:
-  the watcher check must compare BEAT IDENTITY to session identity (a beat
-  is only evidence if you know whose it is), and every check states what
-  changed in the WORLD before blaming the code (the terminated-session
-  confound cost an hour in both directions).
+  seat/picker/wake stack; joint, not started. **Assertion list RATIFIED
+  2026-08-13** (drafted engram, adversarially reviewed agentbeast-grok, all
+  three objections accepted): full v2 list in project memory at
+  `backlog/ACCEPT-1`. The three splits that review earned, do not regress
+  them: A3 register-vs-surface (readback must never substitute for the
+  picker check — H3's defect was a correct register behind a stale surface);
+  A9 crash-vs-after-release (release DELETEs the continuity anchor, so
+  same-seat-back is only promised for the crash case); A2/A8 outcome-vs-
+  mechanism (assert the views AGREE and the stranger's inbox is CLEAN, never
+  the allocator's tactic). Plus: env≠granted divergence is a FAIL, not a
+  warning; wake checks compare BEAT IDENTITY to session identity with a
+  deadline; every failure logs the WORLD state observed.
 
 ## Blocked-external
 
