@@ -453,20 +453,21 @@
   retire stale entries, and make the survivors seen. Owner-named as radar, not
   yet scheduled as a build.
 
-- **ACCEPT-1** Per-provider identity acceptance harness — agreed with
-  AgentBeast on-thread 2026-08-12 as the standing regression guard for the
-  seat/picker/wake stack; joint, not started. **Assertion list RATIFIED
-  2026-08-13** (drafted engram, adversarially reviewed agentbeast-grok, all
-  three objections accepted): full v2 list in project memory at
-  `backlog/ACCEPT-1`. The three splits that review earned, do not regress
-  them: A3 register-vs-surface (readback must never substitute for the
-  picker check — H3's defect was a correct register behind a stale surface);
-  A9 crash-vs-after-release (release DELETEs the continuity anchor, so
-  same-seat-back is only promised for the crash case); A2/A8 outcome-vs-
-  mechanism (assert the views AGREE and the stranger's inbox is CLEAN, never
-  the allocator's tactic). Plus: env≠granted divergence is a FAIL, not a
-  warning; wake checks compare BEAT IDENTITY to session identity with a
-  deadline; every failure logs the WORLD state observed.
+- **ACCEPT-1** Per-provider identity acceptance harness — **engram half
+  BUILT and GREEN 2026-08-13** (`acceptance/`, run via `scripts/accept.sh`,
+  ~30s: real server on a scratch port + `engram_accept` DB, real bridge
+  sessions per provider shape, real watcher; 8 passed / cursor loudly
+  skipped). Assertion list v2 ratified same day (drafted engram,
+  adversarially reviewed agentbeast-grok, all three objections accepted):
+  full list in project memory at `backlog/ACCEPT-1`. The review splits are
+  load-bearing — A3 register-vs-surface, A9 crash-vs-after-release, A2/A8
+  outcome-vs-mechanism — and the first run vindicated them: the listen_set
+  counter-example from the review materialized live (an unseated victim's
+  seat IS the project group address, so group-visible mail read as a "leak"
+  until the test was made well-posed). REMAINS OPEN for the joint half:
+  real-launcher runs per provider (AB spawns, G2 codex key injection) and
+  the A3-surface picker check (manual until AB exposes picker state — H3
+  work, unnamed).
 
 ## Blocked-external
 
