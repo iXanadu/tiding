@@ -177,6 +177,34 @@
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **MEM-6** ⚠️ **Project memory is partitioned by WRITER, so exact-key reads and
+  updates cannot cross providers.** Owner directive 2026-08-13, escalated
+  ("we can NOT pin a project state, or corporate memory, to an AGENT that may
+  never run again") and now load-bearing, because provider lanes are about to
+  specialise. MEASURED THE SAME DAY, not inferred:
+  · **7 projects already hold split memory** across two writer principals —
+    one has 154 rows under one writer and 7 under the other, another 160/44.
+    A session reading the smaller side cannot tell that from a small project.
+  · **The colliding keys are the ones that matter most:** `startup/next` and
+    `wip/current`, in five projects. Two providers are handing off to
+    THEMSELVES in parallel and neither can see the other's handoff.
+  ⓘ Half of this is already fixed and should not be re-solved: **MEM-5 shipped
+  `user_id="*"`**, so `memory_search` and `memory_keys` DO span every writer on
+  `scope=project`. The gap is narrower than it looks:
+  · `memory_get` does NOT span writers — it reads the caller's own partition,
+    which is exactly why the handoff keys silently miss.
+  · A writer cannot UPDATE another writer's row. `supersede` works cross-writer
+    (`ec6518a`); plain overwrite does not.
+  · Same-key duplicates both rank in search with nothing marking which is
+    authoritative — that is the open **MEM-3** residual, and it stops being
+    cosmetic the moment two providers legitimately write one key.
+  ⛔ Provenance must SURVIVE the change: attribution moves from a partition gate
+  to a label, it does not disappear. Namespaces exist to preserve it
+  (`decision/multi-ai-namespace-strategy`).
+  Detail + the owner's exact framing:
+  `decision/project-memory-belongs-to-the-project-not-the-agent`. North star and
+  the gated-migration plan: `decision/three-axes-principal-project-address`.
+
 
 - **CURSOR-IDENT-1** *(collision FIXED and verified end-to-end 2026-08-10 —
   the driver added a credential selector, engram's global `~/.cursor/mcp.json`
