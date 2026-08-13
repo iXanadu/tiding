@@ -300,7 +300,7 @@ def _append_guidance(body: str, result: dict) -> str:
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
     alert = (_seat_collision_banner() + _seat_revert_banner()
-             + _identity_override_banner()
+             + _seat_rename_banner() + _identity_override_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
     advisory = _advisories(result)
     if advisory:
@@ -339,6 +339,33 @@ def _seat_revert_banner() -> str:
         f"three agree. To re-address this session, call memory_take_seat with "
         f"a DIFFERENT name (check memory_roster for what is taken).\n\n"
     )
+
+
+def _seat_rename_banner() -> str:
+    """A LAUNCH-declared identity that was renamed at allocation is announced,
+    once.
+
+    The runtime path (memory_take_seat) always surfaced its refusal; this path
+    — ENGRAM_INBOX_IDENTITY / .engram.cfg — was silently overridden, and the
+    silence nearly cost a live session its wake path on 2026-08-13: the agent
+    armed its watcher from the env value while the bridge sat on the granted
+    ordinal, a split only caught by hand-diffing the two. A launcher that
+    injected the name is equally uninformed (its inventory shows the wish, not
+    the fact), so the one party guaranteed to read tool results — the session —
+    is told here.
+
+    Once per session, like ID-1: this is allocation working as designed (the
+    name was simply taken), a fact to relay, not a fault to nag about. The
+    watcher needs no action — it re-resolves from the seat file every poll —
+    but anything that CACHED the launch name (a launcher's picker, a peer's
+    address book, the agent's own memory of who it is) now disagrees with the
+    register, and only the agent can go correct those.
+    """
+    global _SEAT_RENAME_ANNOUNCED
+    if not _SEAT_RENAME_NOTICE or _SEAT_RENAME_ANNOUNCED:
+        return ""
+    _SEAT_RENAME_ANNOUNCED = True
+    return f"⚠️  SEATED UNDER A DIFFERENT NAME — {_SEAT_RENAME_NOTICE}\n\n"
 
 
 # ID-1: shown once per session, then never again — a fact stated, not a nag.
@@ -466,6 +493,12 @@ _SEAT_CLAIM_BANNER_AFTER = 3  # consecutive failures before speaking up
 # Rendered as a banner on subsequent tool results — the refusal must be an
 # error the session can act on, never a no-op.
 _SEAT_REVERT_NOTICE: str | None = None
+# Set when the LAUNCH-declared identity (env/cfg) was renamed at allocation —
+# the injected name was held, so the register granted an ordinal. Announced
+# once (_SEAT_RENAME_ANNOUNCED), then silent: allocation working as designed,
+# but the session must hear its real address from the one channel it reads.
+_SEAT_RENAME_NOTICE: str | None = None
+_SEAT_RENAME_ANNOUNCED = False
 
 
 async def _claim_seat(project_dir: str | None) -> None:
@@ -545,9 +578,31 @@ async def _claim_seat(project_dir: str | None) -> None:
                     or f"runtime seat was not registered; reverted to "
                        f"'{granted}'."
                 )
+            else:
+                # The LAUNCH-declared name (env/cfg) was held, so allocation
+                # granted an ordinal. Until 2026-08-13 this branch was SILENT
+                # — only the runtime path spoke — and a session that trusted
+                # its env armed its watcher at a name it no longer held. Tell
+                # the session once; it is the only party that can correct
+                # whatever cached the launch name.
+                globals()["_SEAT_RENAME_NOTICE"] = (
+                    f"your launch-declared identity {preferred!r} was held, "
+                    f"so this session is registered as {granted!r}. Your "
+                    f"bridge and watcher already follow the granted seat "
+                    f"(the seat file outranks env). Use {granted!r} when "
+                    f"telling peers your address; anything still holding "
+                    f"{preferred!r} — a launcher's inventory, "
+                    f"ENGRAM_INBOX_IDENTITY in your env — names a seat that "
+                    f"is not yours."
+                )
         elif runtime and granted == preferred:
             # Registration moved (or was already there) — the runtime seat is
             # now what continuity returns. Clear any stale refusal notice.
+            # (No symmetric clear for _SEAT_RENAME_NOTICE: after the rename,
+            # take_seat(granted) makes the seat file the identity source, so
+            # every later claim sends preferred == granted — the notice can
+            # never go stale, and the once-flag already limits it to a single
+            # announcement.)
             globals()["_SEAT_REVERT_NOTICE"] = None
     except Exception as e:
         # Best-effort: the next heartbeat retries. A transient server blip must

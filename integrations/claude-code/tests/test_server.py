@@ -803,6 +803,94 @@ async def test_a_runtime_seat_is_declared_and_the_server_grant_keeps_it(
 
 
 @pytest.mark.asyncio
+async def test_a_renamed_launch_identity_is_announced_not_silent(
+    monkeypatch, tmp_path
+):
+    """A LAUNCH-declared identity that allocation renames must tell the
+    session — once.
+
+    The defect: only the runtime path (memory_take_seat) surfaced a changed
+    grant; a name from ENGRAM_INBOX_IDENTITY / .engram.cfg that was held got
+    silently ordinal-suffixed. Live consequence 2026-08-13: a session spawned
+    with ENGRAM_INBOX_IDENTITY=engram-claude was granted engram-claude-2 and
+    nothing said so — the agent nearly armed its watcher from the env value,
+    which would have left it addressed at one name and listening at another,
+    with the roster showing it correctly seated the whole time.
+    """
+    from engram_mcp import identity, server as srv
+
+    monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
+    monkeypatch.setattr(srv, "_SEAT_RENAME_NOTICE", None)
+    monkeypatch.setattr(srv, "_SEAT_RENAME_ANNOUNCED", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-ab-proj")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    # Launch env declared proj-claude; no runtime seat taken.
+    monkeypatch.setattr(srv, "compute_identity",
+                        lambda _d: ("proj-claude@host", []))
+
+    async def _fake_claim(**kw):
+        assert kw["runtime_seat"] is False
+        # The name was held — allocation grants the ordinal.
+        return {"seat": "proj-claude-2", "is_new": True}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat(str(tmp_path))
+
+    assert srv._SEAT_RENAME_NOTICE, (
+        "a renamed launch identity must set the notice — silence here is how "
+        "a session arms its watcher on a name it does not hold"
+    )
+    assert "proj-claude-2" in srv._SEAT_RENAME_NOTICE
+    assert "proj-claude" in srv._SEAT_RENAME_NOTICE
+    # The grant still reaches the watcher via the seat file, as before.
+    assert identity.read_seat_file() == "proj-claude-2"
+    # It is NOT the runtime-refusal banner — that one demands action; this
+    # one relays a fact.
+    assert srv._SEAT_REVERT_NOTICE is None
+
+    # Announced once: first render speaks, second is silent.
+    first = srv._seat_rename_banner()
+    assert "SEATED UNDER A DIFFERENT NAME" in first
+    assert "proj-claude-2" in first
+    assert srv._seat_rename_banner() == "", (
+        "the rename is a fact stated once, not a nag on every tool result"
+    )
+    identity.clear_seat()
+
+
+@pytest.mark.asyncio
+async def test_a_granted_launch_identity_stays_silent(monkeypatch, tmp_path):
+    """The common case — the declared name is granted — must say nothing.
+
+    A banner that fires on every clean claim would train sessions to skim
+    past it, which un-fixes the silent-rename defect from the other side.
+    """
+    from engram_mcp import identity, server as srv
+
+    monkeypatch.setenv(identity.SEATS_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "_SEAT_CLAIM_FAILURES", 0)
+    monkeypatch.setattr(srv, "_SEAT_RENAME_NOTICE", None)
+    monkeypatch.setattr(srv, "_SEAT_RENAME_ANNOUNCED", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-ab-proj")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity",
+                        lambda _d: ("proj-claude@host", []))
+
+    async def _fake_claim(**kw):
+        return {"seat": "proj-claude", "is_new": True}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat(str(tmp_path))
+
+    assert srv._SEAT_RENAME_NOTICE is None
+    assert srv._seat_rename_banner() == ""
+    identity.clear_seat()
+
+
+@pytest.mark.asyncio
 async def test_a_refused_runtime_seat_reverts_loudly_not_silently(
     monkeypatch, tmp_path
 ):
