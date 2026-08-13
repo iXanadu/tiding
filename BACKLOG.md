@@ -15,7 +15,11 @@
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
-- **MAIL-1** Rob's ruling 2026-07-27 (huddle kgKq6dH9), pinned on his "take
+- **MAIL-1** ⏸ Hold reaffirmed 2026-08-13: "useless to me as is — and I can't
+  seem to articulate how it isn't helpful, and agents are reluctant to remove."
+  The inarticulacy is itself the signal — do not propose fixes until the owner
+  can name what the surface should DO; a fix built now would encode a guess.
+  Rob's ruling 2026-07-27 (huddle kgKq6dH9), pinned on his "take
   note — no fix now": the owner-facing "Mail" surface must become either
   (a) REMOVED, or (b) "messages DIRECT to me that I have not seen" — huddle
   traffic belongs in the huddle, not listed in two places. Engram's half when
@@ -442,6 +446,12 @@
   consolidation passes (many near-duplicate micro-lessons from the early
   months), usage-weighted ranking, or a curated class-lesson index. Related:
   the same recall economics is why MEM-3's authority-ranking question matters.
+  ★ Owner direction (2026-08-13): build an INDEX of sorts and "pump a taste at
+  startup" for exposure — otherwise the lessons are a waste of time. Staleness
+  is the second question: nobody knows how many of the 878 are now wrong.
+  CURATION IS THE LIBRARIAN'S STANDING JOB — periodic passes that consolidate,
+  retire stale entries, and make the survivors seen. Owner-named as radar, not
+  yet scheduled as a build.
 
 - **ACCEPT-1** Per-provider identity acceptance harness — agreed with
   AgentBeast on-thread 2026-08-12 as the standing regression guard for the
