@@ -181,35 +181,6 @@
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **MEM-6** ⚠️ **Project memory is partitioned by WRITER, so exact-key reads and
-  updates cannot cross providers.** Owner directive 2026-08-13, escalated
-  ("we can NOT pin a project state, or corporate memory, to an AGENT that may
-  never run again") and now load-bearing, because provider lanes are about to
-  specialise. MEASURED THE SAME DAY, not inferred:
-  · **7 projects already hold split memory** across two writer principals —
-    one has 154 rows under one writer and 7 under the other, another 160/44.
-    A session reading the smaller side cannot tell that from a small project.
-  · **The colliding keys are the ones that matter most:** `startup/next` and
-    `wip/current`, in five projects. Two providers are handing off to
-    THEMSELVES in parallel and neither can see the other's handoff.
-  ⓘ Half of this is already fixed and should not be re-solved: **MEM-5 shipped
-  `user_id="*"`**, so `memory_search` and `memory_keys` DO span every writer on
-  `scope=project`. The gap is narrower than it looks:
-  · `memory_get` does NOT span writers — it reads the caller's own partition,
-    which is exactly why the handoff keys silently miss.
-  · A writer cannot UPDATE another writer's row. `supersede` works cross-writer
-    (`ec6518a`); plain overwrite does not.
-  · Same-key duplicates both rank in search with nothing marking which is
-    authoritative — that is the open **MEM-3** residual, and it stops being
-    cosmetic the moment two providers legitimately write one key.
-  ⛔ Provenance must SURVIVE the change: attribution moves from a partition gate
-  to a label, it does not disappear. Namespaces exist to preserve it
-  (`decision/multi-ai-namespace-strategy`).
-  Detail + the owner's exact framing:
-  `decision/project-memory-belongs-to-the-project-not-the-agent`. North star and
-  the gated-migration plan: `decision/three-axes-principal-project-address`.
-
-
 - **CURSOR-IDENT-1** ⏸ **ON HOLD (owner, 2026-08-13) pending more information**
   — do not act, and specifically do NOT add a per-project `.cursor/mcp.json`
   anywhere (option (b) below) while the hold stands; today's state, (a), is
@@ -414,13 +385,11 @@
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
   uncorrectable by its successor and out-ranked their own corrections at
-  startup-sweep limits. What remains:)* the search-time collapse of same-key
-  duplicates across writers. Supersede removes the need for the incident case
-  (the stale twin drops out of default search), but two LIVE rows sharing a
-  key still both rank with nothing marking which is authoritative — a
-  ranking-layer design question, deliberately not smuggled in under the
-  incident fix. Resolve/lifecycle for a writer's OWN rows (the original MEM-3
-  ask) also still open; supersede covers the cross-writer half only.
+  startup-sweep limits. The cross-writer ranking residual DISSOLVED 2026-08-13:
+  MEM-6 shipped write-auto-supersede on scope=project, so two live twins can no
+  longer persist once both writers write again — no ranking layer needed. What
+  remains:)* resolve/lifecycle for a writer's OWN rows (the original MEM-3
+  ask); supersede and MEM-6 cover the cross-writer half only.
 
 - **DATA-1** *(narrowed 2026-08-12: the pre-rewrite history bundle is
   DELETED on the owner's word — its rollback purpose was spent. What
@@ -458,21 +427,14 @@
   retire stale entries, and make the survivors seen. Owner-named as radar, not
   yet scheduled as a build.
 
-- **ACCEPT-1** Per-provider identity acceptance harness — **engram half
-  BUILT and GREEN 2026-08-13** (`acceptance/`, run via `scripts/accept.sh`,
-  ~30s: real server on a scratch port + `engram_accept` DB, real bridge
-  sessions per provider shape, real watcher; 8 passed / cursor loudly
-  skipped). Assertion list v2 ratified same day (drafted engram,
-  adversarially reviewed agentbeast-grok, all three objections accepted):
-  full list in project memory at `backlog/ACCEPT-1`. The review splits are
-  load-bearing — A3 register-vs-surface, A9 crash-vs-after-release, A2/A8
-  outcome-vs-mechanism — and the first run vindicated them: the listen_set
-  counter-example from the review materialized live (an unseated victim's
-  seat IS the project group address, so group-visible mail read as a "leak"
-  until the test was made well-posed). REMAINS OPEN for the joint half:
-  real-launcher runs per provider (AB spawns, G2 codex key injection) and
-  the A3-surface picker check (manual until AB exposes picker state — H3
-  work, unnamed).
+- **ACCEPT-2** Rev the acceptance assertion list (v2 → v3) with the scenarios
+  the first run and its aftermath earned: spawn-fails-after-seat-grant (the
+  birth-corpse class, found live 2026-08-13), stop-drops-picker-immediately
+  (verified 11s on a real session), and A4 for claude shapes requires the
+  probe to arm a watcher. The harness itself is DONE and standing
+  (`scripts/accept.sh`, ~30s, green; results journal in project memory at
+  `backlog/ACCEPT-1-first-run-results`) — this item is only the list rev,
+  plus the still-unrun G2 codex per-thread-key proof (AB's lane).
 
 ## Blocked-external
 
