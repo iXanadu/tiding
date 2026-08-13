@@ -430,6 +430,19 @@
   or erase the last copy of that history." Owner's call, made with that
   fact stated. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
+- **MEM-7** Shared lessons are write-mostly: 878 `lesson/*` keys exist in
+  scope=shared (counted 2026-08-13), but recall is semantic-search-only with
+  small limits — a typical startup sweep runs ONE shared query at limit 5, so
+  a lesson surfaces only if it out-ranks 873 siblings for that one query.
+  Owner's suspicion ("I'm not convinced shared lessons are being seen"),
+  confirmed by arithmetic. No read-side telemetry exists to measure which
+  lessons ever surface (reads are not audited), so the first step is
+  instrumentation or sampling, not a fix. Candidate directions, none chosen:
+  task-shaped recall (query shared at task boundaries, not just startup),
+  consolidation passes (many near-duplicate micro-lessons from the early
+  months), usage-weighted ranking, or a curated class-lesson index. Related:
+  the same recall economics is why MEM-3's authority-ranking question matters.
+
 - **ACCEPT-1** Per-provider identity acceptance harness — agreed with
   AgentBeast on-thread 2026-08-12 as the standing regression guard for the
   seat/picker/wake stack; joint, not started. Per provider (claude, grok,
