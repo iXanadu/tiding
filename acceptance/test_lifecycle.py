@@ -60,6 +60,12 @@ def world(registry, tmp_path):
 
         def project(self, name: str, groups: str | None = None) -> str:
             markers.append(name)
+            if groups:
+                # Group-addressed mail rows carry the GROUP as user_id and a
+                # NULL project — a project-name marker never matches them.
+                # Found as real residue on 2026-08-13: the suite passed its
+                # own R-c check while five acceptteam-* rows sat in the DB.
+                markers.append(groups)
             return make_project_dir(tmp_path, name, groups)
 
         def session(self, **kw) -> SessionSim:
