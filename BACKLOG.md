@@ -399,6 +399,17 @@
   or erase the last copy of that history." Owner's call, made with that
   fact stated. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
+- **ACCEPT-1** Per-provider identity acceptance harness — agreed with
+  AgentBeast on-thread 2026-08-12 as the standing regression guard for the
+  seat/picker/wake stack; joint, not started. Per provider (claude, grok,
+  codex, cursor): spawn → register shows ONE seat → picker shows THAT name →
+  DM wakes the session → team group (`groups =` folder) is heard → stop →
+  picker drops it. Two assertions the night's incidents specifically earned:
+  the watcher check must compare BEAT IDENTITY to session identity (a beat
+  is only evidence if you know whose it is), and every check states what
+  changed in the WORLD before blaming the code (the terminated-session
+  confound cost an hour in both directions).
+
 ## Blocked-external
 
 - **DOCKER-1** Verify the full-stack compose path (build, health,
