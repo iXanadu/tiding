@@ -305,6 +305,52 @@ async def memory_set(
                 tags_search, embedding, search_text, expires_at,
                 metadata_json, owner,
             )
+        if scope == "project":
+            # MEM-6: a project write SUPERSEDES any other writer's live row on
+            # the same logical key. Project memory belongs to the PROJECT
+            # (owner directive 2026-08-13); the writer principal is provenance,
+            # not a partition gate — but the partition is physically real
+            # (UNIQUE includes user_id), so without this, a second provider
+            # writing `startup/next` creates a TWIN, not an update, and both
+            # rows rank in search with nothing marking which is current.
+            # Measured that day: seven projects split, five of them on
+            # exactly the handoff keys.
+            #
+            # Server-side deliberately: every client inherits it — HA, grok,
+            # codex, cursor — not just the CC bridge. Reuses the ec6518a
+            # supersede lifecycle verbatim: the twin is KEPT, value and writer
+            # untouched, retrievable via include_superseded; it merely drains
+            # from default reads. Nothing is deleted, so provenance survives
+            # by construction, and a write RACE between two providers resolves
+            # by ordering — the later write's stamp wins — which is the same
+            # latest-wins semantics single-writer upserts already have.
+            #
+            # Outside the if_match/owner transaction on purpose: the upsert is
+            # already committed and correct on its own; a crash between it and
+            # this stamp leaves only the pre-MEM-6 state (a visible twin),
+            # never a lost write.
+            stamp = {
+                "status": "superseded",
+                "superseded_at": datetime.now(timezone.utc).isoformat(),
+                "superseded_by_principal": owner,
+                "superseded_by_user_id": user_id,
+                "superseded_reason": (
+                    "a newer write of this project key by another writer "
+                    "(MEM-6 cross-writer collapse)"
+                ),
+                "superseded_by_key": key,
+            }
+            await conn.execute(
+                """
+                UPDATE memories
+                SET metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
+                WHERE namespace = $1 AND key = $2 AND scope = $3
+                  AND project IS NOT DISTINCT FROM $4
+                  AND user_id IS DISTINCT FROM $5
+                  AND COALESCE(metadata->>'status', '') <> 'superseded'
+                """,
+                namespace, key, scope, project, user_id, json.dumps(stamp),
+            )
     return key, bool(row["created"]), compute_version(value)
 
 
@@ -391,27 +437,77 @@ async def memory_get(
     user_id: str = "default",
     project: str | None = None,
 ) -> MemoryItem | None:
-    """Retrieve a memory by exact key within a namespace."""
+    """Retrieve a memory by exact key within a namespace.
+
+    ``user_id="*"`` collapses across writers — honored ONLY for
+    ``scope=project``, under exactly the MEM-5 search rule: the ``project``
+    column already does the scoping, permission is enforced at the NAMESPACE
+    level, and any writer's row was always readable by naming that writer
+    explicitly, so the wildcard grants nothing new. For every other scope the
+    wildcard is treated as a literal (there ``user_id`` is a person or a
+    host, and spanning it would be a disclosure).
+
+    Why GET needs this when search already had it (MEM-6, measured
+    2026-08-13): exact-key reads are how handoffs work — ``startup/next``,
+    ``wip/current`` — and an exact read of the caller's own partition
+    silently misses a peer provider's row. Seven projects held split memory,
+    five of them on exactly those keys: two providers handing off to
+    themselves in parallel, neither able to see the other.
+
+    Collapse rule: superseded rows are skipped (they drained from default
+    reads by design); among live rows, newest ``created_at`` wins. With the
+    write path auto-superseding cross-writer twins, at most one live row
+    exists per logical key going forward — the tiebreak only ever decides
+    among LEGACY twins, and that ambiguity retires organically as keys are
+    rewritten. (``created_at``/``last_used_at`` deliberately do NOT rank
+    authority in general: the upsert updates value in place without touching
+    ``created_at``, and reads bump ``last_used_at``. See
+    decision/mem-6-design-write-supersedes-read-collapses.)
+    """
     namespace, key, scope, user_id, project = _normalize_key_fields(
         namespace, key, scope, user_id, project
     )
+    all_writers = user_id == "*" and scope == "project"
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT namespace, key, value, scope, user_id, project, tags, tags_search, created_at
-            FROM memories
-            WHERE namespace = $1 AND key = $2 AND scope = $3
-              AND user_id IS NOT DISTINCT FROM $4
-              AND project IS NOT DISTINCT FROM $5
-              AND (expires_at IS NULL OR expires_at > NOW())
-            """,
-            namespace,
-            key,
-            scope,
-            user_id,
-            project,
-        )
+        if all_writers:
+            row = await conn.fetchrow(
+                """
+                SELECT namespace, key, value, scope, user_id, project, tags,
+                       tags_search, created_at
+                FROM memories
+                WHERE namespace = $1 AND key = $2 AND scope = $3
+                  AND project IS NOT DISTINCT FROM $4
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                  AND COALESCE(metadata->>'status', '') <> 'superseded'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                namespace,
+                key,
+                scope,
+                project,
+            )
+            if row:
+                # The touch targets the row actually returned — its real
+                # writer, not the wildcard.
+                user_id = row["user_id"]
+        else:
+            row = await conn.fetchrow(
+                """
+                SELECT namespace, key, value, scope, user_id, project, tags, tags_search, created_at
+                FROM memories
+                WHERE namespace = $1 AND key = $2 AND scope = $3
+                  AND user_id IS NOT DISTINCT FROM $4
+                  AND project IS NOT DISTINCT FROM $5
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                """,
+                namespace,
+                key,
+                scope,
+                user_id,
+                project,
+            )
         if row:
             await conn.execute(
                 """UPDATE memories SET last_used_at = NOW()

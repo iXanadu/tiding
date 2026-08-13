@@ -200,6 +200,78 @@ async def test_memory_get_not_found(respx_mock):
 
 
 @respx.mock(base_url="http://localhost:8920")
+async def test_memory_get_project_scope_spans_writers(respx_mock, tmp_path):
+    """MEM-6: an exact-key project read asks for EVERY writer, not its own
+    partition — and surfaces who actually wrote the row it got back.
+
+    The handoff shape: grok wrote startup/next; a claude session reading it
+    must find it. Before this, the bridge pinned user_id to its own
+    principal and the read silently missed the peer's row — measured
+    2026-08-13, five projects split on exactly the handoff keys.
+    """
+    (tmp_path / ".engram.cfg").write_text("project = mem6proj\n")
+    captured = {}
+
+    def _capture(request):
+        import json as _json
+        captured.update(_json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "memory": {
+                    "namespace": "fleet",
+                    "key": "startup/next",
+                    "value": "grok's handoff",
+                    "scope": "project",
+                    "user_id": "grok",
+                    "tags": "",
+                    "tags_search": "",
+                    "created_at": "2026-08-13T12:00:00+00:00",
+                },
+            },
+        )
+
+    respx_mock.post("/memory/get").mock(side_effect=_capture)
+    result = await memory_get(
+        key="startup/next", scope="project", project_dir=str(tmp_path)
+    )
+    assert captured.get("user_id") == "*", (
+        "an unpinned project get must span writers — reading only the "
+        "caller's own partition is how the handoff keys silently missed"
+    )
+    assert "grok's handoff" in result
+    assert "Written by: grok" in result, (
+        "provenance must ride a cross-writer read — which agent wrote what "
+        "you are about to trust is the fact namespaces exist to preserve"
+    )
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_get_pinned_writer_is_honored(respx_mock, tmp_path):
+    """An EXPLICIT user_id still reads exactly that partition (admin
+    override path) — the wildcard is a default, never a coercion."""
+    (tmp_path / ".engram.cfg").write_text("project = mem6proj\n")
+    captured = {}
+
+    def _capture(request):
+        import json as _json
+        captured.update(_json.loads(request.content))
+        return httpx.Response(
+            200, json={"status": "not_found", "memory": None}
+        )
+
+    respx_mock.post("/memory/get").mock(side_effect=_capture)
+    await memory_get(
+        key="startup/next", scope="project", project_dir=str(tmp_path),
+        user_id="grok",
+    )
+    assert captured.get("user_id") == "grok", (
+        "a caller who names a writer means that writer"
+    )
+
+
+@respx.mock(base_url="http://localhost:8920")
 async def test_memory_forget_found(respx_mock):
     respx_mock.post("/memory/forget").mock(
         return_value=httpx.Response(200, json={"status": "ok", "key": "test-key"})

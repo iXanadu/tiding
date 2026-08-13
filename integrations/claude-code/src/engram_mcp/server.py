@@ -971,6 +971,7 @@ async def memory_get(
         project: Admin override — read from this project instead of the auto-resolved one. Only valid with scope=project.
         user_id: Admin override — read under this user_id instead of the auto-resolved principal name.
     """
+    caller_pinned_writer = bool(user_id)
     try:
         resolved_scope, user_id, project = await _resolve_partition_with_identity(
             scope or None,
@@ -980,6 +981,14 @@ async def memory_get(
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
+    # MEM-6: exact-key project reads span every writer, same rule as search
+    # (MEM-5). This is the read handoffs actually use — startup/next,
+    # wip/current — and reading only the caller's own partition silently
+    # missed a peer provider's row: measured 2026-08-13, seven projects split,
+    # five on exactly those keys. The server collapses to the newest live row;
+    # the writer comes back in the result and is surfaced below.
+    if resolved_scope == "project" and not caller_pinned_writer:
+        user_id = "*"
     result = await _client.get(
         key=key,
         namespace=settings.memory_namespace,
@@ -997,7 +1006,12 @@ async def memory_get(
     tags = f"\nTags: {mem['tags']}" if mem.get("tags") else ""
     recency = _format_recency(mem.get("created_at"))
     stored = f"\nStored: {recency}" if recency else ""
-    return f"**{mem['key']}**{tags}{stored}\n{mem['value']}"
+    # Provenance rides the result on cross-writer reads: which agent wrote
+    # what you are about to trust is the fact namespaces exist to preserve.
+    wrote = ""
+    if user_id == "*" and mem.get("user_id"):
+        wrote = f"\nWritten by: {mem['user_id']}"
+    return f"**{mem['key']}**{tags}{stored}{wrote}\n{mem['value']}"
 
 
 @mcp.tool()
