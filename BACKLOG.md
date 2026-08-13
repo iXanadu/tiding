@@ -206,7 +206,10 @@
   the gated-migration plan: `decision/three-axes-principal-project-address`.
 
 
-- **CURSOR-IDENT-1** *(collision FIXED and verified end-to-end 2026-08-10 —
+- **CURSOR-IDENT-1** ⏸ **ON HOLD (owner, 2026-08-13) pending more information**
+  — do not act, and specifically do NOT add a per-project `.cursor/mcp.json`
+  anywhere (option (b) below) while the hold stands; today's state, (a), is
+  the interim. *(collision FIXED and verified end-to-end 2026-08-10 —
   the driver added a credential selector, engram's global `~/.cursor/mcp.json`
   entry was removed, and a live session then showed ONE engram child carrying
   the right principal and its per-session seat. What remains is below.)*
