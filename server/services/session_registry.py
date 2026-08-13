@@ -170,20 +170,34 @@ def _seat_ordinal(seat: str, base: str) -> int:
     return MAX_SEAT_ORDINAL + 1
 
 
-async def _has_undelivered_mail(conn, seat: str) -> bool:
-    """Is there open, never-read mail addressed to this seat?
+async def _address_holds_mail(conn, seat: str) -> bool:
+    """Would a NEW holder of this address see mail that was not meant for it?
 
-    The hard guard on reclamation. Mail in flight for a session that died must
-    be preserved for whoever next holds the address, never handed to a stranger
-    who happens to be allocated the same ordinal. Correctness (R8) outranks
-    tidy numbering (R7), so an undelivered message parks the seat indefinitely.
+    The hard guard on handing an address to a stranger. Mail for a session that
+    died must be preserved for whoever next holds the address, never shown to a
+    stranger who happens to be allocated the same ordinal. Correctness (R8)
+    outranks tidy numbering (R7), so mail parks the seat indefinitely.
+
+    THE PREDICATE MUST MATCH WHAT A NEW HOLDER ACTUALLY SEES, and the earlier
+    one did not. It asked for open mail with ``read_by = []`` — "never read by
+    anyone" — which is a strictly narrower set than "visible to a newcomer",
+    because ACKS ARE PER-READER: ``inbox_list`` hides a message only from
+    readers present in its own ``read_by`` (memory_service.py, the
+    ``NOT read_by ? reader_identity`` clause). A message the PREVIOUS holder
+    read and acked stays ``open`` and is therefore fully visible to the next
+    session allocated that name, while the old predicate reported the address
+    clear. So the guard answered a question nobody was asking.
+
+    What a newcomer sees is: not archived (a global hard-hide), and still
+    ``open`` (resolved/superseded mail has drained from the default view). That
+    is exactly this query, and it is the set the guard has to protect.
     """
     row = await conn.fetchrow(
         """
         SELECT 1 FROM memories
         WHERE namespace = $1 AND scope = $2 AND user_id = $3
+          AND COALESCE((metadata->>'archived')::bool, false) = false
           AND COALESCE(metadata->>'status', $4) = $4
-          AND COALESCE(jsonb_array_length(metadata->'read_by'), 0) = 0
         LIMIT 1
         """,
         INBOX_NAMESPACE, INBOX_SCOPE, seat, INBOX_OPEN,
@@ -503,7 +517,7 @@ async def seat_claim(
                         # undelivered mail (R8: never hand a stranger a seat
                         # with mail; the row ages out instead, and the
                         # duplicate-collapse below cleans it once drained).
-                        if not await _has_undelivered_mail(conn, seat):
+                        if not await _address_holds_mail(conn, seat):
                             await conn.execute(
                                 """
                                 DELETE FROM memories
@@ -559,7 +573,7 @@ async def seat_claim(
                     if _md(row).get("session_nonce") != session_nonce:
                         continue  # not provably mine — never free another's seat
                     dupe = row["key"].removeprefix("seat/")
-                    if await _has_undelivered_mail(conn, dupe):
+                    if await _address_holds_mail(conn, dupe):
                         continue
                     await conn.execute(
                         """
@@ -581,6 +595,32 @@ async def seat_claim(
             # fallback to base/ordinal is an allocation, not a choice.
             meta = _meta(session_key, session_nonce, provider, host,
                          runtime=runtime_seat and seat == preferred)
+
+            # R8 ON THE FREE PATH. A name with NO seat row can still hold mail,
+            # and until 2026-08-13 nothing checked: the guard below at the
+            # takeover branch only runs when a row still exists, and
+            # ``seat_release`` DELETEs the row without consulting the inbox at
+            # all. So the whole clean-shutdown path — the one a launcher drives
+            # on every despawn — freed a name and let the next claimant INSERT
+            # into it and read a stranger's mail. Inbox rows key on the ADDRESS
+            # STRING, not on the seat row, so dropping the row moves nothing.
+            #
+            # The slow path was guarded and the fast path added later was not:
+            # explicit release short-circuits the 7d grace that made takeover
+            # the only way a used name changed hands, and the guard never came
+            # with it.
+            #
+            # RESIDUAL, stated rather than papered over: this is check-then-act
+            # on a bare connection (see the acquire above — no transaction), so
+            # mail arriving between the check and the insert still lands on the
+            # new holder. That window is milliseconds against the unbounded one
+            # it replaces, and it cannot be closed by a transaction anyway —
+            # nothing serialises an INSERT by a different session against our
+            # read. Closing it fully would need the address space locked, which
+            # costs more than the residue is worth.
+            if await _address_holds_mail(conn, seat):
+                continue  # R8 outranks tidy numbering: park it, take the next
+
             if await _try_insert(conn, seat, project, meta):
                 return {"seat": seat, "is_new": True,
                         "reclaimed_from": None, "warning": warning}
@@ -618,7 +658,7 @@ async def seat_claim(
             # seat directly.
             if row["last_used_at"] >= grace_cutoff:
                 continue
-            if await _has_undelivered_mail(conn, seat):
+            if await _address_holds_mail(conn, seat):
                 continue  # R8: never hand a stranger someone else's mail
             if await _presence_is_fresh(conn, seat, project):
                 continue  # SEAT-8: an independently-live session holds this

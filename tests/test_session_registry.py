@@ -261,6 +261,104 @@ async def test_release_frees_the_ordinal_immediately(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_a_released_name_holding_mail_is_not_handed_to_the_next_session(
+    client, db_pool
+):
+    """R8 on the FREE path, which nothing guarded until 2026-08-13.
+
+    The takeover guard only runs when a seat ROW still exists, and
+    ``seat_release`` DELETEs the row without consulting the inbox — so the
+    clean-shutdown path a launcher drives on every despawn freed a name and let
+    the next claimant INSERT into it and read a stranger's mail. Inbox rows key
+    on the ADDRESS STRING, not on the seat row, so dropping the row moved
+    nothing.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "departing")).json()
+    seat = a["seat"]
+    send = await client.post("/memory/send", json={
+        "to": seat, "subject": "for the departing session", "body": "private",
+    })
+    assert send.status_code == 200
+
+    rel = await client.post("/session/release", json={
+        "session_key": "departing", "project": PROJ,
+    })
+    assert rel.json()["released"] == seat  # the name IS freed, as designed
+
+    b = (await _claim(client, "stranger", host="otherbox")).json()
+    assert b["seat"] != seat, (
+        "a stranger was granted a released name that still held mail — "
+        "they would read it, because acks and listing key on the address"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_mail_the_previous_holder_already_read_still_parks_the_name(
+    client, db_pool
+):
+    """The guard must match what a NEWCOMER sees, not what the old holder saw.
+
+    ACKS ARE PER-READER: ``inbox_list`` hides a message only from readers in its
+    own ``read_by``. So a message the previous holder read and acked stays
+    ``open`` and is fully visible to whoever is allocated that name next. The
+    original predicate asked for ``read_by = []`` and reported such an address
+    CLEAR — answering a question nobody was asking.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "reader")).json()
+    seat = a["seat"]
+    send = await client.post("/memory/send", json={
+        "to": seat, "subject": "read then abandoned", "body": "still private",
+    })
+    msg_id = send.json()["id"]
+    # The holder reads it — and then the session dies.
+    ack = await client.post(f"/memory/inbox/{msg_id}/ack",
+                            json={"reader_identity": seat})
+    assert ack.status_code == 200
+    await client.post("/session/release", json={
+        "session_key": "reader", "project": PROJ,
+    })
+
+    b = (await _claim(client, "stranger-2", host="otherbox")).json()
+    assert b["seat"] != seat, (
+        "granted a name whose mail was merely ACKED by the dead holder — "
+        "per-reader acks mean the newcomer still sees every one of those rows"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_resolved_mail_does_not_park_a_name_forever(client, db_pool):
+    """The guard protects what a newcomer would SEE, so it must let go too.
+
+    Resolved mail has drained from the default view for every reader, so it
+    cannot leak to the next holder — parking the name on it would be R8
+    outranking R7 for no gain, and names would silently accrete.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "closer")).json()
+    seat = a["seat"]
+    send = await client.post("/memory/send", json={
+        "to": seat, "subject": "loop closed", "body": "done",
+    })
+    msg_id = send.json()["id"]
+    res = await client.post(f"/memory/inbox/{msg_id}/resolve",
+                            json={"reader_identity": seat})
+    assert res.status_code == 200
+    await client.post("/session/release", json={
+        "session_key": "closer", "project": PROJ,
+    })
+
+    b = (await _claim(client, "newcomer-3", host="otherbox")).json()
+    assert b["seat"] == seat, (
+        "resolved mail is invisible to a newcomer, so it must not park the name"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_no_role_alias_endpoint(client, db_pool):
     """A role is NOT an address (Rob, 2026-07-24). It is not unique or
     provider-stable — "engram-tester" for grok and for claude would collide,
