@@ -1046,3 +1046,173 @@ async def test_admin_is_exempt_from_lanes(client, db_pool, lanes_on):
         "preferred_seat": "admin",
     })
     assert r.json()["seat"] == "admin"
+
+
+# --- LANE-4: death certificates + lane-cursor succession --------------------
+
+
+async def _mail(db_pool, to, mid, read_by=None, project=PROJ):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id,
+                tags, tags_search, search_text, embedding, metadata)
+            VALUES ('fleet', $1, 'b', 'inbox', $2, '', '', 'b', NULL, $3::jsonb)
+            ON CONFLICT DO NOTHING
+            """,
+            mid, to,
+            __import__("json").dumps(
+                {"kind": "inbox", "from": "peer@x", "subject": "s",
+                 "status": "open", "archived": False,
+                 "read_by": read_by or []}),
+        )
+
+
+async def _read_by(db_pool, mid):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT metadata->'read_by' AS rb FROM memories WHERE key=$1", mid)
+    import json as _j
+    return _j.loads(row["rb"]) if row and row["rb"] else []
+
+
+def _cert(client, **kw):
+    body = {"session_key": "dead-1", "seat": f"{PROJ}-claude",
+            "lane": f"{PROJ}-claude", "project": PROJ, "provider": "claude",
+            "host": "macmini", "died_at": "2026-08-14T12:00:00Z",
+            "cause": "stop"}
+    body.update(kw)
+    return client.post("/session/death", json=body)
+
+
+async def _clear_lane4(db_pool):
+    await _clear(db_pool)
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope IN ('death','lane_cursor') "
+            "AND project = $1", PROJ)
+
+
+@pytest.mark.asyncio
+async def test_cert_is_idempotent_and_harvests_the_dead_readers_acks(
+    client, db_pool
+):
+    await _clear_lane4(db_pool)
+    # the dead occupant read lane+project mail; its own seat-DM must not
+    # enter the cursor, nor machine: mail
+    await _mail(db_pool, f"{PROJ}-claude", "inbox/l1",
+                read_by=[f"{PROJ}-claude@macmini"])
+    await _mail(db_pool, PROJ, "inbox/p1",
+                read_by=[f"{PROJ}-claude@macmini"])
+    await _mail(db_pool, f"{PROJ}-claude", "inbox/dm1",
+                read_by=[f"{PROJ}-claude@macmini"])
+    r = await _cert(client)
+    body = r.json()
+    assert r.status_code == 200 and body["created"] is True
+    assert body["cursor_updated"] is True
+    # dm1 is TO the dead seat and excluded; l1 was also TO the seat string
+    # (pre-reservation lane==seat) — excluded the same way; p1 survives
+    assert body["cursor_size"] == 1
+    r2 = await _cert(client)
+    assert r2.json()["created"] is False, "repeat POST is a no-op create"
+    assert r2.json()["cursor_size"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cert_accepted_while_presence_looks_live(client, db_pool):
+    """PICK-REG-1b: the certificate wins over a still-beating heartbeat —
+    a live-looking presence row is never a reason to reject."""
+    await _clear_lane4(db_pool)
+    await _claim(client, "victim-1")
+    r = await _cert(client, session_key="victim-1")
+    assert r.status_code == 200 and r.json()["created"] is True
+
+
+@pytest.mark.asyncio
+async def test_empty_seat_stores_cert_but_never_harvests(client, db_pool):
+    """PM ruling: no seat → no reader identity → skip harvest entirely;
+    do NOT match seat@% from an empty seat."""
+    await _clear_lane4(db_pool)
+    r = await _cert(client, seat="", session_key="k-empty")
+    body = r.json()
+    assert r.status_code == 200 and body["created"] is True
+    assert body["cursor_updated"] is False and body["cursor_size"] == 0
+
+
+@pytest.mark.asyncio
+async def test_seat6_fallback_idempotency_key(client, db_pool):
+    """Empty session_key (grok start path): (seat, died_at) is the key —
+    and the cursor still updates."""
+    await _clear_lane4(db_pool)
+    await _mail(db_pool, PROJ, "inbox/p2",
+                read_by=[f"{PROJ}-grok@macmini"])
+    kw = dict(session_key="", seat=f"{PROJ}-grok", lane=f"{PROJ}-grok",
+              provider="grok")
+    r = await _cert(client, **kw)
+    assert r.json()["created"] is True and r.json()["cursor_updated"] is True
+    assert (await _cert(client, **kw)).json()["created"] is False
+
+
+@pytest.mark.asyncio
+async def test_both_keys_absent_is_422(client, db_pool):
+    r = await _cert(client, session_key="", seat="")
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_first_occupant_seat_equals_lane_passes_while_flag_off(
+    client, db_pool
+):
+    """PM amendment: pre-reservation the granted occupant IS the lane
+    string — an honest cert must not be rejected. (With the flag on the
+    same equality is the seat_for() trap and 422s.)"""
+    await _clear_lane4(db_pool)
+    r = await _cert(client, session_key="k-first")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_lane_as_seat_rejected_only_under_reservation(
+    client, db_pool, lanes_on
+):
+    r = await _cert(client, session_key="k-trap")
+    assert r.status_code == 422
+    assert "lane_as_seat" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_successor_inherits_cursor_on_empty_lane(client, db_pool):
+    """Succession: predecessor certified dead, lane empty → the new
+    occupant's read-state materializes the cursor (existing read semantics,
+    recorded on the cursor row for forensics)."""
+    await _clear_lane4(db_pool)
+    await _mail(db_pool, PROJ, "inbox/p3",
+                read_by=[f"{PROJ}-claude@macmini"])
+    await _cert(client, session_key="old-1")
+    # predecessor's seat row released (clean stop)
+    await client.post("/session/release", json={
+        "session_key": "old-1", "project": PROJ})
+    r = await _claim(client, "new-1", host="macmini")
+    seat = r.json()["seat"]
+    rb = await _read_by(db_pool, "inbox/p3")
+    assert f"{seat}@macmini" in rb, "successor inherited the lane cursor"
+
+
+@pytest.mark.asyncio
+async def test_live_colleague_blocks_inheritance(client, db_pool):
+    """Problem-1 rule: a live colleague on the lane means the new reader
+    starts with EMPTY personal acks — inheriting would steal unread mail
+    from a living session."""
+    await _clear_lane4(db_pool)
+    await _mail(db_pool, PROJ, "inbox/p4",
+                read_by=[f"{PROJ}-claude@macmini"])
+    # colleague occupies the lane with fresh presence
+    c = await _claim(client, "alive-1", host="macmini")
+    alive_seat = c.json()["seat"]
+    await client.post("/memory/presence", json={
+        "identity": alive_seat, "project": PROJ})
+    await _cert(client, session_key="old-2", seat=f"{PROJ}-claude-9")
+    r = await _claim(client, "new-2", host="macmini")
+    seat = r.json()["seat"]
+    rb = await _read_by(db_pool, "inbox/p4")
+    assert f"{seat}@macmini" not in rb, "live colleague must block inheritance"

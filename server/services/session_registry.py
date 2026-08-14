@@ -697,6 +697,11 @@ async def seat_claim(
                 continue  # R8 outranks tidy numbering: park it, take the next
 
             if await _try_insert(conn, seat, project, meta):
+                # LANE-4: a newly allocated occupant may inherit the lane's
+                # read-cursor (succession) — see _apply_lane_inheritance for
+                # the conditions and the live-colleague block.
+                await _apply_lane_inheritance(conn, seat, project, provider,
+                                              host, session_key)
                 return {"seat": seat, "is_new": True,
                         "reclaimed_from": None, "warning": warning}
 
@@ -740,6 +745,8 @@ async def seat_claim(
 
             if await _try_takeover(conn, seat, project, meta,
                                    older_than=live_cutoff):
+                await _apply_lane_inheritance(conn, seat, project, provider,
+                                              host, session_key)
                 return {
                     "seat": seat,
                     "is_new": True,
@@ -752,6 +759,261 @@ async def seat_claim(
         f"{MAX_SEAT_ORDINAL} candidates — this almost always means the caller's "
         f"session_key changes on every claim rather than that {MAX_SEAT_ORDINAL} "
         f"sessions are genuinely live."
+    )
+
+
+DEATH_SCOPE = "death"
+LANE_CURSOR_SCOPE = "lane_cursor"
+
+
+async def death_certify(
+    session_key: str,
+    seat: str,
+    lane: str,
+    project: str,
+    provider: str,
+    host: str,
+    died_at,
+    cause: str,
+    graceful: bool | None,
+    certified_by: str | None,
+) -> dict:
+    """LANE-4: record a spawner's death certificate and feed the lane cursor.
+
+    The store never infers death — this is the intake for the SPAWNER's
+    verdict (the party that performed or observed the kill). The certificate
+    is accepted even while the presence row still looks live: a heartbeat can
+    outlive a kill, it can never observe one (PICK-REG-1b, imported).
+
+    Effects, deliberately narrow: (1) a durable cert row; (2) the lane
+    read-cursor gains the union of the dead occupant's acks on addresses
+    that outlive sessions, so a certified SUCCESSOR can inherit read-state
+    instead of drowning in a predecessor's history. It does NOT free the
+    seat or accelerate reclamation — SEAT-13 stays the owner's question.
+
+    Idempotent on session_key, falling back to (seat, died_at) when the
+    spawner never had a key (SEAT-6). The cursor union re-runs on repeats —
+    it is idempotent by construction, which also heals a cert that stored
+    but failed mid-harvest.
+    """
+    project = (project or "").strip().lower()
+    idem = session_key or f"{seat}|{died_at.isoformat()}"
+    key = f"{DEATH_SCOPE}/{idem}"
+    meta = {
+        "kind": "death",
+        "session_key": session_key,
+        "seat": seat,
+        "lane": lane,
+        "provider": provider,
+        "host": host,
+        "died_at": died_at.isoformat(),
+        "cause": cause,
+        "graceful": graceful,
+        "certified_by": certified_by,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+    }
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO memories
+                (namespace, key, value, scope, user_id, project,
+                 tags, tags_search, search_text, embedding, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, '', '', $3, NULL, $7::jsonb)
+            ON CONFLICT (namespace, key, scope, user_id, project) DO NOTHING
+            RETURNING key
+            """,
+            SEAT_NAMESPACE, key, idem, DEATH_SCOPE, SEAT_USER_ID,
+            project, json.dumps(meta),
+        )
+        created = row is not None
+
+        # Cert-beats-heartbeat, recorded as a FACT consumers may weigh: the
+        # seat row (if it still exists) is marked, never deleted or aged.
+        if seat:
+            await conn.execute(
+                """
+                UPDATE memories
+                SET metadata = metadata || '{"death_certified": true}'::jsonb
+                WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                  AND project = $4 AND key = $5
+                """,
+                SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
+                f"seat/{seat}",
+            )
+
+        cursor_updated = False
+        cursor_size = 0
+        # No seat → no reader identity → nothing to harvest (PM ruling: do
+        # NOT harvest seat@% from an empty seat). Lane alone still records.
+        if lane and seat:
+            if host:
+                harvested = await conn.fetch(
+                    """
+                    SELECT key FROM memories
+                    WHERE scope = 'inbox'
+                      AND COALESCE(metadata->'read_by','[]'::jsonb) ? $1::text
+                      AND user_id <> $2
+                      AND user_id NOT LIKE 'machine:%'
+                    """,
+                    f"{seat}@{host}", seat,
+                )
+            else:
+                harvested = await conn.fetch(
+                    """
+                    SELECT key FROM memories
+                    WHERE scope = 'inbox'
+                      AND EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(
+                            COALESCE(metadata->'read_by','[]'::jsonb)) r
+                        WHERE r LIKE $1
+                      )
+                      AND user_id <> $2
+                      AND user_id NOT LIKE 'machine:%'
+                    """,
+                    f"{seat}@%", seat,
+                )
+            ids = [r["key"] for r in harvested]
+            cur = await conn.fetchrow(
+                """
+                SELECT metadata FROM memories
+                WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                  AND project = $4 AND key = $5
+                """,
+                SEAT_NAMESPACE, LANE_CURSOR_SCOPE, SEAT_USER_ID, project,
+                f"cursor/{lane}",
+            )
+            existing = set((_md(cur).get("ids") or []) if cur else [])
+            merged = sorted(existing | set(ids))
+            cursor_size = len(merged)
+            if cur is None:
+                await conn.execute(
+                    """
+                    INSERT INTO memories
+                        (namespace, key, value, scope, user_id, project,
+                         tags, tags_search, search_text, embedding, metadata)
+                    VALUES ($1, $2, $3, $4, $5, $6, '', '', $3, NULL,
+                            $7::jsonb)
+                    ON CONFLICT (namespace, key, scope, user_id, project)
+                    DO UPDATE SET metadata = EXCLUDED.metadata
+                    """,
+                    SEAT_NAMESPACE, f"cursor/{lane}", lane,
+                    LANE_CURSOR_SCOPE, SEAT_USER_ID, project,
+                    json.dumps({"kind": "lane_cursor", "ids": merged,
+                                "updated_at": meta["received_at"],
+                                "last_cert": key, "applied": []}),
+                )
+            else:
+                md = _md(cur)
+                md["ids"] = merged
+                md["updated_at"] = meta["received_at"]
+                md["last_cert"] = key
+                await conn.execute(
+                    """
+                    UPDATE memories SET metadata = $1::jsonb
+                    WHERE namespace = $2 AND scope = $3 AND user_id = $4
+                      AND project = $5 AND key = $6
+                    """,
+                    json.dumps(md), SEAT_NAMESPACE, LANE_CURSOR_SCOPE,
+                    SEAT_USER_ID, project, f"cursor/{lane}",
+                )
+            cursor_updated = True
+    return {"created": created, "cursor_updated": cursor_updated,
+            "cursor_size": cursor_size}
+
+
+async def _apply_lane_inheritance(conn, seat: str, project: str,
+                                  provider: str, host: str | None,
+                                  session_key: str) -> None:
+    """Materialize the lane cursor into a new occupant's read-state.
+
+    Runs at claim time for a NEWLY allocated occupant. Inheritance fires iff
+    (a) no OTHER occupant of this lane has fresh presence at claim — the
+    lane is empty, this is succession; or (b) the claimant's session_key
+    matches a certified death — the same logical session returning. A live
+    colleague on the lane blocks it cold: per-reader acks stay per-reader
+    (the Problem-1 rule; inheriting here would steal a living session's
+    unread mail).
+
+    NAMED RESIDUAL (PM, accepted): the colleague check is presence
+    freshness. A head-down occupant past the freshness window looks like an
+    empty lane and the newcomer inherits. Same liveness split as the roster;
+    no second death oracle is invented here.
+
+    Application appends the new reader to read_by — the existing read
+    semantics, nothing parallel — and records {reader, cert, at} on the
+    cursor row so forensics can tell inherited from actually-read.
+    """
+    if not host:
+        return  # no host → no reader identity to materialize under
+    lane = f"{project}-{provider}"
+    cur = await conn.fetchrow(
+        """
+        SELECT metadata FROM memories
+        WHERE namespace = $1 AND scope = $2 AND user_id = $3
+          AND project = $4 AND key = $5
+        """,
+        SEAT_NAMESPACE, LANE_CURSOR_SCOPE, SEAT_USER_ID, project,
+        f"cursor/{lane}",
+    )
+    if cur is None:
+        return
+    md = _md(cur)
+    ids = md.get("ids") or []
+    if not ids:
+        return
+
+    same_session = False
+    if session_key:
+        cert = await conn.fetchrow(
+            """
+            SELECT 1 FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND metadata->>'session_key' = $5
+            """,
+            SEAT_NAMESPACE, DEATH_SCOPE, SEAT_USER_ID, project, session_key,
+        )
+        same_session = cert is not None
+    if not same_session:
+        peers = await conn.fetch(
+            """
+            SELECT key FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND metadata->>'provider' = $5 AND key <> $6
+            """,
+            SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, provider,
+            f"seat/{seat}",
+        )
+        for p in peers:
+            peer_seat = p["key"].removeprefix("seat/")
+            if await _presence_is_fresh(conn, peer_seat, project):
+                return  # live colleague on the lane — never inherit
+
+    reader = f"{seat}@{host}"
+    await conn.execute(
+        """
+        UPDATE memories
+        SET metadata = jsonb_set(
+            metadata, '{read_by}',
+            COALESCE(metadata->'read_by','[]'::jsonb) || to_jsonb($1::text))
+        WHERE scope = 'inbox' AND key = ANY($2::text[])
+          AND NOT COALESCE(metadata->'read_by','[]'::jsonb) ? $1::text
+        """,
+        reader, ids,
+    )
+    applied = list(md.get("applied") or [])
+    applied.append({"reader": reader,
+                    "cert": md.get("last_cert"),
+                    "at": datetime.now(timezone.utc).isoformat()})
+    md["applied"] = applied[-16:]
+    await conn.execute(
+        """
+        UPDATE memories SET metadata = $1::jsonb
+        WHERE namespace = $2 AND scope = $3 AND user_id = $4
+          AND project = $5 AND key = $6
+        """,
+        json.dumps(md), SEAT_NAMESPACE, LANE_CURSOR_SCOPE, SEAT_USER_ID,
+        project, f"cursor/{lane}",
     )
 
 

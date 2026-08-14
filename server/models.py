@@ -1003,6 +1003,61 @@ class SeatEntry(BaseModel):
     age_seconds: float
 
 
+class DeathCertRequest(BaseModel):
+    """LANE-4 (docs/design/immortal-addresses.md §6): a SPAWNER certifies an
+    occupant's death. Testimony, not inference — the store never decides a
+    session is dead; it records the word of the party that performed or
+    observed the kill, and the certificate WINS over a still-beating presence
+    row (a heartbeat can outlive a kill; it can never observe one).
+
+    Facts only, with power scoped narrowly: the cert feeds the lane read-
+    cursor (succession inheritance) and the record. It does NOT free the
+    seat or accelerate reclamation — that question is SEAT-13, the owner's,
+    deliberately untouched.
+    """
+    # Primary idempotency key. "" allowed — grok's start path cannot always
+    # inject one (SEAT-6); then (seat, died_at) is the fallback key.
+    session_key: str = Field(default="", max_length=MAX_ADDR)
+    # The GRANTED occupant seat, or "" when the spawner never learned it.
+    # Never the lane: a spawner-side seat_for() fallback would certify that
+    # the LANE died (the trap named in review). Enforced only once
+    # reservation is on — pre-reservation, an honest first occupant's granted
+    # seat legitimately IS the lane string (PM amendment, 2026-08-14).
+    seat: str = Field(default="", max_length=MAX_ADDR)
+    lane: str = Field(default="", max_length=MAX_ADDR)
+    project: str = Field(max_length=MAX_ADDR)
+    provider: str = Field(max_length=MAX_ADDR)
+    # Read-state keys on host-qualified reader identities (<seat>@<host>), so
+    # harvesting the dead occupant's acks needs the host. "" degrades to a
+    # seat@% match (single-box safe).
+    host: str = Field(default="", max_length=MAX_ADDR)
+    died_at: datetime
+    # Canonical: stop | reconcile | spawn-failed. Other short strings are
+    # stored verbatim — the vocabulary belongs to the certifier.
+    cause: str = Field(default="", max_length=64)
+    graceful: bool | None = None
+
+    @field_validator("session_key", "seat", "lane", "project", "provider",
+                     "host", mode="before")
+    @classmethod
+    def death_normalize(cls, v):
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @field_validator("project", "provider", mode="before")
+    @classmethod
+    def death_not_empty(cls, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("must be a non-empty string")
+        return v
+
+
+class DeathCertResponse(BaseModel):
+    status: str
+    created: bool
+    cursor_updated: bool = False
+    cursor_size: int = 0
+
+
 class SeatListRequest(BaseModel):
     project: str | None = None
     # Direct lookup for a LAUNCHER: "what seat does the session I spawned

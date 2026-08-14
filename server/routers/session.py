@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from server.dependencies import check_namespace_access, get_current_principal
 from server.models import (
+    DeathCertRequest,
+    DeathCertResponse,
     SeatClaimRequest,
     SeatClaimResponse,
     SeatEntry,
@@ -24,6 +26,8 @@ from server.models import (
 )
 from server.services.session_registry import (
     SEAT_NAMESPACE,
+    death_certify,
+    is_reserved_lane,
     seat_claim,
     seat_list,
     seat_release,
@@ -102,6 +106,63 @@ async def release_seat(req: SeatReleaseRequest, request: Request):
         logger.exception("seat_release failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
     return SeatReleaseResponse(status="ok", released=released)
+
+
+@router.post("/death", response_model=DeathCertResponse)
+async def certify_death(req: DeathCertRequest, request: Request):
+    """LANE-4: a spawner certifies an occupant's death (testimony intake).
+
+    Accepted even while the presence row looks live — a heartbeat can
+    outlive a kill, never observe one. Rejections are for MALFORMED certs
+    only: both idempotency keys absent, or (reservation on) a seat that is
+    the lane string — the spawner-side seat_for() fallback trap, which
+    would certify that the LANE died. Pre-reservation that same equality is
+    an honest first occupant and passes (PM amendment, 2026-08-14).
+
+    Not admin-gated, and no stricter than the rest of /session/* (PM ack):
+    the middleware's posture decides who gets here at all. A certificate is
+    testimony and testimony carries a name — so the certifier is RECORDED
+    (principal name when authenticated, else the middleware's auth_source,
+    e.g. legacy/loopback), never silently absent.
+    """
+    principal = get_current_principal(request)
+    certifier = (
+        getattr(principal, "name", None)
+        or (str(principal) if principal else None)
+        or getattr(request.state, "auth_source", "anonymous")
+    )
+    if not req.session_key and not req.seat:
+        raise HTTPException(
+            status_code=422,
+            detail="no idempotency key: session_key is empty and seat is "
+                   "empty — send at least one (SEAT-6 fallback is "
+                   "seat+died_at)",
+        )
+    if req.seat and is_reserved_lane(req.seat, req.project):
+        raise HTTPException(
+            status_code=422,
+            detail=f"lane_as_seat: {req.seat!r} is this project's lane, not "
+                   f"an occupant — a spawner-side seat_for() fallback filled "
+                   f"in the mailbox where the granted seat belongs. Send the "
+                   f"granted occupant seat or empty.",
+        )
+    try:
+        result = await death_certify(
+            session_key=req.session_key,
+            seat=req.seat,
+            lane=req.lane,
+            project=req.project,
+            provider=req.provider,
+            host=req.host,
+            died_at=req.died_at,
+            cause=req.cause,
+            graceful=req.graceful,
+            certified_by=certifier,
+        )
+    except Exception:
+        logger.exception("death_certify failed")
+        raise HTTPException(status_code=500, detail="death intake failed")
+    return DeathCertResponse(status="ok", **result)
 
 
 @router.post("/seats", response_model=SeatListResponse)
