@@ -17,7 +17,8 @@ def test_default_identity_is_project_derived(monkeypatch):
     monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
     reader, listen_set = compute_identity("/whatever")
     assert reader == "beastchat@macmini"
-    assert listen_set == ["beastchat", "machine:macmini", "beastchat@macmini"]
+    assert listen_set == ["beastchat", "beastchat-claude",
+        "beastchat-claude@macmini", "machine:macmini", "beastchat@macmini"]
 
 
 def test_identity_from_engram_cfg_when_no_env(monkeypatch):
@@ -30,6 +31,8 @@ def test_identity_from_engram_cfg_when_no_env(monkeypatch):
     assert reader == "beastchat-app@macmini"
     assert listen_set == [
         "beastchat-app",
+        "beastchat-claude",
+        "beastchat-claude@macmini",
         "beastchat",
         "beastchat@macmini",
         "machine:macmini",
@@ -59,6 +62,8 @@ def test_override_gives_distinct_identity_but_keeps_project_group(monkeypatch):
     # beastchat session on macmini" without knowing its seat.
     assert listen_set == [
         "beastchat-app",
+        "beastchat-claude",
+        "beastchat-claude@macmini",
         "beastchat",
         "beastchat@macmini",
         "machine:macmini",
@@ -129,7 +134,8 @@ def test_override_equal_to_project_is_a_noop(monkeypatch):
     monkeypatch.setattr(identity, "derive_project_name", lambda _d: "beastchat")
     reader, listen_set = compute_identity("/whatever")
     assert reader == "beastchat@macmini"
-    assert listen_set == ["beastchat", "machine:macmini", "beastchat@macmini"]
+    assert listen_set == ["beastchat", "beastchat-claude",
+        "beastchat-claude@macmini", "machine:macmini", "beastchat@macmini"]
 
 
 def test_omitted_project_dir_recalls_the_pinned_identity(monkeypatch):
@@ -157,7 +163,8 @@ def test_omitted_project_dir_recalls_the_pinned_identity(monkeypatch):
     # Write path omits project_dir → recalls the pin instead of going admin.
     write_reader, write_set = compute_identity(None)
     assert write_reader == "projbeta@macmini"
-    assert write_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
+    assert write_set == ["projbeta", "projbeta-claude",
+        "projbeta-claude@macmini", "machine:macmini", "projbeta@macmini"]
 
 
 def test_cold_session_without_project_dir_or_cwd_falls_back_to_admin(monkeypatch):
@@ -199,7 +206,8 @@ def test_startup_cwd_anchors_identity_when_project_dir_omitted(monkeypatch):
     )
     reader, listen_set = compute_identity(None)
     assert reader == "projbeta@macmini"
-    assert listen_set == ["projbeta", "machine:macmini", "projbeta@macmini"]
+    assert listen_set == ["projbeta", "projbeta-claude",
+        "projbeta-claude@macmini", "machine:macmini", "projbeta@macmini"]
 
 
 def test_cross_project_call_does_not_move_identity(monkeypatch):
@@ -461,6 +469,8 @@ class TestRuntimeSeat:
         assert reader == "meidura-audit@macmini"
         assert listen == [
             "meidura-audit",
+            "meidura-claude",
+            "meidura-claude@macmini",
             "meidura",
             "meidura@macmini",
             "machine:macmini",
@@ -508,7 +518,8 @@ class TestRuntimeSeat:
         monkeypatch.setattr(identity, "resolve_inbox_identity", lambda _d: None)
         reader, listen = compute_identity("/whatever")
         assert reader == "meidura@macmini"
-        assert listen == ["meidura", "machine:macmini", "meidura@macmini"]
+        assert listen == ["meidura", "meidura-claude", "meidura-claude@macmini",
+            "machine:macmini", "meidura@macmini"]
 
 
 class TestSeatFile:
@@ -1036,3 +1047,73 @@ class TestInv1ProjectChannelAlways:
         )
         _, listen = compute_identity("/whatever")
         self._assert_project_channel(listen)
+
+
+# --- LANE-2: the implicit lane joins the listen_set (immortal-addresses) ----
+
+
+class TestLane2ListenSet:
+    """LANE-2 (docs/design/immortal-addresses.md): every non-admin session
+    listens on its implicit lane `<project>-<provider>` and `lane@host` IN
+    ADDITION to its occupant identity and project channel. The watcher
+    resolves through compute_identity, so arming follows automatically."""
+
+    def _base(self, monkeypatch):
+        _host(monkeypatch)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "proj")
+        monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        monkeypatch.delenv("ENGRAM_PROVIDER", raising=False)
+
+    def test_seated_ordinal_occupant_hears_its_lane(self, monkeypatch):
+        """The founding case: granted seat is an ordinal, lane mail must
+        still land. This is the exact miss that stranded 105 messages at
+        softphone-claude while the session ran as an ordinal."""
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-claude-4")
+        _, listen = compute_identity("/whatever")
+        assert "proj-claude" in listen
+        assert "proj-claude@macmini" in listen
+        # nothing displaced (INV-1 + occupant)
+        assert "proj-claude-4" in listen
+        assert "proj" in listen and "proj@macmini" in listen
+
+    def test_provider_env_selects_the_lane(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setenv("ENGRAM_PROVIDER", "grok")
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-grok-2")
+        _, listen = compute_identity("/whatever")
+        assert "proj-grok" in listen and "proj-grok@macmini" in listen
+        assert "proj-claude" not in listen
+
+    def test_occupant_equal_to_lane_is_not_duplicated(self, monkeypatch):
+        """Pre-reservation, a granted seat can BE the bare lane string —
+        one address must not appear twice in the listen_set."""
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-claude")
+        _, listen = compute_identity("/whatever")
+        assert listen.count("proj-claude") == 1
+
+    def test_bare_unseated_session_hears_its_lane(self, monkeypatch):
+        self._base(monkeypatch)
+        _, listen = compute_identity("/whatever")
+        assert "proj-claude" in listen and "proj-claude@macmini" in listen
+
+    def test_admin_grows_no_lane(self, monkeypatch):
+        """SEAT-ADMIN-1: admin is one shared role; no admin-<provider>."""
+        _host(monkeypatch)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "admin")
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+        _, listen = compute_identity("/whatever")
+        assert "admin-claude" not in listen
+        assert not any(a.startswith("admin-") for a in listen)
+
+    def test_declared_group_equal_to_lane_not_duplicated(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-claude-2")
+        monkeypatch.setattr(
+            identity, "resolve_inbox_groups", lambda _d: ["proj-claude"]
+        )
+        _, listen = compute_identity("/whatever")
+        assert listen.count("proj-claude") == 1
+        assert listen.count("proj-claude@macmini") == 1

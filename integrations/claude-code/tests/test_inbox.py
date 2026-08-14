@@ -79,7 +79,8 @@ def test_compute_identity_uses_engram_cfg(tmp_path):
     with patch("engram_mcp.identity.hostname", return_value="hosta"):
         reader, listen_set = compute_identity(str(prod))
     assert reader == "newtag@hosta"
-    assert listen_set == ["newtag", "machine:hosta", "newtag@hosta"]
+    assert listen_set == ["newtag", "newtag-claude", "newtag-claude@hosta",
+        "machine:hosta", "newtag@hosta"]
 
 
 def test_is_admin_context_matches_derive():
@@ -95,7 +96,8 @@ def test_compute_identity_project():
     assert reader == "engram@macmini"
     # Project sessions listen on the project, the machine, AND the fully-qualified
     # reader_identity — so fully-qualified replies still land.
-    assert listen_set == ["engram", "machine:macmini", "engram@macmini"]
+    assert listen_set == ["engram", "engram-claude", "engram-claude@macmini",
+        "machine:macmini", "engram@macmini"]
 
 
 def test_compute_identity_admin_symmetric():

@@ -20,9 +20,6 @@ agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
 Migration order is per-project and load-bearing: drain → new bridges →
 reserve → picker/relay (AB) → reply flip.
 
-- **LANE-2** Bridge reinterpretation: injected identity names the LANE;
-  occupant allocated separately; lane + lane@host join listen_set; watchers
-  follow. Deploy gate (e): bridges before any reservation flips.
 - **LANE-3** Wake-on-new-only on lanes + one arm-time backlog digest (MSG-7
   generalized); `authority-directive` is the age-proof wake override.
 - **LANE-4** Death-certificate intake — per-occupant, spawner-pushed, shape

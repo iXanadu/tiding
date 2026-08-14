@@ -34,6 +34,11 @@ from engram_mcp.scoping import (
 
 ADMIN_NAME = "admin"
 
+# LANE-2: projects that never grow provider lanes. `admin` is ONE role worn
+# by maintenance sessions fleet-wide on purpose (SEAT-ADMIN-1) — an
+# `admin-<provider>` lane would detach sessions from the role again.
+ADMIN_EXEMPT_LANE_PROJECTS = {ADMIN_NAME}
+
 # Opt-in per-session inbox identity. When set, this session is ADDRESSED as
 # ``<value>@<host>`` and sends FROM that identity, while still joining its
 # project's group address for broadcasts. MEMORY scoping is unaffected — it
@@ -886,6 +891,25 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     project = derive_project_name(identity_anchor_dir())
     override = resolve_session_identity(project_dir) or ""
     channels = resolve_channels()
+    # LANE-2 (docs/design/immortal-addresses.md): every session listens on its
+    # implicit LANE — `<project>-<provider>`, the immortal mailbox for
+    # "whoever is/next is the <provider> on this project" — IN ADDITION to its
+    # occupant identity and its project channel (INV-1: nothing here displaces
+    # the project addresses, and the occupant stays the From:/watcher-follow
+    # target for occupant DMs). This is what lets mail outlive any one
+    # session: a respawn hears the lane no matter which occupant seat it was
+    # granted. An injected ENGRAM_INBOX_IDENTITY equal to the lane string is
+    # exactly this address — the lane to listen on, not a seat to keep
+    # (server-side reservation, LANE-1, refuses to mint it once flipped).
+    # Admin is exempt end-to-end: no `admin-<provider>` lanes (SEAT-ADMIN-1).
+    # The watcher resolves through this same function, so arming follows —
+    # a watcher that only heard the occupant would miss lane mail, which is
+    # the failure this step exists to end.
+    lane = ""
+    if project not in ADMIN_EXEMPT_LANE_PROJECTS:
+        candidate = f"{project}-{resolve_provider()}"
+        if candidate != project and _is_valid_seat(candidate):
+            lane = candidate
     # GROUP-1: folder-declared TEAM addresses (`groups =` in .engram.cfg).
     # Every session in this folder listens on each — whatever seat a launcher
     # injected — so a peer's send to the team's natural name reaches the whole
@@ -894,7 +918,7 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
     # project_dir) so a cross-project memory call cannot move them.
     groups: list[str] = []
     for g in resolve_inbox_groups(identity_anchor_dir()):
-        if g != project and g != override and _is_valid_seat(g):
+        if g != project and g != override and g != lane and _is_valid_seat(g):
             groups.append(g)
             groups.append(f"{g}@{host}")
     if override and override != project:
@@ -922,10 +946,18 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
         # Additive by construction: the seat, the seat@host, the group and the
         # box are all still here, so restoring this cannot regress addressing
         # that works today.
+        # LANE-2: the lane rides between the occupant and the project channel
+        # (occupant, lane, lane@host, project, project@host, ...). Deduped
+        # against the occupant: pre-reservation a granted seat can BE the
+        # bare lane string, and one address must not appear twice.
+        lane_entries = (
+            [lane, f"{lane}@{host}"] if lane and lane != override else []
+        )
         return (
             reader,
             [
                 override,
+                *lane_entries,
                 project,
                 f"{project}@{host}",
                 *groups,
@@ -935,7 +967,11 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
             ],
         )
     reader = f"{project}@{host}"
-    return (reader, [project, *groups, f"machine:{host}", reader, *channels])
+    # LANE-2 applies to unseated sessions too: a bare hand-launched session is
+    # still "the <provider> on this project" and must hear its lane.
+    lane_entries = [lane, f"{lane}@{host}"] if lane else []
+    return (reader, [project, *lane_entries, *groups,
+                     f"machine:{host}", reader, *channels])
 
 
 def reader_to_address(reader_identity: str) -> str:
