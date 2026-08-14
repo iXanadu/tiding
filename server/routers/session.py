@@ -126,8 +126,15 @@ async def certify_death(req: DeathCertRequest, request: Request):
     e.g. legacy/loopback), never silently absent.
     """
     principal = get_current_principal(request)
+    # The principal is a dict from the middleware, not an object — the first
+    # live cert (2026-08-14, death/claude-ab-macmini) recorded a whole dict
+    # repr in certified_by because getattr() silently missed. Name only.
+    if isinstance(principal, dict):
+        certifier = principal.get("name")
+    else:
+        certifier = getattr(principal, "name", None)
     certifier = (
-        getattr(principal, "name", None)
+        certifier
         or (str(principal) if principal else None)
         or getattr(request.state, "auth_source", "anonymous")
     )
