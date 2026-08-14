@@ -221,12 +221,15 @@ its own bug, AB's lane, unchanged by this design.
 
 ## Migration
 
-Order matters and is per-project: (1) drain corpse seats matching lane
-strings → (2) reserve lane strings in the allocator → (3) bridges extend
-listen_set + watchers follow (session-restart propagation) → (4) picker/relay
-consumer changes (AB) → (5) reply-default flip after the WIRE-1 gates hold
-fleet-wide. Steps 1–3 are additive and safe out of order EXCEPT the
-reservation, which must not precede the drain (same-string collision).
+Order matters and is per-project **[v3: reordered to agree with gate (e)]**:
+(1) drain corpse seats matching lane strings → (2) NEW BRIDGES deployed
+(reinterpretation + lane in listen_set; watchers follow at session restart)
+→ (3) reserve lane strings in the allocator → (4) picker/relay consumer
+changes (AB) → (5) reply-default flip after all WIRE-1 gates hold
+fleet-wide. Reservation must follow BOTH the drain (same-string collision)
+and the bridge deploy (gate e). The old-bridge refuse path (allocated
+occupant + `lane_reserved` notice) is the safety net for a straggler bridge
+that missed step 2 — never the planned transition.
 
 ## Formerly-open questions — settled in re-review **[v3]**
 

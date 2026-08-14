@@ -13,6 +13,33 @@
 > also start only when the owner names them ("let me drive"). Context:
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
+## Ratified & in build — immortal addresses (owner delegated ratification 2026-08-14)
+
+Design of record: `docs/design/immortal-addresses.md` v3+ (review cycle with
+agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
+Migration order is per-project and load-bearing: drain → new bridges →
+reserve → picker/relay (AB) → reply flip.
+
+- **LANE-0** Fix `test_memory_reply_addresses_project_not_reader_identity` —
+  fixture name-part collides with a project, so it asserts host-strip while
+  claiming project addressing. Add a seated-sender case FIRST; it pins
+  today's reply-to-seat contract until the gated flip.
+- **LANE-1** Typed `kind` on internal address records (ADDR-3, now required)
+  + lane-string reservation in the allocator; every seat-creating path
+  (claim, take_seat, session routers, launch-env, harness inject, admin
+  mint) gated and individually tested. Occupant is never the bare lane string.
+- **LANE-2** Bridge reinterpretation: injected identity names the LANE;
+  occupant allocated separately; lane + lane@host join listen_set; watchers
+  follow. Deploy gate (e): bridges before any reservation flips.
+- **LANE-3** Wake-on-new-only on lanes + one arm-time backlog digest (MSG-7
+  generalized); `authority-directive` is the age-proof wake override.
+- **LANE-4** Death-certificate intake — per-occupant, spawner-pushed, shape
+  in doc §6 (incl. the seat_for fallback guard: tombstone.seat is granted
+  occupant or empty, never the lane); lane_cursor succession rule.
+- **LANE-5** Reply-to-lane default flip — LAST, behind WIRE-1 gates (a)–(e).
+- AB's committed half (their tracker): picker lanes-never-corpses, huddle
+  relay re-resolve via session_key, tombstone lane+provider fields.
+
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
 - **MAIL-1** ⏸ Hold reaffirmed 2026-08-13: "useless to me as is — and I can't
