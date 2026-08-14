@@ -549,13 +549,30 @@ async def _claim_seat(project_dir: str | None) -> None:
         # seat and the branch below reverted the file the agent just wrote —
         # the tool and the heartbeat fighting, with the loser never told.
         runtime = current_seat() is not None
+        # LANE-2b (claim half of bridge reinterpretation): the implicit lane
+        # string — `<project>-<provider>`, what launchers inject — is a
+        # MAILBOX, not a seat preference. Post-reservation, offering it as
+        # preferred_seat trips the server's lane_reserved safety net on
+        # every heartbeat; the honest request is "allocate me an occupant".
+        # So when the locally-resolved identity IS the bare lane and no
+        # runtime seat was declared, send NO preference. Anything else — a
+        # cfg-declared identity, an env-injected ordinal, a runtime seat —
+        # is a genuine preference and still travels. Pre-flip servers are
+        # unaffected: no-preference has always meant "allocate", and the
+        # base name is the lowest candidate either way. Continuity is
+        # untouched — a session's held row is found by session_key before
+        # allocation ever looks at preferences.
+        implicit_lane = f"{project}-{resolve_provider()}"
+        send_preferred = preferred
+        if preferred == implicit_lane and not runtime:
+            send_preferred = None
         resp = await _client.session_claim(
             session_key=session_key,
             project=project,
             provider=resolve_provider(),
             session_nonce=_SESSION_NONCE,
             host=hostname(),
-            preferred_seat=preferred,
+            preferred_seat=send_preferred,
             project_dir=project_dir or None,
             runtime_seat=runtime,
         )

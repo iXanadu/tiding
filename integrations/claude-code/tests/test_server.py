@@ -1196,3 +1196,80 @@ async def test_background_beat_fires_without_any_tool_call(monkeypatch):
     assert all(pd is None for pd in calls), (
         "timer beats must anchor to the session's own project (ROST-2)"
     )
+
+
+@pytest.mark.asyncio
+async def test_lane2b_implicit_lane_is_not_offered_as_preference(monkeypatch):
+    """LANE-2b: the implicit lane (`<project>-<provider>`) is a mailbox, not
+    a seat preference. Offering it post-reservation trips the server's
+    lane_reserved notice on every heartbeat; the honest claim sends NO
+    preference and takes an allocation. Pre-flip servers behave identically
+    (no-preference has always meant allocate-lowest, base first)."""
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-k1")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity",
+                        lambda _d: ("proj-claude@host", []))
+    monkeypatch.setattr(srv, "current_seat", lambda: None)
+    captured = {}
+
+    async def _fake_claim(**kw):
+        captured.update(kw)
+        return {"seat": "proj-claude-2", "is_new": True}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat("/tmp/proj")
+    assert captured["preferred_seat"] is None, (
+        "bare-lane identity must claim WITHOUT a preference"
+    )
+
+
+@pytest.mark.asyncio
+async def test_lane2b_real_preferences_still_travel(monkeypatch):
+    """An ordinal / cfg-declared identity is a genuine preference and must
+    keep travelling — only the bare lane string is suppressed."""
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-k2")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity",
+                        lambda _d: ("proj-claude-4@host", []))
+    monkeypatch.setattr(srv, "current_seat", lambda: None)
+    captured = {}
+
+    async def _fake_claim(**kw):
+        captured.update(kw)
+        return {"seat": "proj-claude-4", "is_new": False}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat("/tmp/proj")
+    assert captured["preferred_seat"] == "proj-claude-4"
+
+
+@pytest.mark.asyncio
+async def test_lane2b_runtime_seat_equal_to_lane_still_travels(monkeypatch):
+    """A RUNTIME seat is a declaration, never suppressed — even if someone
+    deliberately took the lane-shaped name pre-flip. The server refuses it
+    post-flip with its own loud message (exact-or-refused), which is the
+    correct surface for that mistake — not silent client-side dropping."""
+    from engram_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_SEAT_CLAIMED", False)
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "claude-k3")
+    monkeypatch.setattr(srv, "derive_project_name", lambda _d: "proj")
+    monkeypatch.setattr(srv, "compute_identity",
+                        lambda _d: ("proj-claude@host", []))
+    monkeypatch.setattr(srv, "current_seat", lambda: "proj-claude")
+    captured = {}
+
+    async def _fake_claim(**kw):
+        captured.update(kw)
+        return {"seat": "proj-claude", "is_new": False}
+
+    monkeypatch.setattr(srv._client, "session_claim", _fake_claim)
+    await srv._claim_seat("/tmp/proj")
+    assert captured["preferred_seat"] == "proj-claude"
+    assert captured["runtime_seat"] is True
