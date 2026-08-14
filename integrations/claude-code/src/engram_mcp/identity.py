@@ -945,8 +945,16 @@ def reader_to_address(reader_identity: str) -> str:
     ``<name>`` part. Legacy ``machine:<host>`` identities (pre-admin rollout)
     pass through unchanged for backward compatibility with already-sent mail.
 
-    This is how ``memory_reply`` recovers the right ``to:`` for a reply —
-    replies go to the sender's *role*, not their specific session.
+    This is how ``memory_reply`` recovers the ``to:`` for a reply. Be precise
+    about what that yields: the name-part of the reader_identity. For an
+    UNSEATED sender that is the project (a loose, immortal address); for a
+    SEATED sender it is the SEAT — the mortal per-session ordinal, not the
+    project and not a lane. Adversarial review (2026-08-14) measured deployed
+    bridges relying on exactly this, so it is the wire contract until LANE-5
+    flips the default to reply-to-lane behind the WIRE-1 gates
+    (docs/design/immortal-addresses.md). An earlier version of this docstring
+    claimed "replies go to the sender's role, not their specific session" —
+    that was aspiration, not behavior.
     """
     if not reader_identity:
         return reader_identity

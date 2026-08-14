@@ -20,10 +20,6 @@ agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
 Migration order is per-project and load-bearing: drain → new bridges →
 reserve → picker/relay (AB) → reply flip.
 
-- **LANE-0** Fix `test_memory_reply_addresses_project_not_reader_identity` —
-  fixture name-part collides with a project, so it asserts host-strip while
-  claiming project addressing. Add a seated-sender case FIRST; it pins
-  today's reply-to-seat contract until the gated flip.
 - **LANE-1** Typed `kind` on internal address records (ADDR-3, now required)
   + lane-string reservation in the allocator; every seat-creating path
   (claim, take_seat, session routers, launch-env, harness inject, admin

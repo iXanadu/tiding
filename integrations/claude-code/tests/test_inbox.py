@@ -398,9 +398,14 @@ async def test_memory_ack(respx_mock):
 
 @respx.mock(base_url="http://localhost:8920")
 async def test_memory_reply_addresses_project_not_reader_identity(respx_mock):
-    """memory_reply must use the parent sender's loose address (project name),
-    NOT their fully-qualified reader_identity. Regression: a bug sent replies
-    to 'project@host' which no listen_set contained."""
+    """memory_reply must use the parent sender's LOOSE address (the name-part,
+    host stripped), NOT their fully-qualified reader_identity. Regression: a
+    bug sent replies to 'project@host' which no listen_set contained.
+
+    NOTE (LANE-0): this fixture's name-part happens to be a bare project, so
+    this test only proves host-stripping. It does NOT prove replies address
+    the project — for seated senders the loose address is the SEAT. See
+    test_memory_reply_seated_sender_routes_to_seat, which pins that case."""
     respx_mock.post("/memory/inbox").mock(
         return_value=httpx.Response(
             200,
@@ -446,6 +451,65 @@ async def test_memory_reply_addresses_project_not_reader_identity(respx_mock):
         f"Expected reply to address 'projgamma', got {sent_payload['to']!r}"
     )
     assert sent_payload["thread_id"] == "inbox/m1"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_seated_sender_routes_to_seat(respx_mock):
+    """LANE-0: pins TODAY'S reply contract for a SEATED sender, honestly.
+
+    The test above cannot catch seat routing: its fixture's name-part
+    ('projgamma') happens to BE a project, so a bare host-strip satisfies an
+    assertion named 'project'. Adversarial review (2026-08-14) proved the
+    deployed behavior is reply-to-SEAT for seated senders — the mortal
+    ordinal, not the project, not a lane. That IS the current wire contract
+    and deployed bridges depend on it, so this test asserts it as-is.
+
+    When LANE-5 flips the default to reply-to-lane (behind WIRE-1 gates
+    a–e, docs/design/immortal-addresses.md), THIS test is the one that must
+    change — deliberately, in the same commit as the flip.
+    """
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "messages": [
+                    {
+                        "id": "inbox/m9",
+                        "to": "engram",
+                        "from_": "projgamma-claude-2@macbook",  # seated sender
+                        "subject": "original",
+                        "body": "original body",
+                        "thread_id": None,
+                        "read_by": [],
+                        "archived": False,
+                        "created_at": "2026-08-14T00:00:00Z",
+                    }
+                ],
+            },
+        )
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/reply-9"})
+    )
+    respx_mock.post("/memory/inbox/inbox/m9/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/m9"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        result = await memory_reply(
+            message_id="inbox/m9",
+            body="ack",
+            project_dir="/Users/ixanadu/projects/engram",
+        )
+    assert "Replied to inbox/m9" in result
+    import json as _json
+    sent_payload = _json.loads(send_route.calls.last.request.content)
+    # Today's contract: the SEAT string, ordinal included. Not 'projgamma'.
+    assert sent_payload["to"] == "projgamma-claude-2", (
+        f"Reply-to-seat is the deployed contract until LANE-5; got "
+        f"{sent_payload['to']!r}"
+    )
 
 
 @respx.mock(base_url="http://localhost:8920")
