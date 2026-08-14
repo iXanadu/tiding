@@ -131,6 +131,37 @@ MAX_SUPERSEDED_NONCES = 8
 # bridge's identity.py; injected keys must never use it.
 GENERATED_KEY_PREFIX = "auto-"
 
+# LANE-1 (docs/design/immortal-addresses.md). Providers whose
+# `<project>-<provider>` string is an implicit LANE — the immortal mailbox for
+# "whoever is/next is the <provider> on <project>". When reservation is on
+# (settings.lane_reservation_enabled, default OFF until migration gate (e)),
+# the allocator never mints an occupant seat equal to a lane: the lane string
+# is an address, occupants are always distinguishable from it (reviewer
+# condition, v3: "occupants are NEVER the bare lane string").
+#
+# Server-side reservation can only enforce lanes the server can DERIVE —
+# implicit provider lanes. Repo-declared groups (`groups=` in .engram.cfg)
+# live client-side today; they join this predicate if/when groups are
+# registered server-side. Admin raw-row writes (PATCH /admin/memories) sit
+# outside the allocator by design and are the operator's own hands.
+LANE_PROVIDERS = {"claude", "grok", "codex", "cursor", "gpt"}
+
+
+def is_reserved_lane(seat: str, project: str) -> bool:
+    """True when ``seat`` is a lane string for ``project`` and reservation is on.
+
+    Admin stays exempt end-to-end: `admin` is one deliberately-shared role
+    (SEAT_EXEMPT_IDENTITIES) and never grows provider lanes — a
+    provider-suffixed admin lane would detach maintenance sessions from the
+    role again (SEAT-ADMIN-1).
+    """
+    from server.config import settings
+    if not settings.lane_reservation_enabled:
+        return False
+    if project in SEAT_EXEMPT_IDENTITIES:
+        return False
+    return any(seat == f"{project}-{p}" for p in LANE_PROVIDERS)
+
 
 def seat_candidates(project: str, provider: str, preferred: str | None = None):
     """Yield candidate seats, lowest ordinal first (low-water-mark allocation).
@@ -355,6 +386,25 @@ async def seat_claim(
             "warning": None,
         }
 
+    # LANE-1: a preferred name that is a reserved lane cannot be granted —
+    # the string is the immortal mailbox, not a person. This is the
+    # gate-(e) SAFETY NET for a straggler old bridge (whose injected
+    # identity still means "claim this seat"): it gets a working allocated
+    # occupant below plus this explicit notice — degraded-loud, never
+    # silently unseated, never a spawn error. A RUNTIME re-seat onto a lane
+    # is refused outright further down (deliberate choices get errors, not
+    # silent redirects — the ID-2 ruling).
+    lane_notice = None
+    if preferred and not runtime_seat and is_reserved_lane(preferred, project):
+        lane_notice = (
+            f"lane_reserved: {preferred!r} is a lane (immortal mailbox for "
+            f"this project's {provider} sessions), not a claimable seat; "
+            f"allocated an occupant seat instead. Mail to the lane still "
+            f"reaches this session — new bridges listen on the lane and are "
+            f"addressed at their occupant seat."
+        )
+        preferred = None
+
     now = datetime.now(timezone.utc)
     live_cutoff = now - timedelta(seconds=SEAT_LIVE_SECONDS)
     grace_cutoff = now - timedelta(seconds=SEAT_GRACE_SECONDS)
@@ -397,7 +447,9 @@ async def seat_claim(
             """,
             SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, session_key,
         )
-        warning = None
+        # A lane_reserved notice (set above) rides the same warning channel
+        # every claim consumer already renders — no new field, degraded-loud.
+        warning = lane_notice
         if held_rows:
             base = f"{project}-{provider}"
             # A runtime-taken seat outranks any allocated row this session
@@ -479,6 +531,20 @@ async def seat_claim(
                 # inherit its predecessor's in-flight rename request.
                 if (runtime_seat and preferred and preferred != seat
                         and same_process):
+                    # LANE-1: a deliberate rename onto a lane string is
+                    # REFUSED loudly (exact-or-refused already governs
+                    # take_seat; a lane is never grantable, whatever its
+                    # row state).
+                    if is_reserved_lane(preferred, project):
+                        return {"seat": seat, "is_new": False,
+                                "reclaimed_from": None,
+                                "warning": (
+                                    f"lane_reserved: {preferred!r} is a lane "
+                                    f"(immortal mailbox), not a takeable seat; "
+                                    f"still registered as {seat!r}. Pick a "
+                                    f"different name, or keep this one."
+                                ),
+                                "renamed_from": None}
                     new_meta = _meta(session_key, session_nonce, provider,
                                      host, superseded, runtime=True)
                     moved = await _try_insert(conn, preferred, project, new_meta)
@@ -590,6 +656,15 @@ async def seat_claim(
 
         # 2-5. Allocate: first free candidate, then first reclaimable one.
         for seat in seat_candidates(project, provider, preferred):
+            # LANE-1: reserved lane strings are never minted as occupant
+            # seats — skip before BOTH the insert and the takeover branch
+            # (a takeover would re-mint a not-yet-drained lane-named row as
+            # an occupant, which is the same defect through the other door).
+            # With reservation on, the base candidate IS the lane, so first
+            # occupants allocate from `<base>-2` upward; the ADDR-3 kind
+            # marker is what keeps surfaces rendering that correctly.
+            if is_reserved_lane(seat, project):
+                continue
             # The runtime flag marks a DELIBERATELY-CHOSEN name. It applies
             # only when the granted candidate IS the requested name — a
             # fallback to base/ordinal is an allocation, not a choice.

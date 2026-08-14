@@ -949,3 +949,100 @@ async def test_seat_without_presence_row_reads_watcher_none(client, db_pool):
     assert entry["watcher_alive"] is None
     assert entry["watcher_last_seen"] is None
     await _clear(db_pool)
+
+
+# --- LANE-1: lane-string reservation (docs/design/immortal-addresses.md) ----
+
+
+@pytest.fixture
+def lanes_on(monkeypatch):
+    from server.config import settings
+    monkeypatch.setattr(settings, "lane_reservation_enabled", True)
+
+
+@pytest.mark.asyncio
+async def test_flag_off_is_todays_behavior(client, db_pool):
+    """Default OFF: the base string is granted exactly as before LANE-1.
+    Migration order is drain -> new bridges -> reserve; until the flip this
+    code must be invisible."""
+    await _clear(db_pool)
+    r = await _claim(client, "laneoff-1")
+    assert r.json()["seat"] == f"{PROJ}-claude"
+    assert r.json()["warning"] is None
+
+
+@pytest.mark.asyncio
+async def test_reserved_lane_is_never_minted(client, db_pool, lanes_on):
+    """With reservation on, the lane string is skipped: first occupant gets
+    <base>-2, and the lane remains an address with no seat row."""
+    await _clear(db_pool)
+    r = await _claim(client, "laneres-1")
+    assert r.json()["seat"] == f"{PROJ}-claude-2"
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM memories WHERE scope='seat' AND project=$1 AND key=$2",
+            PROJ, f"seat/{PROJ}-claude",
+        )
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_old_bridge_preferring_the_lane_is_degraded_loud(
+    client, db_pool, lanes_on
+):
+    """Gate-(e) safety net: an old bridge injecting the lane as its identity
+    gets a WORKING allocated occupant plus an explicit lane_reserved notice —
+    never silently unseated, never a spawn error (reviewer condition, v3)."""
+    await _clear(db_pool)
+    r = await _claim(client, "oldbridge-1", preferred_seat=f"{PROJ}-claude")
+    body = r.json()
+    assert body["seat"] == f"{PROJ}-claude-2"
+    assert body["warning"] and "lane_reserved" in body["warning"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_reseat_onto_a_lane_is_refused(client, db_pool, lanes_on):
+    """memory_take_seat is exact-or-refused; a lane is never grantable. The
+    session keeps its seat and gets an actionable refusal, not a redirect."""
+    await _clear(db_pool)
+    first = (await _claim(client, "rt-1")).json()["seat"]
+    r = await _claim(client, "rt-1", preferred_seat=f"{PROJ}-grok",
+                     runtime_seat=True)
+    body = r.json()
+    assert body["seat"] == first
+    assert body["warning"] and "lane_reserved" in body["warning"]
+    assert body.get("renamed_from") is None
+
+
+@pytest.mark.asyncio
+async def test_takeover_never_remints_a_lane_named_corpse(
+    client, db_pool, lanes_on
+):
+    """A pre-reservation corpse still sitting on the lane string must not be
+    taken over as an occupant seat — same defect through the other door. The
+    newcomer allocates past it; the corpse ages out / is drained."""
+    await _clear(db_pool)
+    from server.config import settings
+    monkeypatch_off = settings.lane_reservation_enabled
+    settings.lane_reservation_enabled = False
+    try:
+        r0 = await _claim(client, "corpse-1")
+        assert r0.json()["seat"] == f"{PROJ}-claude"
+    finally:
+        settings.lane_reservation_enabled = monkeypatch_off
+    await _age_seat(db_pool, f"{PROJ}-claude", SEAT_GRACE_SECONDS + 3600)
+    r = await _claim(client, "newcomer-1")
+    body = r.json()
+    assert body["seat"] == f"{PROJ}-claude-2"
+    assert body["reclaimed_from"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_is_exempt_from_lanes(client, db_pool, lanes_on):
+    """No admin-<provider> lanes, ever (SEAT-ADMIN-1): admin is one shared
+    role and reservation must not touch it."""
+    r = await client.post("/session/claim", json={
+        "session_key": "adm-lane-1", "project": "admin", "provider": "claude",
+        "preferred_seat": "admin",
+    })
+    assert r.json()["seat"] == "admin"

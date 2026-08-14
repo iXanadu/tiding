@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     inbox_autoresolve_interval_hours: int = 6
     inbox_autoresolve_after_hours: int = 72
 
+    # LANE-1 (docs/design/immortal-addresses.md): reserve lane strings —
+    # `<project>-<provider>` — so the seat allocator never mints an occupant
+    # seat equal to a lane (the immortal mailbox). DEFAULT OFF: the ratified
+    # migration order is drain → new bridges → reserve, so this flips only
+    # after gate (e) holds (deployed bridges reinterpret the injected
+    # identity as a lane). An old bridge claiming a reserved string gets an
+    # allocated occupant seat plus an explicit `lane_reserved` notice —
+    # degraded-loud, never silently unseated (reviewer condition, v3).
+    lane_reservation_enabled: bool = False
+
     # Search tuning
     vector_threshold: float = 0.35
     trigram_weight: float = 0.15

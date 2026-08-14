@@ -20,10 +20,6 @@ agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
 Migration order is per-project and load-bearing: drain → new bridges →
 reserve → picker/relay (AB) → reply flip.
 
-- **LANE-1** Typed `kind` on internal address records (ADDR-3, now required)
-  + lane-string reservation in the allocator; every seat-creating path
-  (claim, take_seat, session routers, launch-env, harness inject, admin
-  mint) gated and individually tested. Occupant is never the bare lane string.
 - **LANE-2** Bridge reinterpretation: injected identity names the LANE;
   occupant allocated separately; lane + lane@host join listen_set; watchers
   follow. Deploy gate (e): bridges before any reservation flips.
