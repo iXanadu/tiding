@@ -1,150 +1,189 @@
 # Immortal Addresses — mail is never sent to a mortal thing
 
-**Status: DRAFT for adversarial review. Not ratified, not scheduled.**
-Author: engram-claude-3, 2026-08-14, from a first-principles session with the
-owner. Reviewer requested: agentbeast-grok (consumer-side half is theirs).
+**Status: DRAFT v2, revised after adversarial review. Not ratified, not
+scheduled.** Author: engram-claude-3, 2026-08-14. Reviewer: agentbeast-grok-4
+(review inbox/f23cbc72, verdict "do not schedule as written; the rule itself
+should survive"). v2 incorporates every accepted kill; deltas marked **[v2]**.
 
 ## The rule under test
 
 > Mail is only ever sent to **immortal addresses**. Mortal things — sessions —
-> are **provenance** (who a message is *from*), never destinations.
+> are **provenance** (who a message is *from*) and **occupancy** (who is on a
+> lane right now), never the default destination.
 
-An address is *immortal* when it cannot die, cannot be allocated, cannot be
-locked, and cannot be held by exactly one process: the project channel
-(`softphone`), a declared sub-team group (`beastchat-app`), a **lane**
-(`softphone-grok`), a machine (`machine:macmini`), a human (`ixanadu`), a
-`#channel`. An address is *mortal* when it names one session: a seat
-(`agentbeast-grok-4`).
+Immortal: the project channel (`softphone`), declared sub-team groups
+(`beastchat-app`), **lanes** (`softphone-grok`), machines, humans, `#channels`.
+Mortal: a session's occupant identity (`agentbeast-grok-4`).
 
-Today's model lets mail target both. Every messaging pathology we have
-measured traces to the mortal half.
+**[v2] Seat DMs remain first-class, not vestigial.** Two legitimate uses
+survive review: (1) targeting one specific occupant when a lane has two
+(build vs audit in one folder — the founding case); (2) mail that must
+die with its recipient (one-shot tokens, parked confirmations — content the
+next occupant must NOT read). The doctrine changes the *default* and the
+ergonomics, not the legality.
 
-## Evidence (all measured, 2026-08-14 or earlier)
+## Scope — what this fixes and what it does not **[v2: overclaim retracted]**
 
-- 133 open never-read messages at `softphone-claude` — all sent in windows
-  when no session held the seat (105 peer messages Aug 4–7 incl. a shutdown
-  flurry; 9 owner directives Aug 9–10 that black-holed). The same address
-  served 1,981 read-and-resolved messages in the same fortnight: the lane
-  worked, the *mortality* failed.
-- R8 (correct rule: a stranger never inherits a dead session's mail) turns
-  every such pile into a **permanent name lock**: the mail waits for a reader
-  R8 itself guarantees can never exist. `agentbeast-grok-2/-3/-6` are locked
-  today; the stale sweep is powerless (it only drains *read* mail, by design).
-- Ordinal creep (`agentbeast-grok-4`, `engram-claude-3`) is the visible
-  symptom: respawns of the same *lane* treated as strangers competing for a
-  mortal name.
-- 2026-08-14 morning: mail to `beastchat-app@macmini` reached nobody because
-  the natural team address was configured as a (shadowable, mortal-ish)
-  `inbox_identity` instead of a group. Fixed by declaring it a GROUP-1 group —
-  i.e. by making it immortal. The fix for that incident *is* this doctrine.
+Fixes the measured mortality class: mail stranding at dead seats (133
+never-read at `softphone-claude` vs 1,981 read at the same address — the lane
+worked, the mortality failed), R8 name-locks (`agentbeast-grok-2/-3/-6`),
+ordinal creep, successor-walks-past-backlog.
 
-## What stays exactly as it is
+Explicitly does NOT fix, and must not be sold as fixing: RELAY-1
+(envelope-vs-body authorship), IDENT-1 (spawn env overriding repo-declared
+identity — owner's open decision), cursor/codex env-propagation quirks,
+huddle channel-vs-private bleed. Those stay open on their own terms.
 
-- **Seats keep existing.** They remain the `From:` identity, the presence /
-  roster unit, the self-echo filter key, and the collision-detection subject.
-  They stop being mailboxes; they lose nothing else.
-- **Channel semantics** (owner's grounding, 2026-08-14): the project dictates
-  the channel; channel mail is never drained-as-undeliverable; it queues for
-  future occupants. Already true; becomes the *only* delivery model.
-- The three-axes doctrine (principal ⊥ project ⊥ address) is unchanged — this
-  narrows which addresses may appear in `to:`, nothing else.
+## Grounding (owner, 2026-08-14)
 
-## The one hard case, and its channel-shaped answer
+The project dictates the channel; channel mail is never drained-as-
+undeliverable; it queues for future occupants; every session listens at its
+channel level(s) AND its occupant level. Already true; becomes the primary
+delivery model.
 
-"Exactly one of N co-located sessions must act" (audit vs build in one
-folder; "grok, you take the API"). This is the founding case for seats-as-
-destinations. It is really a request for a **narrower channel**: declare the
-lane (`softphone-grok`) as an immortal group every successive grok session on
-softphone listens on. GROUP-1 already implements the mechanism. Lane channels
-give targeted delivery without pinning mail to a process.
+## Architecture
 
-Residual: two live sessions in one lane (deliberate co-work within a
-provider) still need discrimination — that is what per-session seats remain
-for, and it is the *only* case where a sender should ever consider one, and
-even then convening a private thread of live sessions (participants) is
-usually righter than a bare seat DM.
+Three address strata, all visible in one flat send-string space (ADDR-3's
+`kind` field makes them legible to pickers):
 
-## What the rule dissolves
+1. **Channels** (project, declared groups, machine, #channels) — immortal,
+   many listeners, broadcast semantics. Unchanged.
+2. **Lanes** (`<project>-<provider>`, or repo-declared) — immortal, "whoever
+   is/next is the <provider> on <project>". Mail queues across occupancy
+   gaps. THE default for directed sends.
+3. **Occupants** (today's seats) — mortal, exactly-one-session, allocated by
+   the registry exactly as today. `From:` identity, presence, self-echo,
+   collision detection, huddle pinning, die-with-recipient mail.
 
-| Problem | Under immortal-only delivery |
-|---|---|
-| Mail strands at dead seats | impossible — destinations cannot die |
-| R8 name locks / permanent quarantine | moot — nothing to inherit, nothing locked |
-| Dead-address drain sweep | shrinks to a one-time historical cleanup |
-| release-on-terminate urgency | cosmetic ordinal hygiene, not correctness |
-| "stranger inherits stale mail" fear | inverted: a lane's next occupant reading the lane's log is the *intended* reader |
-| MSG-7 coverage gaps | lane backlog surfaces to every next occupant at watcher arm |
+### **[v2] The lane/seat string split — the migration hazard, named**
 
-## The two real design problems (review here first)
+Reviewer's kill: today the lane string IS a seat string. AB already injects
+`ENGRAM_INBOX_IDENTITY=<project>-<provider>` every spawn (engram_env.py:239);
+engram treats it as an allocable seat, the corpse holds it, R8 locks it, the
+newcomer gets an ordinal. Declaring a GROUP with the same string while the
+corpse seat exists is a name collision, not a migration.
 
-### 1. Read-state on lane channels
-Acks are per-reader. A lane's next occupant is a *new* reader, so the entire
-lane history presents as personally-unread — the "walk past 105 messages"
-problem becomes universal instead of occasional. Options, none chosen:
-(a) a **lane read cursor**: read-state keyed to the lane, inherited by the
-next occupant (succession = one logical reader);
-(b) rely on the existing read-by-anyone + 72h autoresolve sweep (weak: 72h
-lag, and "read by a *previous* occupant" may be exactly what the next one
-needs to see for directives);
-(c) split by intent: directives (`action`/`proceed`/`escalate`) inherit
-UNREAD until handled (ack=handled survives), narrative (`fyi`) inherits the
-predecessor's read-state.
-(c) matches the fleet's ack=handled discipline and MSG-7; it is the current
-favourite but unreviewed.
+Resolution (one flat namespace kept deliberately — senders must not need to
+know an address's kind to use it):
+- **Lane strings become reserved**: once a lane exists (implicit
+  `<project>-<provider>` or declared), the seat allocator REFUSES to mint a
+  seat with that exact string. Occupant identities are always
+  distinguishable from the lane (ordinal or otherwise).
+- **One-time corpse drain precedes reservation** per project: existing
+  locked seats matching lane strings are drained (manual prototype already
+  run on `softphone-claude`, marker `dead-address-drain`) and released.
+- The injected `ENGRAM_INBOX_IDENTITY=<lane>` is REINTERPRETED by the bridge:
+  it names the lane to listen on; the occupant identity is allocated
+  separately by the registry. No AB spawn change required for the 1:1 case —
+  the env contract's meaning shifts server/bridge-side. (AB reviewer input
+  reflected: "the consumer half is not 'inject the lane' — we already do —
+  it is 'stop making the lane string a seat'.")
 
-### 2. Occupancy vs address (exclusivity)
-Seats are allocated — the register guarantees one holder. Channels are open —
-nothing stops two sessions listening on one lane, and nothing *says who is
-driving the lane*. Proposed split: the **address** is the immortal mailbox;
-**occupancy** is what the existing seat registry already tracks (which
-session, which key, since when). The roster answers "who is on lane X now" —
-it already nearly does. Needs: a lane field on presence/seat rows so the
-roster can render lane → current occupant(s) explicitly, and a collision
-signal when a lane has two occupants that did not intend co-work.
+listen_set becomes: `[occupant, lane, lane@host, project, project@host,
+machine:host, occupant@host, #channels, declared groups]`.
 
-## Consumer-side half (AgentBeast's, needs their review)
+### **[v2] Implicit vs explicit lanes**
+Implicit `<project>-<provider>` is the default (explicit-only recreates
+beastchat-app's "nobody declared it"). Repo-declared groups (`groups=`) and
+`inbox_identity` remain honored — and whether AB's spawn env must learn to
+honor them is IDENT-1, the owner's open decision, not absorbed here.
+**Admin is exempt**: no `admin-<provider>` lanes ever — admin is one shared
+role with a host axis (SEAT-ADMIN-1); a provider lane would detach it again.
 
-- Spawn env: launcher injects the lane (stable across respawns) rather than —
-  or in addition to — a per-spawn unique seat. The stable-key fix (SEAT-6)
-  becomes *the same fix*: lane is the stable thing, key can stay per-spawn.
-- Picker / Sessions surfaces: render lanes with occupants, not bare seats.
-- Huddle membership: convene lanes, not seats — a member that respawns
-  mid-huddle keeps receiving without HUD-2 side-doors.
-- Relay: `relayed_from` (RELAY-1) composes cleanly — lane in the envelope.
+## Problem 1 — read-state on lanes **[v2: (c) killed, replaced]**
 
-## Transport changes (engram's half, all additive)
+v1's intent-split inheritance is dead. Three accepted kills: (1) succession
+vs second-live-colleague is unanswerable from inside the store — inheriting
+on new-reader STEALS mail from a live colleague; (2) ack must not be
+overloaded to mean "handled" — per-reader ack is load-bearing for co-work;
+handled-state, if wanted, is a NEW verb; (3) wake-on-history = wake storm
+(105 queued messages must not be 105 wakes).
 
-1. Lane channels = GROUP-1 groups, possibly auto-declared as
-   `<project>-<provider>` per provider seen on a project (or explicit
-   `groups =` only — reviewer input wanted: implicit lanes risk surprise
-   listeners, explicit lanes risk the beastchat-app "nobody declared it"
-   incident recurring per-provider).
-2. Reply routing default flips: replies target the sender's *lane/channel*,
-   not their seat. (Today: seat. Config-gated flip, deprecation per WIRE-1 —
-   deployed readers, not maintainers, define the contract.)
-3. ADDR-2 advisory gains a nudge: a `to:` matching a live seat warns "consider
-   the lane <x>" — warn, never reject (seat DMs stay legal for the residual
-   case).
-4. Read-state design from problem 1.
-5. One-time historical drain of existing dead-seat piles (manual prototype
-   already run on `softphone-claude`, marker `dead-address-drain`).
+Replacement design:
+- **Per-reader acks, unchanged**, for all concurrent occupants.
+- **Succession inheritance only on a death certificate from the spawner.**
+  AB certifies (tombstone) that occupant K is dead; the next occupant on the
+  lane may then inherit K's read-state. No certificate → no inheritance →
+  the backlog presents as unread, honestly. The store never infers death
+  (ratified liveness split); it CONSUMES the spawner's verdict.
+  Hand-launched sessions have no certifier → no inheritance; their
+  successor sees backlog-as-unread, mitigated by the digest below.
+- **Wake-on-new-only**: lane mail wakes an occupant only if `created_at` is
+  after that occupant's start. Older open lane mail surfaces as ONE digest
+  at watcher arm (MSG-7 pattern generalized from directives to lane
+  backlog), never as N wakes.
+
+## Problem 2 — occupancy **[v2: authority relocated]**
+
+"Who is driving lane X" is an orchestration answer, not a store answer. The
+store's roster renders facts (which occupant identities exist on the lane,
+last spoke, watcher beat) and a collision signal when two occupants share a
+lane without declared co-work; the AUTHORITY for exclusive drive, takeover,
+and death is the spawner (tombstones override freshness — AB's PICK-REG-1b
+lesson, imported wholesale). A sender needing exactly-one uses the occupant
+address; a lane is by construction "whoever is/will be there."
+
+## Huddles **[v2: lane-only membership killed]**
+
+Membership is **lane OR occupant, both first-class**. Lane membership =
+"whoever is the grok on this project" (survives respawn without side-doors).
+Occupant membership = "this specific session" (required for two-jobs-one-
+folder: build vs audit share a lane and must be separately addable).
+The respawn-dark-member bug is AB's keying fix (persist session_key,
+re-resolve occupant at relay time) and does not require immortal
+destinations. SEAT-5/HUD-2 interactions stay on their own tracks.
+
+## SEAT-6 **[v2: absorption claim retracted]**
+
+Stable `session_key` across respawn remains mandatory — it is the continuity
+contract (reclaim-by-key), the huddle re-resolve join, and the thing whose
+absence produced `agentbeast-grok-2…-9` in one evening. Lanes do not replace
+it. SEAT-6 (allocate the handle before building env on grok's start path) is
+its own bug, AB's lane, unchanged by this design.
+
+## Transport changes (engram's half)
+
+1. Lane recognition + string reservation + listen_set extension (above).
+2. **Reply routing**: default flips to the sender's LANE (fallback: project
+   channel when no lane resolves). Today's behavior is reply-to-seat —
+   verified: `reader_to_address` strips `@host` only; the guarding test
+   (`test_memory_reply_addresses_project_not_reader_identity`) fixtures a
+   sender whose name-part IS a project, so it passes on host-strip while
+   asserting nothing about seats. Fix the test first (seated-sender case),
+   then flip behind the WIRE-1 gates below.
+3. **WIRE-1 deprecation gates** (all measured by the reviewer, adopted as
+   preconditions): no flip until (a) deployed bridges' listen_sets include
+   the lane, (b) watchers follow it, (c) AB picker offers lanes and never
+   offers a locked corpse as if it were a person, (d) AB huddle relay
+   re-resolves occupants instead of DMing stored seat strings.
+4. **ADDR-2 refinement**: warn on seat-addressed sends when a lane exists;
+   **reject only sends to a dead/locked seat** — mail R8 provably makes
+   undeliverable-forever is the one case where warn-only just recreates the
+   pile. (Narrow, deliberate revision of the warn-never-reject stance:
+   rejection requires proof of permanent undeliverability, nothing less.)
+5. Wake-on-new-only + arm-time lane digest (Problem 1).
+6. Death-certificate intake: an endpoint/field by which the SPAWNER records
+   occupant death; consumed by succession inheritance. Facts stored, never
+   inferred.
+7. One-time historical corpse drain per project at lane activation.
 
 ## Migration
 
-Strictly additive; nothing breaks on day one. Declare lanes → senders shift
-by convention (advisories nudge) → reply-default flips after a deprecation
-window sized to deployed bridges (WIRE-1) → seat mailboxes wither naturally.
-No schema change identified so far; lane read-cursor (problem 1) may need one
-row per (lane, cursor).
+Order matters and is per-project: (1) drain corpse seats matching lane
+strings → (2) reserve lane strings in the allocator → (3) bridges extend
+listen_set + watchers follow (session-restart propagation) → (4) picker/relay
+consumer changes (AB) → (5) reply-default flip after the WIRE-1 gates hold
+fleet-wide. Steps 1–3 are additive and safe out of order EXCEPT the
+reservation, which must not precede the drain (same-string collision).
 
-## Open questions for review
+## Open questions for re-review
 
-- Does the lane read-cursor break the "another session on the same address
-  still sees unacked messages" property anywhere it is load-bearing?
-- Are there senders that legitimately *need* a message to die with its
-  recipient (secrets? one-shot tokens)? If so, seat DMs are that channel and
-  must stay first-class, not vestigial.
-- Wake economics on busy lane channels with `action` intent — is per-intent
-  gating sufficient, or do lanes need a wake policy of their own?
-- Anything in the deployed bridge that subscripts reply-to-seat behavior
-  (WIRE-1 check before the default flips).
+- Death-certificate shape: per-occupant tombstone vs per-lane "occupancy
+  ended" — and what a hand-launched session's successor does with no
+  certifier (live with backlog-as-unread + digest?).
+- Reserved-string enforcement: allocator-refusal only, or also a registry
+  `kind` marker (ADDR-3) so surfaces can render lane vs occupant?
+- Does wake-on-new-only need an owner override (a directive the owner WANTS
+  to wake the next occupant regardless of age)?
+- Reply-to-lane when the sender was an occupant addressed directly: should a
+  seat-DM'd conversation stay seat-pinned for its thread lifetime?
