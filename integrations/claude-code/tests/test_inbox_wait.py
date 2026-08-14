@@ -6,7 +6,13 @@ import httpx
 import respx
 
 from engram_mcp.client import MemoryClient
-from engram_mcp.inbox_wait import _emit, _emit_queued_directives, _poll, _run
+from engram_mcp.inbox_wait import (
+    _emit,
+    _emit_backlog_digest,
+    _is_immortal_address,
+    _poll,
+    _run,
+)
 
 
 def _msg(i, **kw):
@@ -173,61 +179,109 @@ async def test_run_seeds_backlog_then_wakes_only_on_new(respx_mock, capsys):
     assert json.loads(out)["id"] == "inbox/2"
 
 
-# --- MSG-7: directives queued across a restart must not drain as history ---
+# --- LANE-3: arm-time backlog digest over immortal addresses ---------------
+# Subsumes MSG-7's queued-directives line: ONE arm-time surface, never two.
+# Wake path stays wake-on-new-only (created_at after ARM time, the seed
+# boundary). The unread state is the discriminator, per-reader, as today.
 
-def test_queued_directives_summary_counts_only_directive_intents(capsys):
-    """MSG-7: mail sent into a restart window is delivered but wakes nobody,
-    and /startup reads it as history. The seed emits ONE summary for unacked
-    directive-intent mail — the ack is the discriminator between "handled by
-    the predecessor" (acked, absent here) and "read past as context" (open).
-    Legacy no-intent mail is the pre-MSG-7 status quo and stays swallowed.
-    """
+def test_digest_is_one_line_counts_only_immortal(capsys):
+    """Mixed backlog → exactly one digest line (counts + senders, no bodies),
+    covering lane / project / group / #channel; seat-DMs and machine: never
+    enter it (seat-pinned threads die with their occupant — settled)."""
     backlog = [
-        _msg(1, intent="action"),
-        _msg(2, intent="escalate"),
-        _msg(3, intent="proceed"),
-        _msg(4, intent="authority-directive"),
-        _msg(5),                    # legacy, no intent → not in the summary
-        _msg(6, intent="fyi"),      # informational → never
+        _msg(1, to="proj", intent="action"),
+        _msg(2, to="proj-claude"),
+        _msg(3, to="proj-claude", **{"from": "other@box"}),
+        _msg(4, to="proj-app", intent="fyi"),
+        _msg(5, to="#devagents"),
+        _msg(6, to="proj-claude-2"),          # occupant seat-DM → excluded
+        _msg(7, to="machine:macmini"),        # machine → excluded
     ]
-    n = _emit_queued_directives(backlog)
-    assert n == 4
+    n = _emit_backlog_digest(backlog, occupant="proj-claude-2", project="proj")
+    assert n == 5
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 1, "one summary line, never a firehose"
+    assert len(lines) == 1, "one digest line, never a firehose"
     obj = json.loads(lines[0])
-    assert obj["event"] == "queued-directives"
-    assert obj["count"] == 4
-    assert {m["id"] for m in obj["messages"]} == {
-        "inbox/1", "inbox/2", "inbox/3", "inbox/4"}
+    assert obj["event"] == "backlog-digest"
+    assert set(obj["addresses"]) == {"proj", "proj-claude", "proj-app",
+                                     "#devagents"}
+    assert obj["addresses"]["proj-claude"]["unread_count"] == 2
+    assert obj["directive_count"] == 1          # action only; fyi never
+    assert "body" not in json.dumps(obj)
 
 
-def test_queued_directives_silent_when_none(capsys):
-    assert _emit_queued_directives([_msg(1), _msg(2, intent="fyi")]) == 0
+def test_105_messages_are_one_line_with_a_count(capsys):
+    backlog = [_msg(i, to="softphone-claude") for i in range(105)]
+    assert _emit_backlog_digest(backlog, occupant="softphone-claude-2",
+                                project="softphone") == 105
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    obj = json.loads(lines[0])
+    assert obj["addresses"]["softphone-claude"]["unread_count"] == 105
+
+
+def test_authority_directive_wakes_individually_age_ignored(capsys):
+    """authority-directive ONLY gets the individual age-proof wake; several
+    collapse to ONE event carrying the newest + a count. Digest and the
+    authority event are at most two lines total — never queued-directives."""
+    backlog = [
+        _msg(1, to="proj", intent="authority-directive",
+             created_at="2026-07-01T00:00:00Z"),
+        _msg(2, to="proj", intent="authority-directive",
+             created_at="2026-08-01T00:00:00Z"),
+        _msg(3, to="proj", intent="action"),
+    ]
+    _emit_backlog_digest(backlog, occupant="proj-claude", project="proj")
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 2
+    events = {json.loads(l)["event"] for l in lines}
+    assert events == {"backlog-digest", "authority-directive-queued"}
+    auth = next(json.loads(l) for l in lines
+                if json.loads(l)["event"] == "authority-directive-queued")
+    assert auth["count"] == 2
+    assert auth["id"] == "inbox/2", "newest wins the detail slot"
+    assert "body" not in auth
+
+
+def test_digest_silent_when_backlog_empty_or_all_seat_dms(capsys):
+    assert _emit_backlog_digest([], "proj-claude", "proj") == 0
+    assert _emit_backlog_digest(
+        [_msg(1, to="proj-claude-2")], occupant="proj-claude-2",
+        project="proj") == 0
     assert capsys.readouterr().out == ""
 
 
-def test_queued_directives_detail_caps_at_ten(capsys):
-    backlog = [_msg(i, intent="action") for i in range(15)]
-    assert _emit_queued_directives(backlog) == 15
-    obj = json.loads(capsys.readouterr().out.strip())
-    assert obj["count"] == 15, "the COUNT is the truth"
-    assert len(obj["messages"]) == 10, "the detail list is a preview, capped"
+def test_unseated_session_keeps_its_project_channel_in_the_digest(capsys):
+    """Unseated: the reader name IS the project — a channel, not a seat.
+    The occupant exclusion must not eat it."""
+    assert _emit_backlog_digest(
+        [_msg(1, to="proj")], occupant="proj", project="proj") == 1
+    assert json.loads(capsys.readouterr().out)["addresses"]["proj"][
+        "unread_count"] == 1
+
+
+def test_is_immortal_address_edges():
+    assert _is_immortal_address("proj@host", "proj-claude", "proj")
+    assert not _is_immortal_address("", "x", "y")
+    assert not _is_immortal_address("machine:host", "x", "y")
+    assert not _is_immortal_address("proj-claude@host", "proj-claude", "proj")
+    assert _is_immortal_address("proj@host", "proj", "proj")
 
 
 @respx.mock(base_url="http://localhost:8920")
-async def test_oneshot_wakes_immediately_on_queued_directive(respx_mock, capsys):
-    """One-shot mode: a directive already queued at start IS the wake — the
-    watcher must not sit waiting for the NEXT message while an unhandled
-    instruction sits in the backlog it just seeded past."""
+async def test_oneshot_wakes_immediately_on_queued_backlog(respx_mock, capsys):
+    """One-shot mode: a digest-worthy backlog at start IS the wake — the
+    watcher must not sit waiting for the NEXT message while unread immortal
+    mail sits in the backlog it just seeded past."""
     respx_mock.post("/memory/inbox").mock(
         return_value=httpx.Response(200, json={"status": "ok", "messages": [
-            _msg(1, intent="action")]})
+            _msg(1, to="engram", intent="action")]})
     )
     rc = await _run(_Args(include_existing=False))
     assert rc == 0
     obj = json.loads(capsys.readouterr().out.strip())
-    assert obj["event"] == "queued-directives"
-    assert obj["messages"][0]["id"] == "inbox/1"
+    assert obj["event"] == "backlog-digest"
+    assert obj["addresses"]["engram"]["unread_count"] == 1
 
 
 @respx.mock(base_url="http://localhost:8920")
@@ -237,16 +291,16 @@ async def test_follow_emits_summary_then_new_mail(respx_mock, capsys):
     route = respx_mock.post("/memory/inbox")
     route.side_effect = [
         httpx.Response(200, json={"status": "ok", "messages": [
-            _msg(1, intent="action")]}),                              # seed
+            _msg(1, to="engram", intent="action")]}),                 # seed
         httpx.Response(200, json={"status": "ok", "messages": [
-            _msg(1, intent="action"), _msg(2)]}),                     # poll: NEW inbox/2
+            _msg(1, to="engram", intent="action"), _msg(2)]}),        # poll: NEW inbox/2
     ]
     rc = await _run(_Args(include_existing=False, follow=True, timeout=0.001))
     assert rc == 0
     lines = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
-    assert lines[0]["event"] == "queued-directives"
+    assert lines[0]["event"] == "backlog-digest"
     assert lines[1]["id"] == "inbox/2"
-    assert len(lines) == 2, "the seeded directive must not fire twice"
+    assert len(lines) == 2, "the seeded backlog must not fire twice"
 
 
 @respx.mock(base_url="http://localhost:8920")

@@ -143,65 +143,138 @@ def _emit(msg: dict) -> None:
     )
 
 
-# Intents whose queued presence at watcher start is worth one summary wake.
-# fyi is deliberately absent (informational, never wakes — MSG-3); an omitted
-# intent is legacy default and DOES wake live, but seeding past legacy mail is
-# the pre-MSG-7 status quo and most of it is chatter — the summary is for mail
-# that states its own urgency.
-_DIRECTIVE_INTENTS = {"action", "proceed", "escalate", "authority-directive"}
+# Intents counted as directives in the arm-time digest. fyi is deliberately
+# absent (informational, never wakes — MSG-3). authority-directive is NOT
+# here: it gets its own individual age-proof wake (LANE-3, owner override —
+# the one intent whose queued presence must wake, however old).
+_DIGEST_DIRECTIVE_INTENTS = {"action", "proceed", "escalate"}
+_AUTHORITY_INTENT = "authority-directive"
 
 
-def _emit_queued_directives(backlog: list) -> None:
-    """MSG-7: surface directives that were queued while no watcher was armed.
+def _is_immortal_address(to: str, occupant: str, project: str) -> bool:
+    """Immortal = an address that outlives any one session: the project
+    channel, a lane, a declared group, a #channel. Excluded: ``machine:``
+    and the session's own occupant seat (seat-DM threads are seat-pinned and
+    die with their occupant — settled in review; they never enter the
+    digest). When the session is unseated its reader name IS the project —
+    a channel — so the occupant exclusion applies only when they differ."""
+    if not to:
+        return False
+    if to.startswith("machine:"):
+        return False
+    base = to.split("@", 1)[0]
+    if base == occupant and occupant != project:
+        return False
+    return True
 
-    Returns the number of queued directives (0 when the line was not emitted),
-    so one-shot mode can treat a non-empty summary as its wake.
 
-    Mail that arrives during a restart window is delivered but wakes nobody —
-    and the next session's /startup sweep reads it as HISTORY, so a directive
-    sent to the predecessor becomes context instead of an instruction. The
-    sender saw a successful send; the reader saw background. Neither errored.
+def _emit_backlog_digest(backlog: list, occupant: str, project: str) -> int:
+    """LANE-3: ONE digest line for pre-arm backlog on immortal addresses,
+    plus at most ONE individual wake for an unread authority-directive.
 
-    The seed still swallows the backlog (a startup watcher must not firehose
-    the mail the session already saw at /startup) — but unacked directive-
-    intent mail gets ONE summary line. The ack is the discriminator, and it is
-    the right one: mail the previous session actually HANDLED is acked and
-    does not appear here; mail it merely read past is still open and does.
-    One line, not one per message: a week-old unacked backlog must not turn
-    watcher-arm into thirty wakes.
+    Generalizes and REPLACES MSG-7's queued-directives line (one arm-time
+    surface, never two): mail that arrives while no watcher is armed wakes
+    nobody, and a successor's /startup sweep reads it as history — so the
+    backlog on the addresses that outlive sessions (lane, project channel,
+    groups, #channels) is surfaced as one summary, counts and senders only,
+    never bodies. 105 queued messages are one line with count 105, not 105
+    wakes — the wake path stays wake-on-new-only (created_at after ARM time,
+    the seed boundary this watcher already implements).
+
+    The unread state is the discriminator (per-reader read state, as today):
+    mail a previous occupant actually read does not appear in the unread
+    poll; mail nobody ever saw does. A mid-session re-arm re-digesting
+    still-unread immortal mail is the same known behavior MSG-7 had.
+
+    Exception, by design (owner override, existing intent, no new knob): an
+    unread ``authority-directive`` gets ONE individual wake regardless of
+    age — id + from + subject, no body; several collapse into one event
+    carrying the newest plus a count.
+
+    Returns the number of digest-worthy messages (0 = nothing emitted), so
+    one-shot mode can treat a non-empty digest as its wake.
     """
-    queued = [
+    immortal = [
         m for m in backlog
-        if (m.get("intent") or "").strip().lower() in _DIRECTIVE_INTENTS
+        if _is_immortal_address(m.get("to") or "", occupant, project)
     ]
-    if not queued:
-        return 0
-    print(
-        json.dumps(
-            {
-                "event": "queued-directives",
-                "note": (
-                    "these arrived while no watcher was armed (e.g. during a "
-                    "restart) and woke nobody — read them as DIRECTIVES, not "
-                    "history; handle via memory_inbox"
-                ),
-                "count": len(queued),
-                "messages": [
-                    {
-                        "id": m.get("id"),
-                        "from": m.get("from") or m.get("from_"),
-                        "subject": m.get("subject", ""),
-                        "intent": m.get("intent"),
-                        "created_at": m.get("created_at"),
-                    }
-                    for m in queued[:10]
-                ],
-            },
-            separators=(",", ":"),
-        ),
-        flush=True,
-    )
-    return len(queued)
+    authority = [
+        m for m in backlog
+        if (m.get("intent") or "").strip().lower() == _AUTHORITY_INTENT
+    ]
+    emitted = 0
+    if immortal:
+        per_addr: dict = {}
+        for m in immortal:
+            a = per_addr.setdefault(
+                m.get("to"),
+                {"unread_count": 0, "oldest_at": None, "newest_at": None,
+                 "senders": {}},
+            )
+            a["unread_count"] += 1
+            c = m.get("created_at")
+            if c:
+                a["oldest_at"] = min(filter(None, [a["oldest_at"], c]))
+                a["newest_at"] = max(filter(None, [a["newest_at"], c]))
+            frm = m.get("from") or m.get("from_") or "?"
+            a["senders"][frm] = a["senders"].get(frm, 0) + 1
+        directive_count = sum(
+            1 for m in immortal
+            if (m.get("intent") or "").strip().lower()
+            in _DIGEST_DIRECTIVE_INTENTS
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "backlog-digest",
+                    "note": (
+                        "unread pre-arm mail on this session's immortal "
+                        "addresses (lane/project/groups/channels) — arrived "
+                        "while no watcher was armed; counts only, read via "
+                        "memory_inbox"
+                    ),
+                    "addresses": {
+                        to: {
+                            "unread_count": a["unread_count"],
+                            "oldest_at": a["oldest_at"],
+                            "newest_at": a["newest_at"],
+                            "top_senders": sorted(
+                                a["senders"], key=a["senders"].get,
+                                reverse=True,
+                            )[:3],
+                        }
+                        for to, a in per_addr.items()
+                    },
+                    "directive_count": directive_count,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        emitted = len(immortal)
+    if authority:
+        newest = max(authority, key=lambda m: m.get("created_at") or "")
+        print(
+            json.dumps(
+                {
+                    "event": "authority-directive-queued",
+                    "note": (
+                        "unread authority-directive predating this watcher — "
+                        "age does not waive this intent; handle via "
+                        "memory_inbox"
+                    ),
+                    "count": len(authority),
+                    "id": newest.get("id"),
+                    "from": newest.get("from") or newest.get("from_"),
+                    "subject": newest.get("subject", ""),
+                    "created_at": newest.get("created_at"),
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        emitted += len(authority)
+    return emitted
 
 
 def _own_addresses(reader_identity: str | None) -> set:
@@ -350,17 +423,23 @@ async def _run(args) -> int:
         # startup watcher shouldn't immediately fire on the backlog the session
         # already saw at /startup. --include-existing opts into the backlog too.
         #
-        # MSG-7 exception: unacked DIRECTIVE-intent mail in that backlog gets
-        # one summary line. Queued-while-down and delivered-live are different
-        # outcomes, not degrees of one — a directive sent into a restart window
-        # otherwise becomes history nobody acts on, with no error on either
-        # side. See _emit_queued_directives.
+        # LANE-3 exception (subsumes MSG-7's queued-directives line — one
+        # arm-time surface, never two): pre-arm backlog on IMMORTAL addresses
+        # gets ONE digest line (counts + senders, no bodies), and an unread
+        # authority-directive gets one individual wake regardless of age.
+        # Queued-while-down and delivered-live are different outcomes, not
+        # degrees of one — mail sent into a restart window otherwise becomes
+        # history nobody acts on, with no error on either side.
+        # See _emit_backlog_digest.
         seen: set = set()
         if not args.include_existing:
             try:
                 backlog = await _poll(client, listen_set, reader_identity, seen)
-                if _emit_queued_directives(backlog) and not args.follow:
-                    return 0  # one-shot: queued directives ARE the wake
+                occupant = reader_to_address(reader_identity or "")
+                anchor_project = derive_project_name(args.project_dir or None)
+                if (_emit_backlog_digest(backlog, occupant, anchor_project)
+                        and not args.follow):
+                    return 0  # one-shot: the digest IS the wake
             except Exception as e:  # seeding failure is non-fatal — start clean
                 if _auth_error_code(e):
                     print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)
