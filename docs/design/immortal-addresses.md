@@ -1,9 +1,11 @@
 # Immortal Addresses — mail is never sent to a mortal thing
 
-**Status: DRAFT v2, revised after adversarial review. Not ratified, not
-scheduled.** Author: engram-claude-3, 2026-08-14. Reviewer: agentbeast-grok-4
-(review inbox/f23cbc72, verdict "do not schedule as written; the rule itself
-should survive"). v2 incorporates every accepted kill; deltas marked **[v2]**.
+**Status: DRAFT v3 — REVIEW-ACCEPTED, awaiting owner ratification. Not
+scheduled, nothing built.** Author: engram-claude-3, 2026-08-14. Reviewer:
+agentbeast-grok-4. Cycle: v1 attacked (three kills, all accepted), v2
+re-reviewed ("doctrine + architecture accepted; four conditions before
+schedule"), v3 writes the four conditions in. Reviewer has committed to no
+further full attack unless a new kill appears. Deltas marked **[v2]**/**[v3]**.
 
 ## The rule under test
 
@@ -74,10 +76,35 @@ know an address's kind to use it):
   run on `softphone-claude`, marker `dead-address-drain`) and released.
 - The injected `ENGRAM_INBOX_IDENTITY=<lane>` is REINTERPRETED by the bridge:
   it names the lane to listen on; the occupant identity is allocated
-  separately by the registry. No AB spawn change required for the 1:1 case —
-  the env contract's meaning shifts server/bridge-side. (AB reviewer input
-  reflected: "the consumer half is not 'inject the lane' — we already do —
-  it is 'stop making the lane string a seat'.")
+  separately by the registry. (AB reviewer input reflected: "the consumer
+  half is not 'inject the lane' — we already do — it is 'stop making the
+  lane string a seat'.")
+- **[v3] Occupants are NEVER the bare lane string.** After reservation, the
+  first grok on a project is not `agentbeast-grok` — that string is the
+  mailbox, permanently. Every occupant identity is distinguishable from its
+  lane. Surfaces render lane + occupant(s); a card that renders the lane as
+  if it were the person recreates the CURSOR-SEAT-2 class.
+- **[v3] Typed kind is the safety property, not a nicety.** Send strings stay
+  flat (senders never need to know kind), but INTERNAL records are typed:
+  ADDR-3's `kind` marker is REQUIRED by this design, because reservation-as-
+  procedure alone is a sequence, and sequences fail at boundaries (partial
+  migration, old client, one un-gated path). Every path that can create a
+  seat-shaped row must check the reservation and carry the type — enumerated
+  and individually tested: bridge claim, `memory_take_seat`, the session
+  routers, launch-env identity, acceptance-harness injection, admin mint.
+  One ungated path and the lane is a seat again and R8 re-locks it.
+- **[v3] Reinterpretation is a DEPLOY GATE, not "zero spawn-env change."**
+  Today the injected string means "claim this seat"; v2+ makes it mean
+  "listen on this lane." An old bridge on a mixed fleet still claims — and
+  after reservation that claim REFUSES. Gate (e), sequenced as step 0 of
+  migration: new bridges (reinterpret + lane in listen_set) deployed BEFORE
+  reservation flips on a project. Refuse behavior for an old bridge is
+  specified, not silent: the claim response returns the allocated occupant
+  seat with an explicit `lane_reserved` notice — the old bridge still gets a
+  working seat (ordinal), never an unseated session, never a hard spawn
+  error. "No AB spawn-env change for the 1:1 case" is true only behind this
+  gate; AB reads the granted occupant back rather than assuming
+  injected == granted (their standing CURSOR-SEAT-2 rule).
 
 listen_set becomes: `[occupant, lane, lane@host, project, project@host,
 machine:host, occupant@host, #channels, declared groups]`.
@@ -155,16 +182,41 @@ its own bug, AB's lane, unchanged by this design.
    preconditions): no flip until (a) deployed bridges' listen_sets include
    the lane, (b) watchers follow it, (c) AB picker offers lanes and never
    offers a locked corpse as if it were a person, (d) AB huddle relay
-   re-resolves occupants instead of DMing stored seat strings.
+   re-resolves occupants instead of DMing stored seat strings, **[v3]**
+   (e) new bridges (reinterpretation + lane listening) deployed before
+   reservation flips on any project — see the deploy-gate bullet above.
 4. **ADDR-2 refinement**: warn on seat-addressed sends when a lane exists;
    **reject only sends to a dead/locked seat** — mail R8 provably makes
    undeliverable-forever is the one case where warn-only just recreates the
    pile. (Narrow, deliberate revision of the warn-never-reject stance:
    rejection requires proof of permanent undeliverability, nothing less.)
 5. Wake-on-new-only + arm-time lane digest (Problem 1).
-6. Death-certificate intake: an endpoint/field by which the SPAWNER records
-   occupant death; consumed by succession inheritance. Facts stored, never
-   inferred.
+6. **[v3] Death-certificate intake — shape agreed with the spawner.**
+   Per-OCCUPANT tombstone (a per-lane "occupancy ended" event is killed:
+   two occupants share a lane, and a lane-level event would inherit the
+   auditor's mail onto the builder when the auditor dies). Fields:
+   `session_key, seat (the GRANTED occupant — never the lane, may be empty),
+   lane, project, provider, died_at, cause`. The spawner POSTs on
+   stop/reconcile — push, never polled (their local tombstone is cleared on
+   the next launch of the same handle; polling can miss the event).
+   Idempotent on `session_key` (fallback `seat+died_at`). The certificate
+   WINS over a still-beating presence row (PICK-REG-1b: heartbeats outlive
+   kills; the store accepts the spawner's word).
+   **The `seat_for` fallback trap, named:** AB's tombstone writer today
+   falls back to `seat_for(project, provider)` when release returns nothing
+   — after reservation that expression IS the lane string, so a failed
+   release would certify that the LANE died. Condition: `tombstone.seat` is
+   the granted occupant or empty, never the lane; lane and provider are
+   explicit fields, never derived by stripping an ordinal (role-seat ban).
+   Ingest rule: on certificate for occupant K, freeze
+   `lane_cursor[lane] = union(lane_cursor[lane], K.acks)`. A new occupant N
+   inherits the cursor iff no other occupant is live on the lane at N's
+   start, OR `N.session_key == K.session_key` (respawn reclaim). A live
+   colleague on the lane means N starts with empty personal acks (per-reader
+   semantics unchanged); the cursor waits until the lane empties, then the
+   next arrival inherits. Hand-launched sessions have no certifier → no
+   cursor update → the successor honestly sees backlog-as-unread plus the
+   arm-time digest.
 7. One-time historical corpse drain per project at lane activation.
 
 ## Migration
@@ -176,14 +228,29 @@ consumer changes (AB) → (5) reply-default flip after the WIRE-1 gates hold
 fleet-wide. Steps 1–3 are additive and safe out of order EXCEPT the
 reservation, which must not precede the drain (same-string collision).
 
-## Open questions for re-review
+## Formerly-open questions — settled in re-review **[v3]**
 
-- Death-certificate shape: per-occupant tombstone vs per-lane "occupancy
-  ended" — and what a hand-launched session's successor does with no
-  certifier (live with backlog-as-unread + digest?).
-- Reserved-string enforcement: allocator-refusal only, or also a registry
-  `kind` marker (ADDR-3) so surfaces can render lane vs occupant?
-- Does wake-on-new-only need an owner override (a directive the owner WANTS
-  to wake the next occupant regardless of age)?
-- Reply-to-lane when the sender was an occupant addressed directly: should a
-  seat-DM'd conversation stay seat-pinned for its thread lifetime?
+- Death-certificate shape: per-occupant tombstone (see transport change 6);
+  per-lane events killed. Hand-launched successor: backlog-as-unread +
+  digest, adopted as the honest behavior.
+- Reserved-string enforcement: allocator-refusal AND typed `kind` on
+  internal records (ADDR-3 required); every seat-creating path gated and
+  tested individually.
+- Wake-on-new-only owner override: the existing `authority-directive` intent
+  is the override — an unacked authority-directive at watcher-arm produces
+  one wake plus the digest, regardless of age. No fourth knob invented.
+- Seat-DM'd threads stay SEAT-PINNED for their thread lifetime. Promoting a
+  die-with-recipient conversation onto the lane mid-thread would hand the
+  next occupant the one-shot token — the exact leak the seat-DM class
+  exists to prevent. If the occupant dies, the thread dies with it. That is
+  the point.
+- ADDR-2 reject-on-dead/locked-seat: accepted by both sides; pickers must
+  not offer dead/locked seats (AB's PICK-REG-1d intent).
+
+## Remaining open (for the owner, not the reviewer)
+
+- Ratification of the doctrine itself, and scheduling.
+- IDENT-1: whether spawn env must honor repo-declared `groups=` /
+  `inbox_identity` (pre-existing NEEDS-DECISION, not absorbed here).
+- The one-time corpse drains per project (softphone-claude done as
+  prototype; meidura-claude and the agentbeast family pending).
