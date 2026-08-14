@@ -43,6 +43,22 @@ undeliverable; it queues for future occupants; every session listens at its
 channel level(s) AND its occupant level. Already true; becomes the primary
 delivery model.
 
+### INV-1 — the owner's invariant, stated as law **[v3]**
+
+> **Any agent spawned in any project — regardless of seat, lane, ordinal,
+> injected identity, runtime re-seat, declared groups, or channels — ALWAYS
+> listens on the project channel (`<project>` and `<project>@<host>`).**
+
+(Owner, verbatim intent, 2026-08-14.) This is not a default that
+configuration can remove; there is no opt-out. It is structurally true in
+today's `compute_identity` (both the seated and unseated branches emit
+`project` + `project@host`) and every LANE change MUST preserve it — in
+particular LANE-2's listen_set extension adds the lane alongside the project
+channel, never in place of it. Enforced mechanically by an invariant test
+that asserts the two project addresses are present in the listen_set under
+every identity configuration; that test changing is a design event requiring
+the owner, not a refactor detail.
+
 ## Architecture
 
 Three address strata, all visible in one flat send-string space (ADDR-3's

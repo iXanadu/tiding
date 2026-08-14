@@ -963,3 +963,76 @@ class TestFolderGroups:
         finally:
             identity._IDENTITY_ANCHOR = prev
             identity.reset_session_pin()
+
+
+# --- INV-1: the project channel is unconditional (owner invariant) ----------
+
+
+class TestInv1ProjectChannelAlways:
+    """INV-1 (owner, 2026-08-14, docs/design/immortal-addresses.md):
+
+    ANY agent, in ANY project, regardless of seat / lane / ordinal / injected
+    identity / runtime re-seat / declared groups / channels, ALWAYS listens on
+    the project channel: `<project>` and `<project>@<host>`.
+
+    There is no opt-out and no configuration that removes it. If a change
+    makes one of these cases fail, that is a design event requiring the
+    owner — not a refactor detail. Do not weaken these assertions.
+    """
+
+    def _assert_project_channel(self, listen):
+        assert "proj" in listen, f"project channel missing: {listen}"
+        assert "proj@macmini" in listen, f"project@host missing: {listen}"
+
+    def _base(self, monkeypatch):
+        _host(monkeypatch)
+        monkeypatch.setattr(identity, "derive_project_name", lambda _d: "proj")
+        monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
+        monkeypatch.delenv(identity.INBOX_IDENTITY_ENV, raising=False)
+
+    def test_bare_session(self, monkeypatch):
+        self._base(monkeypatch)
+        _, listen = compute_identity("/whatever")
+        self._assert_project_channel(listen)
+
+    def test_launcher_injected_seat(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-grok")
+        _, listen = compute_identity("/whatever")
+        self._assert_project_channel(listen)
+
+    def test_ordinal_seat(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-claude-4")
+        _, listen = compute_identity("/whatever")
+        self._assert_project_channel(listen)
+
+    def test_runtime_seat(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setattr(identity, "_SESSION_SEAT", "proj-audit")
+        try:
+            _, listen = compute_identity("/whatever")
+        finally:
+            monkeypatch.setattr(identity, "_SESSION_SEAT", None)
+        self._assert_project_channel(listen)
+
+    def test_declared_groups(self, monkeypatch):
+        self._base(monkeypatch)
+        monkeypatch.setattr(
+            identity, "resolve_inbox_groups", lambda _d: ["proj-app"]
+        )
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-grok")
+        _, listen = compute_identity("/whatever")
+        self._assert_project_channel(listen)
+        assert "proj-app" in listen  # group ADDS, never replaces
+
+    def test_everything_at_once(self, monkeypatch):
+        """Seat + groups + channels together still cannot displace INV-1."""
+        self._base(monkeypatch)
+        monkeypatch.setenv(identity.INBOX_IDENTITY_ENV, "proj-grok-2")
+        monkeypatch.setenv("ENGRAM_CHANNELS", "#devagents")
+        monkeypatch.setattr(
+            identity, "resolve_inbox_groups", lambda _d: ["proj-app", "proj-qa"]
+        )
+        _, listen = compute_identity("/whatever")
+        self._assert_project_channel(listen)
