@@ -310,17 +310,38 @@ SESSION_KEY_ENV = "ENGRAM_SESSION_KEY"
 AUTO_KEY_PREFIX = "auto-"
 
 
+def _ps_stable_env() -> dict:
+    """Environment that makes ``ps lstart`` render tz/locale-independently.
+
+    ``lstart`` prints the start INSTANT in the current timezone and locale, so
+    the same process renders differently after ``timedatectl set-timezone`` or
+    a locale change — and a string compare then reads a live process as a
+    recycled pid. Found live on dbone 2026-08-15 during the fleet's UTC →
+    America/New_York migration: every session started before the tz change was
+    false-farewelled ~90s after each watcher arm, forever
+    (shared:lesson/tz-change-breaks-engram-session-watch). Pinning TZ=UTC and
+    LC_ALL=C makes the rendering a property of the process, not of the box's
+    current settings. DST needs no special case once TZ is UTC.
+    """
+    env = dict(os.environ)
+    env["TZ"] = "UTC"
+    env["LC_ALL"] = "C"
+    return env
+
+
 def _proc_info(pid: int) -> tuple[int, str] | None:
     """``(ppid, start_time)`` for ``pid`` via POSIX ps, or None.
 
     ``ps`` rather than /proc so one implementation covers macOS and Linux. The
     start time is opaque — we only need it to be stable for a process's
-    lifetime and different after a PID is recycled.
+    lifetime and different after a PID is recycled. Stability REQUIRES the
+    pinned rendering env (see ``_ps_stable_env``): without it the token
+    changes under the process's feet on any tz or locale change.
     """
     try:
         out = subprocess.run(
             ["ps", "-o", "ppid=,lstart=", "-p", str(pid)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=_ps_stable_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -635,7 +656,7 @@ def process_is_gone(pid: int, start: str) -> bool:
     try:
         out = subprocess.run(
             ["ps", "-o", "ppid=,lstart=", "-p", str(pid)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=_ps_stable_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return False  # could not ask — not evidence of anything
@@ -643,7 +664,28 @@ def process_is_gone(pid: int, start: str) -> bool:
     if len(parts) >= 6:
         # Something is running under this pid. It is OUR process only if the
         # start time matches; otherwise the pid was recycled and ours is gone.
-        return " ".join(parts[1:6]) != start
+        if " ".join(parts[1:6]) == start:
+            return False
+        # MIGRATION GUARD (same incident, other edge): a proc file written by
+        # a pre-fix bridge stored the LOCAL-tz rendering. Comparing it against
+        # the pinned-UTC rendering above mismatches for a LIVE process — the
+        # exact false death this fix exists to end, reintroduced by the fix.
+        # So before ruling "recycled", ask once more the way the old code did
+        # (current tz/locale). A match there means: same process, old-format
+        # file — alive. Files migrate as sessions restart; a mismatch under
+        # BOTH renderings is a genuine recycle. Uncertainty still never
+        # produces a farewell.
+        try:
+            legacy = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if legacy.stdout.split() and \
+                    " ".join(legacy.stdout.split()[:5]) == start:
+                return False
+        except (OSError, subprocess.SubprocessError):
+            return False  # could not double-check — not evidence
+        return True
     if out.returncode == 1:
         return True  # ps ran and found nothing: the one definite answer
     return False  # ps failed some other way — still not an answer

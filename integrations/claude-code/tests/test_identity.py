@@ -1117,3 +1117,62 @@ class TestLane2ListenSet:
         _, listen = compute_identity("/whatever")
         assert listen.count("proj-claude") == 1
         assert listen.count("proj-claude@macmini") == 1
+
+
+# --- TZ-1: start-token comparison survives timezone/locale changes ----------
+
+
+class TestTzStableProcessWatch:
+    """dbone 2026-08-15: `ps lstart` renders in the CURRENT tz/locale, so a
+    timezone change made live sessions read as recycled pids and the watcher
+    farewelled them ~90s after every arm. Tokens are now produced under
+    TZ=UTC LC_ALL=C; comparison keeps a legacy-rendering fallback so proc
+    files written by pre-fix bridges cannot false-die during the upgrade."""
+
+    def _ps(self, stable_out, legacy_out):
+        calls = []
+        def fake_run(cmd, **kw):
+            env = kw.get("env")
+            calls.append(env)
+            class R: pass
+            r = R()
+            if env and env.get("TZ") == "UTC":
+                r.stdout = stable_out
+            else:
+                r.stdout = legacy_out
+            r.returncode = 0 if (r.stdout.strip()) else 1
+            return r
+        return fake_run, calls
+
+    def test_stable_env_is_pinned(self, monkeypatch):
+        import subprocess as sp
+        fake, calls = self._ps("  1 Wed Aug 13 14:52:42 2026\n", "")
+        monkeypatch.setattr(identity.subprocess, "run", fake)
+        identity._proc_info(1234)
+        assert calls and calls[0].get("TZ") == "UTC" \
+            and calls[0].get("LC_ALL") == "C"
+
+    def test_match_under_stable_rendering_is_alive(self, monkeypatch):
+        fake, _ = self._ps("  1 Wed Aug 13 14:52:42 2026\n", "")
+        monkeypatch.setattr(identity.subprocess, "run", fake)
+        assert identity.process_is_gone(1234, "Wed Aug 13 14:52:42 2026") is False
+
+    def test_legacy_file_after_tz_change_is_still_alive(self, monkeypatch):
+        """The migration guard: stored token is the OLD local rendering
+        (10:52:42 EDT); pinned-UTC now renders 14:52:42. Legacy re-ask
+        matches the stored string → same process, NOT a recycle."""
+        fake, _ = self._ps("  1 Wed Aug 13 14:52:42 2026\n",
+                           "Wed Aug 13 10:52:42 2026\n")
+        monkeypatch.setattr(identity.subprocess, "run", fake)
+        assert identity.process_is_gone(1234, "Wed Aug 13 10:52:42 2026") is False
+
+    def test_genuine_recycle_mismatches_both_renderings(self, monkeypatch):
+        fake, _ = self._ps("  1 Fri Aug 15 09:00:00 2026\n",
+                           "Fri Aug 15 05:00:00 2026\n")
+        monkeypatch.setattr(identity.subprocess, "run", fake)
+        assert identity.process_is_gone(1234, "Wed Aug 13 10:52:42 2026") is True
+
+    def test_absent_process_is_gone(self, monkeypatch):
+        fake, _ = self._ps("", "")
+        monkeypatch.setattr(identity.subprocess, "run", fake)
+        assert identity.process_is_gone(1234, "Wed Aug 13 14:52:42 2026") is True
