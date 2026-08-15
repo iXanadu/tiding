@@ -1824,25 +1824,26 @@ async def memory_reply(
             # sender so the reply still lands somewhere real.
             reply_to = reader_to_address(raw_from)
     else:
-        # LANE-5: replies default to the sender's immortal LANE when its
+        # LANE-5: replies target the sender's immortal LANE whenever its
         # bridge stamped one — the reply then survives the sender's death and
-        # reaches the lane's next occupant. Two deliberate exceptions:
-        #   · SEAT-PINNED threads: if the parent was addressed to OUR occupant
-        #     seat specifically (not a lane/channel/group), the conversation
-        #     was seat-level on purpose — die-with-recipient content like
-        #     one-shot tokens — and stays seat-level both directions.
-        #   · LEGACY mail (no from_lane stamp): routes exactly as before.
-        my_occupant = reader_to_address(reader_identity)
-        my_project = derive_project_name(project_dir or None)
-        parent_base = parent_to.split("@", 1)[0]
-        seat_pinned = (
-            parent_base == my_occupant and my_occupant != my_project
-        )
+        # reaches the lane's next occupant. The stamp IS the sender's routing
+        # declaration; no shape-guessing on the parent's `to`.
+        #
+        # A first cut gated this on the parent NOT being addressed to our
+        # occupant seat ("seat-pinned threads"). Audit amendment (grok,
+        # 2026-08-15) killed that: occupant-addressed DMs are the COMMON
+        # pattern — roster lookups and every send-to-the-live-session use the
+        # occupant — so the guard swallowed exactly the mail LANE-5 exists
+        # for, and its to-shape check had two fool cases besides
+        # (host-stripped cross-host seats; a lane-named identity). The
+        # die-with-recipient property never needed it: the PARENT still dies
+        # with its addressee regardless of where the reply routes. A sender
+        # that someday wants replies pinned to its mortal seat needs an
+        # explicit flag, not an inference — pinned as a residual, unbuilt.
+        #
+        # LEGACY mail (no stamp) routes exactly as before.
         parent_lane = (parent.get("from_lane") or "").strip().lower()
-        if parent_lane and not seat_pinned:
-            reply_to = parent_lane
-        else:
-            reply_to = reader_to_address(raw_from)
+        reply_to = parent_lane or reader_to_address(raw_from)
         effective_intent = intent  # DM replies keep waking by default
     thread_id = parent.get("thread_id") or parent["id"]
 

@@ -258,11 +258,14 @@ that missed step 2 — never the planned transition.
 - Wake-on-new-only owner override: the existing `authority-directive` intent
   is the override — an unacked authority-directive at watcher-arm produces
   one wake plus the digest, regardless of age. No fourth knob invented.
-- Seat-DM'd threads stay SEAT-PINNED for their thread lifetime. Promoting a
-  die-with-recipient conversation onto the lane mid-thread would hand the
-  next occupant the one-shot token — the exact leak the seat-DM class
-  exists to prevent. If the occupant dies, the thread dies with it. That is
-  the point.
+- ~~Seat-DM'd threads stay SEAT-PINNED for their thread lifetime.~~
+  **REVERSED at LANE-5 audit (2026-08-15):** the shape-based pin fired on the
+  COMMON addressing pattern (occupant DMs), swallowing exactly the mail the
+  flip exists for. The die-with-recipient property never needed it — the
+  PARENT still dies with its addressee regardless of where the reply routes.
+  Final rule: the sender's `from_lane` stamp wins wherever present; legacy
+  unstamped mail keeps seat routing. A sender that ever wants replies pinned
+  to its mortal seat needs an explicit flag (residual, unbuilt).
 - ADDR-2 reject-on-dead/locked-seat: accepted by both sides; pickers must
   not offer dead/locked seats (AB's PICK-REG-1d intent).
 

@@ -1107,10 +1107,12 @@ async def test_memory_reply_prefers_parent_from_lane(respx_mock):
 
 
 @respx.mock(base_url="http://localhost:8920")
-async def test_memory_reply_seat_pinned_thread_ignores_lane(respx_mock):
-    """Settled in review: a conversation addressed to OUR occupant seat
-    specifically stays seat-level both directions (die-with-recipient
-    content) — the lane stamp must not promote it."""
+async def test_memory_reply_occupant_dm_also_routes_to_lane(respx_mock):
+    """Audit amendment (2026-08-15): occupant-addressed DMs are the COMMON
+    pattern, and the lane stamp wins there too — the first cut's
+    "seat-pinned" guard swallowed exactly the mail LANE-5 exists for.
+    The stamp is the sender's routing declaration; parent.to's shape is
+    irrelevant."""
     respx_mock.post("/memory/inbox").mock(
         return_value=httpx.Response(200, json={"status": "ok", "messages": [
             {"id": "inbox/L2", "to": "engram-claude-9@macmini",
@@ -1133,8 +1135,8 @@ async def test_memory_reply_seat_pinned_thread_ignores_lane(respx_mock):
         await memory_reply(message_id="inbox/L2", body="ack",
                            project_dir="/Users/ixanadu/projects/engram")
     sent = json.loads(send_route.calls.last.request.content)
-    assert sent["to"] == "projgamma-claude-4", (
-        "seat-pinned thread must keep legacy seat routing"
+    assert sent["to"] == "projgamma-claude", (
+        "the lane stamp wins even when the parent was an occupant DM"
     )
 
 
