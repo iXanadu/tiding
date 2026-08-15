@@ -737,6 +737,39 @@ async def test_reply_to_dm_unchanged_routes_to_sender_no_intent(respx_mock):
     assert "intent" not in payload or payload["intent"] in (None, "")
 
 
+@respx.mock(base_url="http://localhost:8920")
+async def test_reply_to_labelless_mail_falls_back_to_from_principal(respx_mock):
+    """A parent with no `from_` label but a server-stamped from_principal is
+    replyable: route to the principal (a listenable address — owner surfaces
+    listen on the principal name) instead of refusing. Measured 2026-08-15:
+    an app DM composer sent label-less owner mail and the refusal killed
+    every reply loop."""
+    parent = _parent("engram", msg_id="inbox/labelless-parent")
+    parent["from_"] = None
+    parent["from_principal"] = "ixanadu"
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [parent]}))
+    send_route = respx_mock.post("/memory/send").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "id": "inbox/labelless-reply"}))
+    respx_mock.post("/memory/inbox/inbox/labelless-parent/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/labelless-parent"}))
+    out = await memory_reply(message_id="inbox/labelless-parent", body="threading works")
+    payload = json.loads(send_route.calls.last.request.read())
+    assert payload["to"] == "ixanadu"
+    assert payload["thread_id"] == "inbox/labelless-parent"
+    assert "Cannot reply" not in out
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_reply_with_neither_label_nor_principal_still_refuses(respx_mock):
+    parent = _parent("engram", msg_id="inbox/orphan-parent")
+    parent["from_"] = None
+    respx_mock.post("/memory/inbox").mock(return_value=httpx.Response(
+        200, json={"status": "ok", "messages": [parent]}))
+    out = await memory_reply(message_id="inbox/orphan-parent", body="x")
+    assert "has no 'from' address" in out
+
+
 # --- leaked tool-call markup stripping (huddle night-1 finding) --------------
 
 from engram_mcp.server import _strip_leaked_markup

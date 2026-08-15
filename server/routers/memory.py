@@ -668,9 +668,19 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     is_fanout = len(corrected) > 1
     participants: list[str] | None = None
     thread_id = req.thread_id
+    # A send with no self-asserted `from` label used to produce mail nobody
+    # could REPLY to: memory_reply routes on the parent's from-address, so
+    # the omission silently killed every reply loop (measured 2026-08-15 —
+    # a surface DM'd label-less owner mail and both recipients had to break
+    # threading and fresh-send to the owner instead). The server already
+    # holds the verified truth, so default the label to the authenticated
+    # principal's name; label and principal then agree, which is exactly the
+    # state the render layer badges as verified. Anonymous mode (no
+    # principal) keeps the old behavior — there is no truth to default to.
+    sender_label = (req.from_ or "").strip() or (principal or {}).get("name")
     if is_fanout:
         participants = _participant_set(
-            [t for t, _ in corrected], sender=req.from_
+            [t for t, _ in corrected], sender=sender_label
         )
         thread_id = thread_id or f"inbox/{uuid.uuid4()}"
     try:
@@ -680,7 +690,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 to=to,
                 body=req.body,
                 subject=req.subject,
-                from_=req.from_,
+                from_=sender_label,
                 thread_id=thread_id,
                 participants=participants,
                 supersedes=req.supersedes if not ids else None,  # supersede once
@@ -700,7 +710,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         if len(corrected) == 1:
             guidance = send_guidance(
                 to=first_to,
-                reader_identity=req.from_,
+                reader_identity=sender_label,
                 listen_set=req.listen_set,
             )
             if first_corrected:

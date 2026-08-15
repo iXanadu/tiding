@@ -1801,6 +1801,16 @@ async def memory_reply(
 
     raw_from = parent.get("from_")
     if not raw_from:
+        # Label-less mail: some surfaces send without the self-asserted
+        # `from` label (measured 2026-08-15 — an app DM composer), and the
+        # refusal below used to kill the reply loop for that whole class.
+        # from_principal is the SERVER-stamped verified sender and doubles as
+        # a listenable address (owner surfaces listen on the principal name),
+        # so route there instead. The server now also defaults the label at
+        # send time; this fallback keeps already-stored label-less rows
+        # replyable.
+        raw_from = (parent.get("from_principal") or "").strip()
+    if not raw_from:
         return f"Cannot reply: parent message {message_id} has no 'from' address."
     body, subject, leak_warning = _strip_leaked_markup(body, subject)
     parent_to = parent.get("to") or ""

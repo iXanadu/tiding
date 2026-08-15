@@ -980,6 +980,45 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
 
 
 @pytest.mark.asyncio
+async def test_labelless_send_defaults_from_to_principal(enforced_client, db_pool):
+    """A surface that omits `from_` must not produce unreplyable mail.
+
+    Measured 2026-08-15: an app DM composer sent label-less owner mail;
+    memory_reply refuses a parent with no from-address, so every recipient
+    had to break threading and fresh-send to the owner. The server holds the
+    verified sender already — it defaults the label to the authenticated
+    principal, and label==principal is exactly the state the render layer
+    badges as verified. Anonymous sends (no principal) keep from_=None.
+    """
+    await _cleanup_inbox(db_pool)
+    _, tok = await ps.create_principal(
+        name="ib-labelless-owner", type="human", is_admin=True,
+        token="test-tok-ib-labelless",
+        write_namespaces=["fleet"], read_namespaces=["fleet"],
+    )
+    try:
+        r = await enforced_client.post("/memory/send", json={
+            "to": "labelprobe", "body": "no label on this one",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, r.text
+
+        r = await enforced_client.post("/memory/inbox", json={
+            "listen_set": ["labelprobe"], "unread_only": False, "limit": 5,
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200
+        msgs = r.json()["messages"]
+        assert msgs, "sent message not listed"
+        assert msgs[0]["from_"] == "ib-labelless-owner"       # defaulted label
+        assert msgs[0]["from_principal"] == "ib-labelless-owner"
+    finally:
+        await _cleanup_inbox(db_pool)
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM principals WHERE name = $1", "ib-labelless-owner",
+            )
+
+
+@pytest.mark.asyncio
 async def test_inbox_intent_stored_and_validated(client, db_pool):
     """MSG-3: `intent` is a client field — stored and returned as-is; an unknown
     intent is rejected (422); omitting it yields None (back-compat waking default).
