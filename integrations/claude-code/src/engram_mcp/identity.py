@@ -974,6 +974,25 @@ def compute_identity(project_dir: str | None) -> tuple[str, list[str]]:
                      f"machine:{host}", reader, *channels])
 
 
+def sender_lane(project_dir: str | None) -> str:
+    """This session's immortal LANE — the address a reply should target.
+
+    LANE-5: `<project>-<provider>`, the mailbox that outlives any one
+    session. Stamped onto outgoing mail (like listen_set) so recipients'
+    replies can route to the lane instead of the mortal seat: a reply
+    composed after this session dies still reaches the lane's next occupant.
+
+    Empty for admin (no admin-<provider> lanes ever, SEAT-ADMIN-1) and for
+    anything that fails seat validation — an empty stamp means "route
+    replies the legacy way," never an error.
+    """
+    project = derive_project_name(identity_anchor_dir() or project_dir)
+    if project in ADMIN_EXEMPT_LANE_PROJECTS:
+        return ""
+    lane = f"{project}-{resolve_provider()}"
+    return lane if lane != project and _is_valid_seat(lane) else ""
+
+
 def reader_to_address(reader_identity: str) -> str:
     """Convert a reader_identity back to its loose-broadcast address.
 

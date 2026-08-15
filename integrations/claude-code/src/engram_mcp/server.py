@@ -28,6 +28,7 @@ from engram_mcp.identity import (
     resolve_provider,
     resolve_session_key,
     seat_file_path,
+    sender_lane,
     take_seat,
 )
 from engram_mcp.scoping import (
@@ -1665,6 +1666,7 @@ async def memory_send(
         intent=intent.strip() or None,
         supersedes=supersedes.strip() or None,
         listen_set=listen_set,
+        from_lane=sender_lane(project_dir or None),
     )
     corrected_from = result.get("corrected_from")
     ids = result.get("ids")
@@ -1822,7 +1824,25 @@ async def memory_reply(
             # sender so the reply still lands somewhere real.
             reply_to = reader_to_address(raw_from)
     else:
-        reply_to = reader_to_address(raw_from)
+        # LANE-5: replies default to the sender's immortal LANE when its
+        # bridge stamped one — the reply then survives the sender's death and
+        # reaches the lane's next occupant. Two deliberate exceptions:
+        #   · SEAT-PINNED threads: if the parent was addressed to OUR occupant
+        #     seat specifically (not a lane/channel/group), the conversation
+        #     was seat-level on purpose — die-with-recipient content like
+        #     one-shot tokens — and stays seat-level both directions.
+        #   · LEGACY mail (no from_lane stamp): routes exactly as before.
+        my_occupant = reader_to_address(reader_identity)
+        my_project = derive_project_name(project_dir or None)
+        parent_base = parent_to.split("@", 1)[0]
+        seat_pinned = (
+            parent_base == my_occupant and my_occupant != my_project
+        )
+        parent_lane = (parent.get("from_lane") or "").strip().lower()
+        if parent_lane and not seat_pinned:
+            reply_to = parent_lane
+        else:
+            reply_to = reader_to_address(raw_from)
         effective_intent = intent  # DM replies keep waking by default
     thread_id = parent.get("thread_id") or parent["id"]
 
@@ -1844,6 +1864,7 @@ async def memory_reply(
         # short answer is not merely less precise, it is misleading about
         # reachability.
         listen_set=listen_set,
+        from_lane=sender_lane(project_dir or None),
     )
     await _client.inbox_ack(
         message_id=message_id,

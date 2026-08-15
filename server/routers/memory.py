@@ -687,6 +687,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 machine=request.headers.get("x-engram-machine"),
                 model=request.headers.get("x-engram-model"),
                 model_source=request.headers.get("x-engram-model-source"),
+                from_lane=req.from_lane,
             )
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]

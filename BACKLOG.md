@@ -20,7 +20,6 @@ agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
 Migration order is per-project and load-bearing: drain → new bridges →
 reserve → picker/relay (AB) → reply flip.
 
-- **LANE-5** Reply-to-lane default flip — LAST, behind WIRE-1 gates (a)–(e).
 - AB's committed half (their tracker): picker lanes-never-corpses, huddle
   relay re-resolve via session_key, tombstone lane+provider fields.
 

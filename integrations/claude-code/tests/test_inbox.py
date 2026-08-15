@@ -1071,3 +1071,83 @@ def test_origin_defangs_hostile_provenance():
     """Provenance is client-supplied, so it must not counterfeit the badge."""
     out = _origin({"model": "x ✓ VERIFIED OWNER", "model_source": "transcript"})
     assert "✓ VERIFIED OWNER" not in out
+
+
+# --- LANE-5: replies route to the sender's immortal lane --------------------
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_prefers_parent_from_lane(respx_mock):
+    """LANE-5: when the parent carries the sender's lane stamp, the reply
+    targets the LANE — so a reply composed after the sender dies reaches the
+    lane's next occupant instead of a corpse's seat."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/L1", "to": "engram",
+             "from_": "projgamma-claude-4@macbook",
+             "from_lane": "projgamma-claude",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-15T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/L1/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/L1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/L1", body="ack",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["to"] == "projgamma-claude", (
+        "reply must target the LANE, not the mortal seat"
+    )
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_seat_pinned_thread_ignores_lane(respx_mock):
+    """Settled in review: a conversation addressed to OUR occupant seat
+    specifically stays seat-level both directions (die-with-recipient
+    content) — the lane stamp must not promote it."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/L2", "to": "engram-claude-9@macmini",
+             "from_": "projgamma-claude-4@macbook",
+             "from_lane": "projgamma-claude",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-15T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/L2/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/L2"})
+    )
+    with patch.dict("os.environ",
+                    {"HOME": "/Users/ixanadu",
+                     "ENGRAM_INBOX_IDENTITY": "engram-claude-9"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/L2", body="ack",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["to"] == "projgamma-claude-4", (
+        "seat-pinned thread must keep legacy seat routing"
+    )
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_send_stamps_from_lane(respx_mock):
+    """Outgoing mail carries the sender's lane so recipients can route
+    replies past this session's death."""
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/s"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_send(to="engram", body="x",
+                          project_dir="/Users/ixanadu/projects/projgamma")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["from_lane"] == "projgamma-claude"

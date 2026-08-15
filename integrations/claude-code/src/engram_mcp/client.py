@@ -222,8 +222,13 @@ class MemoryClient:
         intent: str | None = None,
         supersedes: str | None = None,
         listen_set: list[str] | None = None,
+        from_lane: str | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
+        if from_lane:
+            # LANE-5: the sender's immortal lane — recipients' replies route
+            # here so they survive this session's death. Empty = legacy routing.
+            payload["from_lane"] = from_lane
         if from_:
             payload["from_"] = from_
         if thread_id:

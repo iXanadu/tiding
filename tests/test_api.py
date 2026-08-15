@@ -1342,3 +1342,20 @@ async def test_a_session_with_no_watcher_reads_no_basis_not_false(client, db_poo
     async with db_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+
+
+@pytest.mark.asyncio
+async def test_lane5_from_lane_roundtrips(client):
+    """LANE-5: the sender's lane stamp is stored and served back on the
+    message, so recipients' replies can target the immortal address."""
+    r = await client.post("/memory/send", json={
+        "to": "lane5probe", "body": "b", "subject": "s",
+        "from_": "lane5probe-claude-2@macmini",
+        "from_lane": "lane5probe-claude",
+    })
+    assert r.status_code == 200
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["lane5probe"], "reader_identity": "lane5probe@x",
+    })
+    msgs = [m for m in r.json()["messages"] if m["to"] == "lane5probe"]
+    assert msgs and msgs[0]["from_lane"] == "lane5probe-claude"

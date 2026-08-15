@@ -536,6 +536,14 @@ class InboxSendRequest(BaseModel):
     # address nor channel subscriptions. Optional: older bridges omit it and
     # get the (clearly-labelled) approximation instead.
     listen_set: list[str] | None = Field(default=None, max_length=MAX_LIST)
+    # LANE-5: the sender's LANE (`<project>-<provider>`, the immortal mailbox
+    # it listens on). Stamped by the sending bridge — like listen_set, the
+    # server cannot derive it from `from_` (a seated identity string carries
+    # neither project nor provider). Recipients' replies target this instead
+    # of the mortal seat, so a reply composed after the sender dies still
+    # reaches the lane's next occupant. Optional: older bridges omit it and
+    # replies to their mail keep the legacy seat routing.
+    from_lane: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("to")
     @classmethod
@@ -602,6 +610,9 @@ class InboxMessage(BaseModel):
     machine: str | None = None
     model: str | None = None
     model_source: str | None = None
+    # LANE-5: the sender's immortal lane, when its bridge stamped one — the
+    # address a reply should target so it survives the sender's death.
+    from_lane: str | None = None
     intent: str | None = None          # fyi | action | proceed | escalate | authority-directive
     subject: str
     body: str

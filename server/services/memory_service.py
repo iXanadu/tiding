@@ -902,6 +902,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         machine=md.get("machine"),
         model=md.get("model"),
         model_source=md.get("model_source"),
+        from_lane=md.get("from_lane"),
         intent=md.get("intent"),
         subject=md.get("subject", ""),
         body=row["value"],
@@ -934,6 +935,7 @@ async def inbox_send(
     machine: str | None = None,
     model: str | None = None,
     model_source: str | None = None,
+    from_lane: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -979,6 +981,9 @@ async def inbox_send(
         # can tell "that harness records nothing" from "this predates the stamp".
         "model": model,
         "model_source": model_source,
+        # LANE-5: sender's immortal lane, bridge-stamped like listen_set —
+        # what a reply targets so it outlives the sender's seat.
+        "from_lane": from_lane,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,
