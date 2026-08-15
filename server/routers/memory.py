@@ -507,14 +507,15 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
 
 @router.post("/supersede", response_model=MemorySupersedeResponse)
 async def supersede_memory(req: MemorySupersedeRequest, request: Request):
-    """MEM-3: retire another writer's stale project row without deleting it.
+    """MEM-3: retire another writer's stale row without deleting it.
 
     Permission is READ on the row's namespace — deliberately not write/delete.
     OWN-1 still owns the VALUE; this stamps lifecycle metadata beside it, fully
-    attributed, and default search stops returning the row. Scope is fixed to
-    'project': shared work is correctable by the project, personal scopes are
-    not touchable by peers. The row is kept verbatim (audit trail); readers
-    wanting history pass include_superseded=true.
+    attributed, and default search stops returning the row. Scope is 'project'
+    (default) or 'shared' (MEM-7: the shared lesson corpus is the curation
+    target); personal scopes are not touchable by peers. The row is kept
+    verbatim (audit trail); readers wanting history pass
+    include_superseded=true.
     """
     principal = get_current_principal(request)
     # READ gate, checked against the caller's whole readable set — the row may
@@ -531,23 +532,28 @@ async def supersede_memory(req: MemorySupersedeRequest, request: Request):
             actor_principal=(principal or {}).get("name"),
             reason=req.reason,
             replacement_key=req.replacement_key,
+            scope=req.scope,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     # AUDIT-1: a supersede is an edit to what readers will retrieve — exactly
     # the class of action the trail exists for.
     await audit("memory.supersede", principal, {
-        "key": req.key, "project": req.project,
+        "key": req.key, "scope": req.scope, "project": req.project,
         "target_user_id": req.target_user_id,
         "reason": req.reason, "replacement_key": req.replacement_key,
         "found": row is not None,
     })
     if row is None:
+        where = (
+            "in shared scope" if req.scope == "shared"
+            else f"in project '{req.project}'"
+        )
         raise HTTPException(
             status_code=404,
             detail=(
                 f"no live row '{req.key}' under writer '{req.target_user_id}' "
-                f"in project '{req.project}' within your readable namespaces "
+                f"{where} within your readable namespaces "
                 f"(already superseded rows are not re-stamped)"
             ),
         )

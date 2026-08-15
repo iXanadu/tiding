@@ -469,10 +469,12 @@ class MemoryClient:
         reason: str,
         replacement_key: str | None = None,
         project_dir: str | None = None,
+        scope: str = "project",
     ) -> dict:
         body: dict = {
             "namespace": namespace,
             "key": key,
+            "scope": scope,
             "project": project,
             "target_user_id": target_user_id,
             "reason": reason,

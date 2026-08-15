@@ -1079,8 +1079,9 @@ async def memory_supersede(
     replacement_key: str = "",
     namespace: str = "",
     project_dir: str = "",
+    scope: str = "project",
 ) -> str:
-    """Retire ANOTHER writer's stale project memory without deleting it.
+    """Retire a stale project or shared memory row without deleting it.
 
     Use when a search returns a row that is now WRONG and you are not its
     writer (its user_id is not you): memory_forget cannot touch it and
@@ -1090,7 +1091,8 @@ async def memory_supersede(
 
     Args:
         key: The stale row's exact key (from search results)
-        target_user_id: The row's WRITER — the user_id shown on the search hit
+        target_user_id: The row's WRITER — the user_id shown on the search
+            hit. Rows in scope=shared usually carry user_id 'global'
         reason: Required. Why it is stale — becomes the audit trail
         replacement_key: Optional key of the row that replaces it
         namespace: The row's namespace EXACTLY as shown on the search hit.
@@ -1100,6 +1102,9 @@ async def memory_supersede(
             nothing about where a writer's rows sit — inferring "writer grok
             => namespace grok" 404s (measured 2026-08-10)
         project_dir: Your working directory path (scopes to the right project)
+        scope: 'project' (default) or 'shared'. Shared retirement exists for
+            lesson-corpus curation (MEM-7): same contract — row kept verbatim,
+            attributed, reversible, drained from default search only
     """
     try:
         _, _, project = await _resolve_partition_with_identity(
@@ -1111,11 +1116,12 @@ async def memory_supersede(
         result = await _client.supersede(
             key=key,
             namespace=namespace or settings.memory_namespace,
-            project=project,
+            project=None if scope == "shared" else project,
             target_user_id=target_user_id,
             reason=reason,
             replacement_key=replacement_key or None,
             project_dir=project_dir or None,
+            scope=scope,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:

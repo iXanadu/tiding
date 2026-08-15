@@ -280,14 +280,15 @@ class MemoryForgetResponse(BaseModel):
 
 
 class MemorySupersedeRequest(_NamespacedRequest):
-    """Mark another writer's project row as superseded (MEM-3).
+    """Mark another writer's row as superseded (MEM-3; shared scope: MEM-7).
 
-    scope is fixed to 'project' server-side: user/machine scopes are personal
+    scope is 'project' (default) or 'shared': user/machine scopes are personal
     and no peer gets a lifecycle verb over them. The row is kept verbatim —
     this changes what default search RETURNS, never what history recorded.
     """
     namespace: str
     key: str
+    scope: str = Field(default="project", pattern="^(project|shared)$")
     project: str | None = Field(default=None, max_length=MAX_ADDR)
     # The WRITER whose row is being retired — from search results' user_id.
     target_user_id: str = Field(max_length=MAX_ADDR)

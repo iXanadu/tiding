@@ -803,6 +803,7 @@ async def memory_supersede(
     actor_principal: str | None,
     reason: str,
     replacement_key: str | None = None,
+    scope: str = "project",
 ) -> dict | None:
     """Mark ANOTHER writer's project row as superseded — correction, not deletion.
 
@@ -822,17 +823,33 @@ async def memory_supersede(
     losing at startup limits).
 
     Permission: the caller needs READ on the row's namespace, nothing more.
-    This is deliberate and narrower than it looks — scope is fixed to
-    'project' (user/machine scopes are personal and keep their privacy), the
-    content is untouched, the action is fully attributed to the authenticated
-    principal, and OWN-1's ownership gate still protects the row's VALUE. A
-    project's members were always allowed to disagree with a note; this makes
-    the disagreement machine-readable instead of a losing race in vector
-    space. Copies the inbox lifecycle pattern (same table, metadata status,
-    no schema migration; NULL status reads as live, so it is back-compatible).
+    This is deliberate and narrower than it looks — scope is limited to
+    'project' and 'shared' (user/machine scopes are personal and keep their
+    privacy), the content is untouched, the action is fully attributed to the
+    authenticated principal, and OWN-1's ownership gate still protects the
+    row's VALUE. A project's members were always allowed to disagree with a
+    note; this makes the disagreement machine-readable instead of a losing
+    race in vector space. Copies the inbox lifecycle pattern (same table,
+    metadata status, no schema migration; NULL status reads as live, so it
+    is back-compatible).
+
+    scope='shared' added for MEM-7 (2026-08-15): the shared lesson corpus is
+    the retirement verb's primary curation target (882 rows, 0 ever
+    superseded — because the verb could not reach them). Same contract as
+    project: kept verbatim, attributed, reversible, drained from default
+    search only. Shared rows carry no project, so the project filter is
+    forced NULL there rather than trusting the caller's resolved project.
     """
+    scope = (scope or "project").lower()
+    if scope not in ("project", "shared"):
+        raise ValueError(
+            "supersede reaches scope 'project' or 'shared' only — "
+            "user/machine scopes are personal"
+        )
+    if scope == "shared":
+        project = None
     _, key, _, target, project = _normalize_key_fields(
-        key=key, scope="project", user_id=target_user_id, project=project
+        key=key, scope=scope, user_id=target_user_id, project=project
     )
     if not (reason or "").strip():
         raise ValueError("supersede requires a reason — it becomes the audit trail")
@@ -850,7 +867,7 @@ async def memory_supersede(
             """
             UPDATE memories
             SET metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
-            WHERE namespace = ANY($1::text[]) AND key = $2 AND scope = 'project'
+            WHERE namespace = ANY($1::text[]) AND key = $2 AND scope = $7
               AND user_id IS NOT DISTINCT FROM $3
               AND project IS NOT DISTINCT FROM $4
               AND COALESCE(metadata->>'status', '') <> $5
@@ -862,6 +879,7 @@ async def memory_supersede(
             project,
             "superseded",
             json.dumps(stamp),
+            scope,
         )
     return dict(row) if row else None
 

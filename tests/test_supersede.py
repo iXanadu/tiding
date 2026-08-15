@@ -144,6 +144,97 @@ async def test_store_warns_when_forking_anothers_key(client, db_pool):
         await _cleanup(client, db_pool)
 
 
+# --- MEM-7: shared-scope retirement (the lesson corpus) ---------------------
+# The measured gap (2026-08-15): 882 shared lessons, 0 ever superseded —
+# because the verb was fixed to scope='project' and could not reach them.
+
+
+async def _seed_shared(client, key, value, tags=""):
+    resp = await client.post("/memory/set", json={
+        "namespace": NS, "key": key, "value": value, "scope": "shared",
+        "user_id": "global", "tags": tags, "expiration_days": 0,
+    })
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _search_shared(client, query, **kw):
+    body = {"namespace": NS, "query": query, "scope": "shared",
+            "user_id": "global", "limit": 10}
+    body.update(kw)
+    resp = await client.post("/memory/search", json=body)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["results"]
+
+
+async def _cleanup_shared(client, db_pool):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE namespace = $1 AND scope = 'shared'",
+            NS,
+        )
+
+
+@pytest.mark.asyncio
+async def test_shared_supersede_drains_search_and_keeps_the_row(client, db_pool):
+    try:
+        await _seed_shared(client, "lesson/dead-tech",
+                           "always warm the ollama kv cache before batch runs")
+        resp = await client.post("/memory/supersede", json={
+            "namespace": NS, "key": "lesson/dead-tech", "scope": "shared",
+            "target_user_id": "global",
+            "reason": "ollama dropped fleet-wide 2026-03; nothing warms it",
+            "replacement_key": "lesson/embeddings-in-process",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target_user_id"] == "global"
+
+        # Default shared search: drained.
+        hits = await _search_shared(client, "warm ollama kv cache batch")
+        assert all(h["key"] != "lesson/dead-tech" for h in hits)
+
+        # History read: present, marked, value verbatim.
+        hits = await _search_shared(client, "warm ollama kv cache batch",
+                                    include_superseded=True)
+        stale = [h for h in hits if h["key"] == "lesson/dead-tech"]
+        assert stale and stale[0]["status"] == "superseded"
+        assert "ollama" in stale[0]["value"]
+
+        # Double-supersede: no silent restamp of the audit fields.
+        again = await client.post("/memory/supersede", json={
+            "namespace": NS, "key": "lesson/dead-tech", "scope": "shared",
+            "target_user_id": "global", "reason": "stale again"})
+        assert again.status_code == 404
+    finally:
+        await _cleanup_shared(client, db_pool)
+
+
+@pytest.mark.asyncio
+async def test_shared_supersede_ignores_the_callers_project(client, db_pool):
+    """Shared rows carry no project; a caller's resolved project must not
+    make the match miss (the bridge always resolves one)."""
+    try:
+        await _seed_shared(client, "lesson/projectless", "v")
+        resp = await client.post("/memory/supersede", json={
+            "namespace": NS, "key": "lesson/projectless", "scope": "shared",
+            "project": "some-project", "target_user_id": "global",
+            "reason": "retired in a test",
+        })
+        assert resp.status_code == 200, resp.text
+    finally:
+        await _cleanup_shared(client, db_pool)
+
+
+@pytest.mark.asyncio
+async def test_supersede_rejects_personal_scopes(client, db_pool):
+    for bad in ("user", "machine"):
+        resp = await client.post("/memory/supersede", json={
+            "namespace": NS, "key": "k", "scope": bad,
+            "target_user_id": "someone", "reason": "no verb over personal scopes",
+        })
+        assert resp.status_code == 422, (bad, resp.text)
+
+
 @pytest.mark.asyncio
 async def test_forget_success_names_surviving_siblings(client, db_pool):
     """Deleting your own row under a shared key must say the key lives on.
