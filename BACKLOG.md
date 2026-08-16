@@ -305,7 +305,9 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   comment). Add updated_at + audit entries on principal create/patch/
   token-regenerate/deactivate; and the operator's keys ledger should carry
   a HOLDERS line per token so a rotation walks every client (the desktop
-  app was the holder everyone forgot).
+  app was the holder everyone forgot). Standing habit under the same
+  banner: cloud-resident assistant tokens (third-party VM, credentials
+  retained after bot deletion) rotate on a schedule, not on incident.
 
 - **SEC-9** An empty search result cannot be told apart from a wrong query.
   Three separate incidents on 2026-08-02, none of them permission-related:
@@ -439,18 +441,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
-- **GROKBOT-1** *(engram half SHIPPED + live-verified 2026-08-16: `grokbot`
-  principal minted to spec — no admin, no fleet write; chat-assistant
-  principal widened symmetrically; path-limited public endpoint up and
-  probed end-to-end — auth wall, 404 walls, round-trip. Story:
-  `fix/grokbot-1-shipped-2026-08-16` in project memory. Owner + the bot
-  independently ranked the exposure options the same way; owner ratified.)*
-  Remaining, all OWNER-side: (a) hand the bot its token + handoff packet;
-  (b) pull the admin god token OUT of the chat app and re-key it to the
-  widened assistant principal (the spec needs no admin — this is the
-  tightening half); (c) adopt a rotation habit for the cloud-resident
-  token (it lives on a third-party shared VM that retains credentials —
-  semi-exposed by construction).
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
