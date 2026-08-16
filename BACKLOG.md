@@ -454,6 +454,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the fleet's shared brain.
 
 
+- **PRES-2** Pin host on the presence beat — BACKUP host axis for the
+  seat-exempt admin role (requested by AB 2026-08-16, their
+  decision/admin-host-from-ab-registry). Presence rows carry no host and
+  admin claims no seat, so the store cannot say which box an admin session
+  is on; AB's spawn registry is the PRIMARY source (correct — they spawned
+  it), but when they have no session row or their liveness probe is blind
+  (remote grok case, measured 2026-08-16) the store is the only remaining
+  axis. Additive: optional `host` on PresenceUpdateRequest, bridge stamps
+  hostname, roster serves it. Never the primary; never gates anything.
+
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
   uncorrectable by its successor and out-ranked their own corrections at
