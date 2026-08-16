@@ -213,9 +213,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Immediate unblock, no code: the app session (current occupant of the
   ordinal, rightful reader) resolves its 7 open rows on the old address;
   the next claim then gets `beastchat-app-grok` granted.
-  Sub-finding, same sweep: something at tailnet 100.111.169.53 hammers
-  POST /session/claim with a dead token every ~2min, ongoing since at
-  least 08-15 — identify the box, refresh its credential.
 
 - **CURSOR-IDENT-1** ⏸ **ON HOLD (owner, 2026-08-13) pending more information**
   — do not act, and specifically do NOT add a per-project `.cursor/mcp.json`
