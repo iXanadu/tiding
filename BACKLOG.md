@@ -283,6 +283,30 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
+- **BRIDGE-2** A dead credential is INVISIBLE to the person whose surface
+  holds it. Measured on the operator's own desktop 2026-08-16: an app config
+  carried a rotated token for weeks–months (death date unrecoverable, see
+  AUDIT-2); the pre-Aug-12 bridge only spoke on tool calls, so the only
+  symptom was in-chat tool errors easily read as glitches; the post-Aug-12
+  bridge retried claim/presence on a timer — non-fatal by design (BRIDGE-1
+  treats failures as transient) — hammering prod with 401s every ~2min,
+  forever, silently. The operator learned of it from a peer agent reading
+  server logs. Two halves: (a) persistent auth failure must escalate into
+  the banner channel every tool result already renders (the seat-collision
+  mechanism), stating the config source that supplied the bad token;
+  (b) the claim/presence retry needs backoff-and-stop on repeated 401/403 —
+  a hard auth refusal is not a transient. The watcher got fail-loud auth
+  2026-07-21; the bridge heartbeat never did.
+
+- **AUDIT-2** Token rotations are unrecorded. principals has no updated_at
+  and the principal-CRUD endpoints write no audit rows, so "when did this
+  token die" — the first question of the BRIDGE-2 incident — was
+  unanswerable from the store (bounded only by an engram.keys header
+  comment). Add updated_at + audit entries on principal create/patch/
+  token-regenerate/deactivate; and the operator's keys ledger should carry
+  a HOLDERS line per token so a rotation walks every client (the desktop
+  app was the holder everyone forgot).
+
 - **SEC-9** An empty search result cannot be told apart from a wrong query.
   Three separate incidents on 2026-08-02, none of them permission-related:
   a personal-memory read that omitted `project` returned `200 — 0 hits`; a
