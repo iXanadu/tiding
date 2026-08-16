@@ -449,6 +449,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   or erase the last copy of that history." Owner's call, made with that
   fact stated. Pointer: `shared:reference/inbox-recovery-archive-2026-07-23`.
 
+- **DATA-2** The personal store's rows carry project="default" — a LITERAL
+  string one client has always sent on scope=user writes — so any client
+  that omits project (server-side NULL) finds 0 rows with no hint. Cost a
+  second assistant its entire first read of the personal store 2026-08-16
+  (it probed every scope/user_id combination and concluded empty; SEC-9
+  made the miss undiagnosable). Interim: both assistants now instructed to
+  send the literal. Real fix is a decision: migrate the ~24 rows to
+  project=NULL and update the writing client in the same arc (they must
+  move together — migrating alone breaks the incumbent's reads), or bless
+  "default" as the personal-store convention and document it. Pairs with
+  SEC-9 — this is exactly the empty-vs-wrong-partition ambiguity, measured
+  again.
+
 - **MEM-7** Shared lessons are write-mostly — now MEASURED, not argued
   (audit 2026-08-13, `audit/mem-7-lesson-corpus-2026-08-13` in project
   memory). *(Batch 1 DONE 2026-08-15: supersede verb extended to
