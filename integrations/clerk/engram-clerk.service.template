@@ -1,0 +1,23 @@
+[Unit]
+Description=engram clerk (always-on API-billed mail handler)
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=__PYTHON__ __REPO__/integrations/clerk/clerk.py
+Environment=ENGRAM_CLERK_API_URL=http://macmini:8920
+Environment=ENGRAM_CLERK_DRY_RUN=1
+EnvironmentFile=__SECRETS__   # ENGRAM_CLERK_TOKEN, _LLM_KEY, _LLM_BASE_URL, _LLM_MODEL
+Restart=on-failure
+RestartSec=60
+# exit 3 = dead credential; do not restart into a 401 hammer (BRIDGE-2)
+RestartPreventExitStatus=2 3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/engram-clerk
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

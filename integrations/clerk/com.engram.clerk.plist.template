@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.engram.clerk</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>__REPO__/integrations/clerk/clerk.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ENGRAM_CLERK_TOKEN</key><string>__TOKEN__</string>
+        <key>ENGRAM_CLERK_LLM_BASE_URL</key><string>__LLM_BASE__</string>
+        <key>ENGRAM_CLERK_LLM_KEY</key><string>__LLM_KEY__</string>
+        <key>ENGRAM_CLERK_LLM_MODEL</key><string>__LLM_MODEL__</string>
+        <key>ENGRAM_CLERK_DRY_RUN</key><string>1</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key>
+    <dict>
+        <!-- exit 2 (bad config) / 3 (dead credential) must NOT crashloop:
+             a dead token retried forever is the BRIDGE-2 hammer. -->
+        <key>SuccessfulExit</key><false/>
+    </dict>
+    <key>ThrottleInterval</key><integer>60</integer>
+    <key>StandardOutPath</key><string>__REPO__/logs/clerk.log</string>
+    <key>StandardErrorPath</key><string>__REPO__/logs/clerk.err</string>
+</dict>
+</plist>
