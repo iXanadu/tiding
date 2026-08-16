@@ -350,3 +350,26 @@ async def test_estate_transfer_requires_admin(enforced_client, two_writers):
         "from_principal": "mem8-alice", "to_principal": "mem8-bob",
     }, headers=two_writers["bob"])
     assert resp.status_code == 403
+
+
+# --- presence gate (PRES-1, rides this file's fixtures) --------------------
+
+@pytest.mark.asyncio
+async def test_fleet_read_only_principal_can_heartbeat_presence(enforced_client):
+    """A messaging member (fleet READ) must be able to report its own
+    liveness — send/ack/wait all work under the read gate, and presence was
+    the lone write-gated outlier until the first read-only principal hit it."""
+    try:
+        _, tok = await ps.create_principal(
+            name="mem8-reader-presence", type="agent",
+            read_namespaces=[NS], write_namespaces=[],
+        )
+        with patch("server.routers.memory.INBOX_NAMESPACE", NS):
+            resp = await enforced_client.post("/memory/presence", json={
+                "identity": "mem8-reader-presence", "project": "mem8test",
+                "state": "running", "provider": "grok",
+            }, headers={"Authorization": f"Bearer {tok}"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "ok"
+    finally:
+        await _cleanup_principals("mem8-reader-presence")

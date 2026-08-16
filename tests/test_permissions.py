@@ -419,10 +419,18 @@ async def test_principal_without_read_still_cannot_send(enforced_client):
 
 
 @pytest.mark.asyncio
-async def test_presence_still_requires_write(enforced_client):
-    """DELIBERATELY UNCHANGED: a heartbeat is not mail. It writes a row ABOUT
-    YOU into the namespace, addressed to nobody, so the mail argument does not
-    reach it. Pins that the relaxation stopped where its reasoning stopped."""
+async def test_presence_accepts_messaging_members(enforced_client):
+    """REVERSED 2026-08-16, deliberately — this test previously pinned
+    presence as write-gated ("a heartbeat is not mail"). That reasoning was
+    sound but incomplete: it assumed every messaging participant also holds
+    fleet write. The first principal designed WITHOUT fleet write (an
+    external assistant, excluded from the shared store on purpose) could
+    send, receive, and watch mail — yet rendered on the roster as deaf,
+    misleading every peer who checks the roster before DMing. Presence is
+    the write half of the fabric whose read half (roster) already sits under
+    the read gate; membership, not mail, is the operative argument.
+    Identity-in-presence remains self-asserted for writers and readers
+    alike — this changes who may heartbeat, not what a heartbeat proves."""
     try:
         _, raw_token = await ps.create_principal(
             name="presence-reader", type="agent",
@@ -434,9 +442,9 @@ async def test_presence_still_requires_write(enforced_client):
                   "state": "running"},
             headers={"Authorization": f"Bearer {raw_token}"},
         )
-        assert resp.status_code == 403, (
-            f"presence accepted a read-only principal ({resp.status_code}) — "
-            f"the relaxation leaked past the endpoints its argument covers"
+        assert resp.status_code == 200, (
+            f"presence refused a messaging member ({resp.status_code}) — "
+            f"a participant the roster can only show as deaf"
         )
     finally:
         await _cleanup_principal("presence-reader")

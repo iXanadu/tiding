@@ -1101,7 +1101,13 @@ async def wait_inbox(req: InboxWaitRequest, request: Request):
 async def update_presence(req: PresenceUpdateRequest, request: Request):
     """Self-reported liveness heartbeat: the harness POSTs its own state
     transitions (running → awaiting-input → done). Engram never scrapes."""
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "write")
+    # Gate on messaging MEMBERSHIP (read), matching every other protocol verb
+    # — send/ack/resolve/wait all write protocol rows under the read gate.
+    # Presence was the lone write-gated outlier, discovered 2026-08-16 when
+    # the first fleet-read-only principal (an external assistant with no
+    # fleet write BY DESIGN) could send and receive mail but not report its
+    # own liveness — a participant the roster could only show as deaf.
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
     try:
         if req.farewell:
             # The watcher OBSERVED the session's process exit. Checked before
