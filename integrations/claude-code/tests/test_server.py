@@ -14,6 +14,7 @@ from engram_mcp.server import (
     memory_search,
     memory_keys,
     memory_get,
+    memory_flag_deletion,
     memory_forget,
     memory_status,
     memory_whoami,
@@ -290,6 +291,61 @@ async def test_memory_forget_not_found(respx_mock):
     )
     result = await memory_forget(key="missing")
     assert "No memory found" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_forget_denied_surfaces_controller(respx_mock):
+    """MEM-8: a 403 refusal renders as guidance naming the controller and
+    both escape valves — never a raised stack trace."""
+    respx_mock.post("/memory/forget").mock(
+        return_value=httpx.Response(
+            403,
+            json={
+                "detail": (
+                    "'their-key' is controlled by 'grok' — only its "
+                    "controller or an admin can hard-delete it. To retire "
+                    "it, use memory/supersede; to request true destruction, "
+                    "use memory/flag_deletion."
+                )
+            },
+        )
+    )
+    result = await memory_forget(key="their-key")
+    assert result.startswith("REFUSED:")
+    assert "grok" in result
+    assert "flag_deletion" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_flag_deletion_ok(respx_mock):
+    respx_mock.post("/memory/flag_deletion").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "key": "leaked-key",
+                "namespace": "fleet",
+                "guidance": "queued",
+            },
+        )
+    )
+    result = await memory_flag_deletion(
+        key="leaked-key", reason="credential stored by mistake", scope="shared"
+    )
+    assert "Flagged 'leaked-key' for deletion" in result
+    assert "hidden from default reads NOW" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_flag_deletion_not_found(respx_mock):
+    respx_mock.post("/memory/flag_deletion").mock(
+        return_value=httpx.Response(404, json={"detail": "no row"})
+    )
+    result = await memory_flag_deletion(
+        key="missing", reason="cleanup", scope="shared"
+    )
+    assert "No row 'missing'" in result
+    assert "re-stamped" in result
 
 
 @respx.mock(base_url="http://localhost:8920")

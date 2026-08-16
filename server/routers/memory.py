@@ -29,6 +29,8 @@ from server.models import (
     InboxSendResponse,
     InboxWaitRequest,
     InboxWaitResponse,
+    MemoryFlagDeletionRequest,
+    MemoryFlagDeletionResponse,
     MemoryForgetRequest,
     MemoryForgetResponse,
     MemoryGetRequest,
@@ -60,6 +62,7 @@ from server.services.memory_service import (
     INBOX_NAMESPACE,
     INBOX_SCOPE,
     PRESENCE_SCOPE,
+    ForgetDenied,
     OwnershipConflict,
     VersionConflict,
     inbox_ack,
@@ -71,6 +74,7 @@ from server.services.memory_service import (
     inbox_resolve,
     inbox_resolve_thread,
     inbox_send,
+    memory_flag_deletion,
     memory_forget,
     memory_get,
     memory_keys,
@@ -453,13 +457,34 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
     principal = get_current_principal(request)
     check_namespace_access(principal, req.namespace, "write")
     try:
-        deleted = await memory_forget(
-            namespace=req.namespace,
-            key=req.key,
-            scope=req.scope,
-            user_id=req.user_id,
-            project=req.project,
-        )
+        try:
+            deleted = await memory_forget(
+                namespace=req.namespace,
+                key=req.key,
+                scope=req.scope,
+                user_id=req.user_id,
+                project=req.project,
+                actor_principal=(principal or {}).get("name"),
+                actor_is_admin=bool((principal or {}).get("is_admin")),
+            )
+        except ForgetDenied as denied:
+            # MEM-8: destruction is self-only. Refusals are audited — a
+            # denied delete attempt is exactly the event the trail is for.
+            await audit("memory.forget.denied", principal, {
+                "namespace": req.namespace, "key": req.key,
+                "scope": req.scope, "user_id": req.user_id,
+                "project": req.project, "controller": denied.controller,
+            })
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"'{req.key}' is controlled by '{denied.controller}' — "
+                    f"only its controller or an admin can hard-delete it. "
+                    f"To retire it, use memory/supersede (kept as history); "
+                    f"to request true destruction, use memory/flag_deletion "
+                    f"(hidden immediately, purged after admin review)."
+                ),
+            )
         status = "ok" if deleted else "not_found"
         forget_warnings: list[str] = []
         if req.scope == "project":
@@ -500,9 +525,61 @@ async def forget_memory(req: MemoryForgetRequest, request: Request):
         return MemoryForgetResponse(
             status=status, key=req.key, partition_warnings=forget_warnings
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("memory_forget failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/flag_deletion", response_model=MemoryFlagDeletionResponse)
+async def flag_deletion(req: MemoryFlagDeletionRequest, request: Request):
+    """MEM-8: request physical destruction of a row you may not delete.
+
+    Permission is WRITE on the namespace — broader than forget (self-only),
+    narrower than supersede (read): asking for destruction is a write-class
+    act. The row is hidden from default reads at flag time (a flagged
+    secret's exposure ends immediately) and an admin/librarian executes or
+    rejects the request from the queue.
+    """
+    principal = get_current_principal(request)
+    check_namespace_access(principal, req.namespace, "write")
+    try:
+        row = await memory_flag_deletion(
+            namespace=req.namespace,
+            key=req.key,
+            scope=req.scope,
+            user_id=req.user_id,
+            project=req.project,
+            actor_principal=(principal or {}).get("name"),
+            reason=req.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    await audit("memory.flag_deletion", principal, {
+        "namespace": req.namespace, "key": req.key, "scope": req.scope,
+        "user_id": req.user_id, "project": req.project,
+        "reason": req.reason, "found": row is not None,
+    })
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no row '{req.key}' at scope={req.scope} "
+                f"user_id='{req.user_id}' (rows already flagged for deletion "
+                f"are not re-stamped — the queue holds the first reason)"
+            ),
+        )
+    return MemoryFlagDeletionResponse(
+        status="ok",
+        key=row["key"],
+        namespace=row["namespace"],
+        guidance=(
+            "The row is hidden from default reads NOW and queued for "
+            "physical deletion pending admin review. Nothing is destroyed "
+            "until the librarian executes the request."
+        ),
+    )
 
 
 @router.post("/supersede", response_model=MemorySupersedeResponse)

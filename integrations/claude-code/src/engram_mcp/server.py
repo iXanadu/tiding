@@ -1058,17 +1058,95 @@ async def memory_forget(
         )
     except AmbiguousIdentity as e:
         return _identity_error_message(e)
-    result = await _client.forget(
-        key=key,
-        namespace=settings.memory_namespace,
-        scope=resolved_scope,
-        user_id=user_id,
-        project=project,
-        project_dir=project_dir or None,
-    )
+    try:
+        result = await _client.forget(
+            key=key,
+            namespace=settings.memory_namespace,
+            scope=resolved_scope,
+            user_id=user_id,
+            project=project,
+            project_dir=project_dir or None,
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            # MEM-8: destruction is self-only. The server's detail names the
+            # controller and both escape valves (supersede / flag_deletion) —
+            # surface it as guidance, not a stack trace.
+            try:
+                detail = e.response.json().get("detail", "")
+            except Exception:
+                detail = e.response.text
+            return f"REFUSED: {detail}"
+        raise
     if result["status"] == "not_found":
         return _append_guidance(f"No memory found with key '{key}'", result)
     return f"Deleted memory '{key}'"
+
+
+@mcp.tool()
+async def memory_flag_deletion(
+    key: str,
+    reason: str,
+    scope: str = "project",
+    project_dir: str = "",
+    user_id: str = "",
+    project: str = "",
+) -> str:
+    """Request TRUE destruction of a memory row you cannot (or should not) delete.
+
+    memory_forget only works on rows you control; memory_supersede retires a
+    row but keeps its content readable as history. This is the third verb:
+    for content that must actually cease to exist — the classic case is a
+    credential or secret stored by mistake, where retirement still leaves it
+    readable. The flag hides the row from ALL default reads immediately (the
+    exposure ends now) and queues it for an admin/librarian to review and
+    physically purge or reject. Nothing is destroyed until that review.
+
+    Args:
+        key: The exact key of the row to flag
+        reason: Required. Why it must be destroyed rather than retired —
+            the reviewer acts on this
+        scope: project (default), shared, user, or machine
+        project_dir: Required when scope=project
+        user_id: The row's writer when it is not you (from the search hit;
+            shared rows usually carry 'global')
+        project: Admin override — flag in this project instead of the
+            auto-resolved one
+    """
+    try:
+        resolved_scope, resolved_user_id, resolved_project = (
+            await _resolve_partition_with_identity(
+                scope or None,
+                project_dir or None,
+                user_id_override=user_id or None,
+                project_override=project or None,
+            )
+        )
+    except AmbiguousIdentity as e:
+        return _identity_error_message(e)
+    try:
+        result = await _client.flag_deletion(
+            key=key,
+            namespace=settings.memory_namespace,
+            scope=resolved_scope,
+            user_id=resolved_user_id,
+            reason=reason,
+            project=resolved_project,
+            project_dir=project_dir or None,
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return (
+                f"No row '{key}' at that partition — check the search hit's "
+                f"user_id/scope, and note an already-flagged row is not "
+                f"re-stamped (the queue holds the first reason)."
+            )
+        raise
+    return _append_guidance(
+        f"Flagged '{key}' for deletion — hidden from default reads NOW, "
+        f"queued for admin review before any physical purge.",
+        result,
+    )
 
 
 @mcp.tool()

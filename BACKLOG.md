@@ -391,24 +391,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
-- **MEM-8** Memory verb ladder + custody model (owner-specced 2026-08-16, design
-  in project memory `decision/memory-verb-ladder-and-custody-2026-08-16`).
-  Today `forget` is namespace-write-gated with no owner check — any fleet
-  writer can hard-delete another writer's rows. Spec: (1) supersede stays
-  open to any namespace writer (correction is frictionless, unchanged);
-  (2) NEW flag-for-deletion — any writer, reason required, hides the row
-  immediately (supersede semantics) and enqueues it for physical purge —
-  needed because a superseded row still holds its content (leaked-credential
-  class); (3) `forget` gated to the row's controller or admin/librarian
-  executing the queue (queue review joins the librarian's standing curation
-  job); (4) estate transfer — admin reassigns a departed principal's rows to
-  a successor via a `custodian` field; `owner` = original author, IMMUTABLE
-  (attribution never moves; forget-gate checks custodian ?? owner).
-  Prerequisite for GROKBOT-1's token mint.
-
-- **GROKBOT-1** Senior Assistant principals (owner-specced 2026-08-16, same
-  design memory). Mint `grokbot`: non-admin, read = dev-agent set + the
-  owner's personal namespace (disclosure trade accepted by owner), write =
+- **GROKBOT-1** Senior Assistant principals (owner-specced 2026-08-16, design
+  in project memory `decision/memory-verb-ladder-and-custody-2026-08-16`;
+  owner go given same day). Mint `grokbot`: non-admin, read = dev-agent set +
+  the owner's personal namespace (disclosure trade accepted by owner), write =
   personal namespace + own namespace; NO fleet write (internet-facing bot
   must not write the shared store — prompt-injection surface). Symmetric
   tightening of the existing chat assistant: widen its reads to the dev set,
@@ -416,7 +402,7 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Network half: public HTTPS endpoint path-limited to `/memory/*` + `/health`
   (no /admin, no /dashboard), proxied to the store; verify prod
   `ENGRAM_REQUIRE_AUTH=true` first. Token treated as semi-exposed:
-  scheduled rotation. Gated on MEM-8 (verb gates) + owner go.
+  scheduled rotation. MEM-8 verb gates shipped — unblocked.
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were

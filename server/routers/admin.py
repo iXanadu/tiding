@@ -10,11 +10,23 @@ from server.models import (
     BulkDeleteRequest,
     BulkDeleteResponse,
     CleanupResponse,
+    DeletionQueueItem,
+    DeletionQueueResponse,
+    DeletionRejectRequest,
+    DeletionRejectResponse,
+    EstateTransferRequest,
+    EstateTransferResponse,
     MemoryListResponse,
     MemoryStatsResponse,
     MemoryUpdateRequest,
     MemoryUpdateResponse,
 )
+from server.services.memory_service import (
+    deletion_queue_list,
+    deletion_queue_reject,
+    estate_transfer,
+)
+from server.services.principal_service import get_principal
 from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
@@ -239,6 +251,112 @@ async def bulk_delete_endpoint(
     except Exception as e:
         logger.exception("bulk_delete failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/estate/transfer", response_model=EstateTransferResponse)
+async def estate_transfer_endpoint(
+    req: EstateTransferRequest,
+    _caller=Depends(admin_or_open),
+):
+    """MEM-8: reassign a departed principal's destruction rights to an heir.
+
+    Sets `custodian` on the rows the departed principal controls; `owner` is
+    NEVER touched — attribution is immutable, a transferred row reads
+    owner=<author>, custodian=<heir>. Correction needed no transfer
+    (supersede is already open to successors); this moves only the right to
+    destroy, deliberately, once, on the operator's word.
+    """
+    heir = await get_principal(req.to_principal.strip().lower())
+    if heir is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"to_principal '{req.to_principal}' is not a known principal "
+                f"— an estate cannot be transferred to a name that cannot "
+                f"authenticate (typos here would strand destruction rights)."
+            ),
+        )
+    try:
+        rows = await estate_transfer(
+            from_principal=req.from_principal,
+            to_principal=req.to_principal,
+            namespace=req.namespace,
+            project=req.project,
+            dry_run=req.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if not req.dry_run:
+        logger.warning(
+            f"ESTATE TRANSFER {req.from_principal} -> {req.to_principal} "
+            f"ns={req.namespace} project={req.project} rows={rows}"
+        )
+        await audit("admin.estate_transfer", _caller, {
+            "from_principal": req.from_principal,
+            "to_principal": req.to_principal,
+            "namespace": req.namespace, "project": req.project,
+            "rows": rows,
+        })
+    return EstateTransferResponse(
+        status="ok",
+        from_principal=req.from_principal,
+        to_principal=req.to_principal,
+        rows=rows,
+        dry_run=req.dry_run,
+        guidance=(
+            f"DRY RUN — {rows} row(s) would change custodian; re-send with "
+            f'"dry_run": false to execute.'
+            if req.dry_run else
+            f"{rows} row(s) now carry custodian='{req.to_principal}'. "
+            f"owner (authorship) is unchanged on every one."
+        ),
+    )
+
+
+@router.get("/deletion-queue", response_model=DeletionQueueResponse)
+async def deletion_queue_endpoint(
+    limit: int = Query(200, ge=1, le=1000),
+    _caller=Depends(admin_or_open),
+):
+    """MEM-8: rows flagged for physical destruction, awaiting review.
+
+    Execute one by deleting it via /memory/forget (admin bypasses the
+    controller gate); decline one via /admin/deletion-queue/reject, which
+    restores its prior lifecycle status.
+    """
+    items = await deletion_queue_list(limit=limit)
+    return DeletionQueueResponse(
+        status="ok", items=[DeletionQueueItem(**i) for i in items]
+    )
+
+
+@router.post("/deletion-queue/reject", response_model=DeletionRejectResponse)
+async def deletion_queue_reject_endpoint(
+    req: DeletionRejectRequest,
+    _caller=Depends(admin_or_open),
+):
+    try:
+        row = await deletion_queue_reject(
+            namespace=req.namespace,
+            key=req.key,
+            scope=req.scope,
+            user_id=req.user_id,
+            project=req.project,
+            actor_principal=(_caller or {}).get("name"),
+            reason=req.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no deletion-flagged row '{req.key}' at that partition",
+        )
+    await audit("admin.deletion_queue.reject", _caller, {
+        "namespace": req.namespace, "key": req.key, "scope": req.scope,
+        "user_id": req.user_id, "project": req.project, "reason": req.reason,
+    })
+    return DeletionRejectResponse(status="ok", key=req.key)
 
 
 @router.post("/cleanup", response_model=CleanupResponse)

@@ -109,6 +109,37 @@ class OwnershipConflict(Exception):
         )
 
 
+class ForgetDenied(Exception):
+    """Raised when a principal tries to hard-delete a row it does not control.
+
+    MEM-8 (2026-08-16): destruction is self-only. The controller of a row is
+    its ``custodian`` when set (estate transfer), otherwise its ``owner`` (the
+    original author — immutable). Anyone with namespace write may still
+    supersede or flag the row for deletion; only the controller or an admin
+    may make it physically cease to exist, because deletion is the one verb
+    whose damage only backups can undo. Before this gate, any fleet writer
+    could hard-delete any other writer's rows — the namespace wall was the
+    only check, and every dev agent shares the namespace.
+
+    Carries the controller's name so the refusal is diagnosable, same
+    doctrine as OwnershipConflict.
+    """
+
+    def __init__(self, controller: str, attempted_by: str | None):
+        self.controller = controller
+        self.attempted_by = attempted_by
+        super().__init__(
+            f"controlled by {controller!r}, not {attempted_by!r}"
+        )
+
+
+# MEM-8: lifecycle statuses that drain a row from default reads. 'superseded'
+# is retirement (MEM-3); 'deletion_requested' additionally queues the row for
+# physical purge by an admin/librarian — hidden IMMEDIATELY so a flagged
+# secret's exposure window closes at flag time, not at sweep time.
+HIDDEN_STATUSES = ("superseded", "deletion_requested")
+
+
 def _normalize_key_fields(
     namespace: str | None = None,
     key: str | None = None,
@@ -347,7 +378,7 @@ async def memory_set(
                 WHERE namespace = $1 AND key = $2 AND scope = $3
                   AND project IS NOT DISTINCT FROM $4
                   AND user_id IS DISTINCT FROM $5
-                  AND COALESCE(metadata->>'status', '') <> 'superseded'
+                  AND COALESCE(metadata->>'status', '') NOT IN ('superseded', 'deletion_requested')
                 """,
                 namespace, key, scope, project, user_id, json.dumps(stamp),
             )
@@ -479,7 +510,7 @@ async def memory_get(
                 WHERE namespace = $1 AND key = $2 AND scope = $3
                   AND project IS NOT DISTINCT FROM $4
                   AND (expires_at IS NULL OR expires_at > NOW())
-                  AND COALESCE(metadata->>'status', '') <> 'superseded'
+                  AND COALESCE(metadata->>'status', '') NOT IN ('superseded', 'deletion_requested')
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -501,6 +532,11 @@ async def memory_get(
                   AND user_id IS NOT DISTINCT FROM $4
                   AND project IS NOT DISTINCT FROM $5
                   AND (expires_at IS NULL OR expires_at > NOW())
+                  -- MEM-8: superseded rows stay reachable by exact key
+                  -- (history), but a deletion-flagged row is content whose
+                  -- exposure must END at flag time — no default read path
+                  -- may serve it while it awaits the purge review.
+                  AND COALESCE(metadata->>'status', '') <> 'deletion_requested'
                 """,
                 namespace,
                 key,
@@ -581,7 +617,7 @@ async def memory_search(
                   AND scope <> 'inbox'
                   AND ($11 OR user_id IS NOT DISTINCT FROM $5)
                   AND project IS NOT DISTINCT FROM $6
-                  AND ($12 OR COALESCE(metadata->>'status', '') <> 'superseded')
+                  AND ($12 OR COALESCE(metadata->>'status', '') NOT IN ('superseded', 'deletion_requested'))
                 ORDER BY embedding <=> $1
                 LIMIT $7 * 3
             )
@@ -736,25 +772,255 @@ async def memory_forget(
     scope: str = "user",
     user_id: str = "default",
     project: str | None = None,
+    actor_principal: str | None = None,
+    actor_is_admin: bool = False,
 ) -> bool:
-    """Delete a memory by key within a namespace. Returns True if found and deleted."""
+    """Hard-delete a memory. Returns True if found and deleted.
+
+    MEM-8 destruction gate: only the row's controller (custodian, falling back
+    to owner) or an admin may delete. The check and the delete are one
+    transaction with the row locked — a gate that releases the row before the
+    delete has the race it exists to close (same discipline as OWN-1 and
+    if_match).
+
+    Two deliberate pass-throughs, both documented rather than silent:
+    - ``owner IS NULL`` rows predate attribution; locking them away would make
+      the legacy corpus undeletable by everyone to protect authorship nobody
+      recorded (mirrors OWN-1's NULL rule).
+    - ``actor_principal is None`` is legacy/anonymous auth mode — there is no
+      identity to gate on, so behavior is unchanged there. The gate is only as
+      strong as require_auth, which is the posture that makes every other gate
+      real too.
+    """
     namespace, key, scope, user_id, project = _normalize_key_fields(
         namespace, key, scope, user_id, project
     )
     pool = await get_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            """DELETE FROM memories
-               WHERE namespace = $1 AND key = $2 AND scope = $3
-                 AND user_id IS NOT DISTINCT FROM $4
-                 AND project IS NOT DISTINCT FROM $5""",
-            namespace,
-            key,
-            scope,
-            user_id,
-            project,
-        )
+        async with conn.transaction():
+            if actor_principal is not None and not actor_is_admin:
+                row = await conn.fetchrow(
+                    """SELECT owner, custodian FROM memories
+                       WHERE namespace = $1 AND key = $2 AND scope = $3
+                         AND user_id IS NOT DISTINCT FROM $4
+                         AND project IS NOT DISTINCT FROM $5
+                       FOR UPDATE""",
+                    namespace, key, scope, user_id, project,
+                )
+                if row is not None:
+                    controller = row["custodian"] or row["owner"]
+                    if controller is not None and controller != actor_principal:
+                        raise ForgetDenied(controller, actor_principal)
+            result = await conn.execute(
+                """DELETE FROM memories
+                   WHERE namespace = $1 AND key = $2 AND scope = $3
+                     AND user_id IS NOT DISTINCT FROM $4
+                     AND project IS NOT DISTINCT FROM $5""",
+                namespace,
+                key,
+                scope,
+                user_id,
+                project,
+            )
     return result == "DELETE 1"
+
+
+async def memory_flag_deletion(
+    namespace: str,
+    key: str,
+    scope: str,
+    user_id: str,
+    project: str | None,
+    actor_principal: str | None,
+    reason: str,
+) -> dict | None:
+    """MEM-8 verb 2: request physical destruction of a row you may not delete.
+
+    Any namespace writer may flag; the flag hides the row from default reads
+    IMMEDIATELY (supersede semantics — for a leaked credential the exposure
+    window closes at flag time) and enqueues it for an admin/librarian to
+    review and execute or reject. The row's prior lifecycle status is
+    preserved in the stamp so a rejection can restore it exactly.
+
+    Reaches the four data scopes (project/shared/user/machine); protocol
+    scopes are rejected at the router like every other data verb. Rows
+    already flagged are not re-stamped (first reason wins; the queue is the
+    place to argue).
+    """
+    scope = (scope or "").lower()
+    if scope not in ("project", "shared", "user", "machine"):
+        raise ValueError(
+            "flag_deletion reaches data scopes only "
+            "(project/shared/user/machine)"
+        )
+    namespace, key, scope, user_id, project = _normalize_key_fields(
+        namespace, key, scope, user_id, project
+    )
+    if not (reason or "").strip():
+        raise ValueError(
+            "flag_deletion requires a reason — the reviewer who executes "
+            "the destruction acts on it"
+        )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            prior = await conn.fetchval(
+                """SELECT metadata->>'status' FROM memories
+                   WHERE namespace = $1 AND key = $2 AND scope = $3
+                     AND user_id IS NOT DISTINCT FROM $4
+                     AND project IS NOT DISTINCT FROM $5
+                   FOR UPDATE""",
+                namespace, key, scope, user_id, project,
+            )
+            stamp = {
+                "status": "deletion_requested",
+                "deletion_flagged_at": datetime.now(timezone.utc).isoformat(),
+                "deletion_flagged_by_principal": actor_principal,
+                "deletion_reason": reason.strip(),
+            }
+            if prior:
+                stamp["deletion_prior_status"] = prior
+            row = await conn.fetchrow(
+                """
+                UPDATE memories
+                SET metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
+                WHERE namespace = $1 AND key = $2 AND scope = $3
+                  AND user_id IS NOT DISTINCT FROM $4
+                  AND project IS NOT DISTINCT FROM $5
+                  AND COALESCE(metadata->>'status', '') <> 'deletion_requested'
+                RETURNING namespace, key, scope, user_id, project, owner
+                """,
+                namespace, key, scope, user_id, project, json.dumps(stamp),
+            )
+    return dict(row) if row else None
+
+
+async def deletion_queue_list(limit: int = 200) -> list[dict]:
+    """Rows awaiting the librarian's destruction review, oldest flag first."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT namespace, key, scope, user_id, project, owner, custodian,
+                   metadata->>'deletion_flagged_at' AS flagged_at,
+                   metadata->>'deletion_flagged_by_principal' AS flagged_by,
+                   metadata->>'deletion_reason' AS reason
+            FROM memories
+            WHERE metadata->>'status' = 'deletion_requested'
+            ORDER BY metadata->>'deletion_flagged_at' NULLS LAST
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+async def deletion_queue_reject(
+    namespace: str,
+    key: str,
+    scope: str,
+    user_id: str,
+    project: str | None,
+    actor_principal: str | None,
+    reason: str,
+) -> dict | None:
+    """Admin declines a deletion request: restore the row's prior status.
+
+    The flag stamps stay in metadata (renamed to ``deletion_rejected_*``) so
+    the request and its outcome remain readable — the queue is an audit
+    surface, not a scratchpad.
+    """
+    namespace, key, scope, user_id, project = _normalize_key_fields(
+        namespace, key, scope, user_id, project
+    )
+    if not (reason or "").strip():
+        raise ValueError("rejecting a deletion request requires a reason")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            md_raw = await conn.fetchval(
+                """SELECT metadata FROM memories
+                   WHERE namespace = $1 AND key = $2 AND scope = $3
+                     AND user_id IS NOT DISTINCT FROM $4
+                     AND project IS NOT DISTINCT FROM $5
+                     AND metadata->>'status' = 'deletion_requested'
+                   FOR UPDATE""",
+                namespace, key, scope, user_id, project,
+            )
+            if md_raw is None:
+                return None
+            md = json.loads(md_raw) if isinstance(md_raw, str) else dict(md_raw)
+            prior = md.pop("deletion_prior_status", None)
+            if prior:
+                md["status"] = prior
+            else:
+                md.pop("status", None)
+            md["deletion_rejected_at"] = datetime.now(timezone.utc).isoformat()
+            md["deletion_rejected_by_principal"] = actor_principal
+            md["deletion_rejected_reason"] = reason.strip()
+            row = await conn.fetchrow(
+                """
+                UPDATE memories SET metadata = $6::jsonb
+                WHERE namespace = $1 AND key = $2 AND scope = $3
+                  AND user_id IS NOT DISTINCT FROM $4
+                  AND project IS NOT DISTINCT FROM $5
+                RETURNING namespace, key, scope, user_id, project
+                """,
+                namespace, key, scope, user_id, project, json.dumps(md),
+            )
+    return dict(row) if row else None
+
+
+async def estate_transfer(
+    from_principal: str,
+    to_principal: str,
+    namespace: str | None = None,
+    project: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """MEM-8 verb 4: reassign a departed principal's destruction rights.
+
+    Sets ``custodian`` on every data-scope row the departed principal
+    controls (custodian = from, or custodian unset and owner = from).
+    ``owner`` is NEVER touched — attribution is immutable by construction;
+    a transferred row reads ``owner=<author>, custodian=<heir>``.
+
+    Admin-only (enforced at the router). Deliberately excludes protocol
+    scopes: inbox/presence/seat rows are addressing state where user_id
+    means destination, not authorship — an estate has no claim there.
+    Correction needs no transfer (supersede is already open to successors);
+    this moves only the right to destroy, which is why it is a deliberate
+    owner-level act and not something a peer can infer.
+    """
+    from_p = (from_principal or "").strip().lower()
+    to_p = (to_principal or "").strip().lower()
+    if not from_p or not to_p:
+        raise ValueError("estate_transfer requires from_principal and to_principal")
+    if from_p == to_p:
+        raise ValueError("estate_transfer from and to are the same principal")
+    where = """
+        (custodian = $1 OR (custodian IS NULL AND owner = $1))
+        AND scope IN ('project', 'shared', 'user', 'machine')
+        AND ($3::text IS NULL OR namespace = $3)
+        AND ($4::text IS NULL OR project = $4)
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if dry_run:
+            # $2 (the heir) appears in a tautology so the prepared statement
+            # can type it — the count must bind identically to the update.
+            return await conn.fetchval(
+                f"SELECT COUNT(*) FROM memories WHERE {where} AND $2::text IS NOT NULL",
+                from_p, to_p, namespace, project,
+            )
+        result = await conn.execute(
+            f"UPDATE memories SET custodian = $2 WHERE {where}",
+            from_p, to_p, namespace, project,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
 
 
 async def partition_siblings(

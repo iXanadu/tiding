@@ -486,6 +486,30 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    async def flag_deletion(
+        self,
+        key: str,
+        namespace: str,
+        scope: str,
+        user_id: str,
+        reason: str,
+        project: str | None = None,
+        project_dir: str | None = None,
+    ) -> dict:
+        body: dict = {
+            "namespace": namespace,
+            "key": key,
+            "scope": scope,
+            "user_id": user_id,
+            "reason": reason,
+        }
+        if project is not None:
+            body["project"] = project
+        return await self._request(
+            "POST", "/memory/flag_deletion", json=body,
+            headers=self._provenance_headers(project_dir),
+        )
+
     async def forget(
         self,
         key: str,

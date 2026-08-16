@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS memories (
     expires_at      TIMESTAMPTZ,
     metadata        JSONB,
     owner           TEXT,
+    custodian       TEXT,
     UNIQUE NULLS NOT DISTINCT (namespace, key, scope, user_id, project)
 );
 
@@ -152,6 +153,16 @@ BEGIN
     -- Backfill owner from metadata.principal where available
     UPDATE memories SET owner = metadata->>'principal'
     WHERE owner IS NULL AND metadata->>'principal' IS NOT NULL;
+
+    -- MEM-8: custody is separable from authorship. `owner` records who WROTE
+    -- the row and never changes; `custodian` records who currently holds
+    -- destruction rights (NULL = the author). Estate transfer sets it.
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'memories' AND column_name = 'custodian'
+    ) THEN
+        ALTER TABLE memories ADD COLUMN custodian TEXT;
+    END IF;
 
     -- Normalize inbox addresses to lowercase (case-insensitive addressing)
     UPDATE memories SET user_id = LOWER(user_id)

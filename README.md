@@ -341,7 +341,13 @@ curl -X POST http://localhost:8920/memory/keys \
 
 #### `POST /memory/forget`
 
-Delete a memory by key.
+Hard-delete a memory by key. **Destruction is self-only (MEM-8):** only the
+row's *controller* — its `custodian` when set, otherwise its `owner` (the
+original author) — or an admin may delete it. Anyone else with namespace
+write gets a 403 naming the controller and pointing at the two escape
+valves: `supersede` (retire, keep as history) and `flag_deletion` (request
+true destruction). Rows with no recorded owner (pre-attribution legacy)
+keep the old namespace-write behavior.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -350,6 +356,37 @@ Delete a memory by key.
 | `scope` | string | `"user"` | Scope filter |
 | `user_id` | string | `"default"` | Identity within namespace |
 | `project` | string | `null` | Project name (for scope=project deletes) |
+
+#### `POST /memory/flag_deletion`
+
+Request true destruction of a row you may not (or should not) delete
+yourself. Needs namespace **write**. The row is hidden from all default
+reads *immediately* — for a credential stored by mistake, the exposure ends
+at flag time — and enters an admin review queue (`GET /admin/deletion-queue`).
+Nothing is physically destroyed until an admin executes the request (an
+ordinary admin `forget`) or rejects it (`POST /admin/deletion-queue/reject`,
+which restores the row's prior lifecycle status). Contrast with `supersede`,
+which retires a row but deliberately keeps its content readable as history.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` | string | required | System identifier |
+| `key` | string | required | Key to flag |
+| `scope` | string | `"project"` | `project`, `shared`, `user`, or `machine` |
+| `user_id` | string | `"default"` | The row's writer |
+| `project` | string | `null` | Project name (for scope=project) |
+| `reason` | string | required | Why destruction, not retirement — the reviewer acts on it |
+
+#### `POST /admin/estate/transfer` (admin)
+
+Reassign a **departed** principal's destruction rights to a successor: sets
+`custodian` on every data-scope row the departed principal controls.
+`owner` is never touched — attribution is immutable; a transferred row reads
+`owner=<author>, custodian=<heir>`. Correction never needs a transfer
+(supersede is already open to successors); this moves only the right to
+destroy, deliberately, on the operator's word. Supports `dry_run`, and
+optional `namespace` / `project` filters. The heir must be an existing
+principal.
 
 ### Caller-Scoped Identity Endpoints
 
@@ -588,7 +625,7 @@ The MCP bridge resolves project identity from `.engram.cfg` in the repo root (wa
 project = my-project-name
 ```
 
-**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, **`memory_keys`** (deterministic prefix listing — "every key under `wip/`", or with an empty prefix "did that agent store anything?"; search ranks, this enumerates), `memory_forget`; the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
+**Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, **`memory_keys`** (deterministic prefix listing — "every key under `wip/`", or with an empty prefix "did that agent store anything?"; search ranks, this enumerates), `memory_forget` (hard delete — self-only per MEM-8), `memory_supersede` (retire another writer's stale row, kept as history), **`memory_flag_deletion`** (request true destruction — hidden immediately, purged only after admin review); the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
 
 The bridge also installs the **`engram-inbox-wait`** console script — arm it at session start (under Claude Code's Monitor tool) so the session wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake watcher](#inbox-inter-agent-messaging).
 

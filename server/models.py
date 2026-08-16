@@ -307,6 +307,30 @@ class MemorySupersedeResponse(BaseModel):
     guidance: str | None = None
 
 
+class MemoryFlagDeletionRequest(_NamespacedRequest):
+    """MEM-8: request physical destruction of a row (any namespace writer).
+
+    The flag hides the row from default reads immediately and enqueues it for
+    an admin/librarian to execute or reject. Unlike supersede this targets
+    TRUE destruction — the class of content that must cease to exist (e.g. a
+    credential stored by mistake), where retirement still leaves it readable.
+    """
+    namespace: str
+    key: str
+    scope: str = Field(default="project", pattern="^(project|shared|user|machine)$")
+    user_id: str = Field(default="default", max_length=MAX_ADDR)
+    project: str | None = Field(default=None, max_length=MAX_ADDR)
+    # Required: the reviewer who executes the destruction acts on it.
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class MemoryFlagDeletionResponse(BaseModel):
+    status: str
+    key: str
+    namespace: str | None = None
+    guidance: str | None = None
+
+
 # --- Admin models ---
 
 class MemoryListItem(BaseModel):
@@ -338,6 +362,64 @@ class MemoryUpdateRequest(_NamespacedRequest):
 
 class MemoryUpdateResponse(BaseModel):
     status: str
+
+
+class EstateTransferRequest(BaseModel):
+    """MEM-8: reassign a departed principal's destruction rights (admin-only).
+
+    Sets `custodian` on the rows the departed principal controls; `owner` is
+    never touched — attribution is immutable. extra='forbid' for the same
+    reason BulkDeleteRequest carries it: a misspelled safety field on a
+    destructive-adjacent admin verb must refuse, not silently proceed.
+    """
+    model_config = {"extra": "forbid"}
+    from_principal: str = Field(min_length=1, max_length=128)
+    to_principal: str = Field(min_length=1, max_length=128)
+    namespace: str | None = Field(default=None, max_length=128)
+    project: str | None = Field(default=None, max_length=128)
+    dry_run: bool = False
+
+
+class EstateTransferResponse(BaseModel):
+    status: str
+    from_principal: str
+    to_principal: str
+    rows: int
+    dry_run: bool = False
+    guidance: str | None = None
+
+
+class DeletionQueueItem(BaseModel):
+    namespace: str
+    key: str
+    scope: str
+    user_id: str
+    project: str | None = None
+    owner: str | None = None
+    custodian: str | None = None
+    flagged_at: str | None = None
+    flagged_by: str | None = None
+    reason: str | None = None
+
+
+class DeletionQueueResponse(BaseModel):
+    status: str
+    items: list[DeletionQueueItem]
+
+
+class DeletionRejectRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    namespace: str
+    key: str
+    scope: str = "project"
+    user_id: str = "default"
+    project: str | None = None
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class DeletionRejectResponse(BaseModel):
+    status: str
+    key: str
 
 
 class MemoryListResponse(BaseModel):
