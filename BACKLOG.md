@@ -13,15 +13,14 @@
 > also start only when the owner names them ("let me drive"). Context:
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
-## Ratified & in build — immortal addresses (owner delegated ratification 2026-08-14)
+## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
-Design of record: `docs/design/immortal-addresses.md` v3+ (review cycle with
-agentbeast-grok complete; `decision/immortal-addresses-ratified-2026-08-14`).
-Migration order is per-project and load-bearing: drain → new bridges →
-reserve → picker/relay (AB) → reply flip.
+Design of record: `docs/design/immortal-addresses.md` v3+; build story in
+project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
+`fix/final-production-test-2026-08-15`). Reservation flag ON in prod.
 
-- AB's committed half (their tracker): picker lanes-never-corpses, huddle
-  relay re-resolve via session_key, tombstone lane+provider fields.
+- REMAINING, AB's committed half (their tracker): picker lanes-never-corpses,
+  huddle relay re-resolve via session_key, tombstone lane+provider fields.
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
@@ -415,7 +414,11 @@ reserve → picker/relay (AB) → reply flip.
 
 - **MEM-7** Shared lessons are write-mostly — now MEASURED, not argued
   (audit 2026-08-13, `audit/mem-7-lesson-corpus-2026-08-13` in project
-  memory). Telemetry already existed: search bumps `last_used_at` on
+  memory). *(Batch 1 DONE 2026-08-15: supersede verb extended to
+  scope=shared — the corpus was structurally unreachable before — and 4
+  platform-absorbed rows retired, verified drained;
+  `fix/mem7-batch-1-2026-08-15`. Next: batch 2, re-home the misfiled
+  project cluster.)* Telemetry already existed: search bumps `last_used_at` on
   returned rows, so exposure is directly readable. 882 lessons: **370 (42%)
   never surfaced by any search since creation; 217 (25%) not surfaced in
   90+ days** — while a ~500-lesson working set IS served regularly. The
