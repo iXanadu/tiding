@@ -441,6 +441,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
+- **CLERK-1** Deploy the clerk (code SHIPPED c8f5d73 at `integrations/clerk/`
+  — reference always-on API-billed mail handler; 11 gate tests green).
+  Remaining is all owner-decision, in order: (a) mint the `clerk` principal
+  (read where it must search; shared write ONLY if it is the
+  knowledge-committer; never admin); (b) pick provider + model + API key;
+  (c) run DRY-RUN against real mail for a day and read the decision ledger;
+  (d) flip live + install the service unit; (e) put both its credentials on
+  the rotation schedule. Pairs with the GrokBot daily-scan pipeline: Hand
+  mails findings → clerk verifies/commits to shared → AB service handles
+  urgency — the moderated-write path that keeps internet-fed content out of
+  the fleet's shared brain.
+
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
