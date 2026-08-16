@@ -461,6 +461,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (`scripts/accept.sh`, ~30s, green; results journal in project memory at
   `backlog/ACCEPT-1-first-run-results`) — this item is only the list rev,
   plus the still-unrun G2 codex per-thread-key proof (AB's lane).
+  Peer veto pass COMPLETE (agentbeast-grok-2, 2026-08-16, no blocking
+  objections; inbox thread 027a1fdf). Sharpen-not-rewrite notes to fold
+  into the rev: (1) A1 isolates by session KEY, not project — stale peer
+  seat rows must not fail a clean probe key, and the assertion log prints
+  the key it counted; (2) A4 failing on a live session with no watcher is
+  the CORRECT fail — no "session looks healthy" skip; (3) A7 picker
+  readback + documented manual step acceptable, no picker-state endpoint
+  unless the first run demands it. Starts when the owner names it.
 
 ## Blocked-external
 
