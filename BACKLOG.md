@@ -190,6 +190,33 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **GRANT-1** A claim's preferred seat is SILENTLY discarded when R8 parks
+  the name, exiling a team's session to project-lane ordinals. Found live
+  2026-08-16 (owner, huddle n_bLeKN6: "two Beast Chats" in the picker).
+  Chain, all verified: launcher correctly injects folder-derived
+  `beastchat-app-grok` (peer read the live env); that address holds 7 OPEN
+  inbox rows (6 read by its previous occupant, never resolved — acks are
+  per-reader and the 2026-08-13 R8 predicate deliberately counts read-but-
+  open mail); the free-path R8 guard therefore skips the preferred
+  candidate; base is the reserved lane; grant falls to `beastchat-grok-3`
+  with `warning: null`. Reproduced by probe: preference in, foreign-base
+  ordinal out, silence. Two halves:
+  (a) SHIP WHEN NAMED, additive: parking a PREFERRED name must be loud on
+  the claim's existing warning channel, naming the address and why (ADDR-2
+  doctrine — the silence, not the parking, is the defect).
+  (b) NEEDS-DESIGN: R8's stranger-protection was built for ordinal
+  allocation, but a claim that EXPLICITLY prefers a name is the intended
+  recipient arriving — parking the name against exactly that claimant is a
+  deadlock (mail parks name; name waits for a holder the park refuses;
+  mail never drains). Grant-with-mail-inheritance vs name-squat risk —
+  ties to LANE-4 succession semantics; do not decide unilaterally.
+  Immediate unblock, no code: the app session (current occupant of the
+  ordinal, rightful reader) resolves its 7 open rows on the old address;
+  the next claim then gets `beastchat-app-grok` granted.
+  Sub-finding, same sweep: something at tailnet 100.111.169.53 hammers
+  POST /session/claim with a dead token every ~2min, ongoing since at
+  least 08-15 — identify the box, refresh its credential.
+
 - **CURSOR-IDENT-1** ⏸ **ON HOLD (owner, 2026-08-13) pending more information**
   — do not act, and specifically do NOT add a per-project `.cursor/mcp.json`
   anywhere (option (b) below) while the hold stands; today's state, (a), is
