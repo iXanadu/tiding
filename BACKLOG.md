@@ -22,6 +22,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 - REMAINING, AB's committed half (their tracker): picker lanes-never-corpses,
   huddle relay re-resolve via session_key, tombstone lane+provider fields.
 
+- **ADDR-REG-1** Before lane reservation flips on (migration gate (e)):
+  unify the allocation skip ladder into ONE helper shared by `seat_claim`
+  and `address_register._allocation`. Two copies exist and match today
+  (peer-audited 2026-08-17); an edit to one is how the register starts
+  lying about what the allocator would do. The register's own lane check
+  shipped with the audit; the shared helper is the durable fix.
+
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
 - **MAIL-1** ⏸ Hold reaffirmed 2026-08-13: "useless to me as is — and I can't

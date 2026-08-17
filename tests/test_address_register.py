@@ -170,6 +170,32 @@ async def test_free_name_reads_free(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_lane_named_row_reads_reserved_when_reservation_on(
+        client, db_pool, monkeypatch):
+    """Audit residual (grok-5, 2026-08-17): with reservation ON a lane-named
+    row must never read claimable, whatever its age — seat_claim skips lanes
+    before every other check, so the register must too."""
+    from server.config import settings
+
+    await _clear(db_pool)
+    # Pre-reservation honest first occupant: granted the lane string itself.
+    seat = (await _claim(client, "first")).json()["seat"]
+    assert seat == f"{PROJ}-claude"
+    await _age_seat(db_pool, seat, SEAT_GRACE_SECONDS + 3600)  # past grace
+
+    reg = await _register(client)
+    assert reg[seat]["allocation"]["would_skip"] is False  # reservation off
+
+    monkeypatch.setattr(settings, "lane_reservation_enabled", True)
+    reg = await _register(client)
+    assert reg[seat]["allocation"] == {
+        "would_skip": True, "reason": "reserved-lane",
+        "grace_expires_at": None,
+    }
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_death_certificate_attaches_by_session_key(client, db_pool):
     """A spawner's cert is the stopped-at evidence; it must ride the row."""
     await _clear(db_pool)

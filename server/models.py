@@ -1200,7 +1200,8 @@ class AddressAllocation(BaseModel):
     The one deliberate exception to facts-never-verdicts: this is engram
     reporting its OWN policy (the skip reasons seat_claim itself uses), which
     only engram can serve and which is the register's reason to exist.
-    reason: live-holder | grace-window | mail-parked | presence-fresh | null.
+    reason: reserved-lane | live-holder | grace-window | mail-parked |
+    presence-fresh | null.
     """
     would_skip: bool
     reason: str | None = None

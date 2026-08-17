@@ -1325,10 +1325,18 @@ async def address_register(project: str | None = None) -> list[dict]:
 
     def _allocation(age: float | None, mail_n: int,
                     presence_age: float | None,
-                    last_used_at) -> dict:
-        # Mirrors seat_claim's skip order exactly: live -> grace -> mail ->
-        # fresh presence. A drift between this and the allocator would make
-        # the register lie about the one thing it exists to explain.
+                    last_used_at, *, lane: bool = False) -> dict:
+        # Mirrors seat_claim's skip order exactly: lane -> live -> grace ->
+        # mail -> fresh presence. A drift between this and the allocator would
+        # make the register lie about the one thing it exists to explain.
+        # The lane check first, as in the claim loop (audit residual,
+        # 2026-08-17): with reservation ON a lane-named row is never
+        # allocatable whatever its age — without this, a past-grace empty
+        # lane row would read would_skip=false while seat_claim continues.
+        # Reservation OFF → is_reserved_lane is False → no change today.
+        if lane:
+            return {"would_skip": True, "reason": "reserved-lane",
+                    "grace_expires_at": None}
         if age is None:  # mail-only entry: no seat row, mail parks the name
             return {"would_skip": True, "reason": "mail-parked",
                     "grace_expires_at": None}
@@ -1393,7 +1401,9 @@ async def address_register(project: str | None = None) -> list[dict]:
             "death": death,
             "undrained_mail_count": mail_n,
             "allocation": _allocation(age, mail_n, presence_age,
-                                      r["last_used_at"]),
+                                      r["last_used_at"],
+                                      lane=is_reserved_lane(seat,
+                                                            r["project"])),
         })
 
     # Names with NO seat row that still hold open mail — R8 parks these
