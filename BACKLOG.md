@@ -454,15 +454,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the fleet's shared brain.
 
 
-- **PRES-2** Pin host on the presence beat — BACKUP host axis for the
-  seat-exempt admin role (requested by AB 2026-08-16, their
-  decision/admin-host-from-ab-registry). Presence rows carry no host and
-  admin claims no seat, so the store cannot say which box an admin session
-  is on; AB's spawn registry is the PRIMARY source (correct — they spawned
-  it), but when they have no session row or their liveness probe is blind
-  (remote grok case, measured 2026-08-16) the store is the only remaining
-  axis. Additive: optional `host` on PresenceUpdateRequest, bridge stamps
-  hostname, roster serves it. Never the primary; never gates anything.
+- **ADDR-REVIEW-1** Formal addressing-architecture review (owner asked
+  "does flat addressing complicate the infrastructure and should it be
+  reviewed" 2026-08-17; answer: yes and yes). One document, ruled on
+  section by section: address KINDS/directory beside the flat space
+  (ADDR-2/ADDR-3 direction — name the kinds, never police forms),
+  address lifecycle (the GRANT-1 parking family), the host axis
+  (PRES-2 shipped the data; the conventions remain), group semantics
+  (MAIL-GROUP-1 made law; formalize), and the owner's open rescind
+  question: should bare `admin` be a fleet-wide address at all, and do
+  admin sessions eventually take host-aware seats (impact analysis
+  delivered 2026-08-17, decision deferred pending a week of PRES-2-era
+  observation). Quarantine rules apply: this consolidates the ADDR pile
+  rather than reopening items piecemeal.
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
