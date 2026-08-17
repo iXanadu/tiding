@@ -1591,6 +1591,7 @@ async def presence_update(
     overlays: list[str] | None = None,
     channels: list[str] | None = None,
     session_nonce: str | None = None,
+    host: str | None = None,
 ) -> dict | None:
     """Upsert this identity's presence row (self-reported heartbeat).
 
@@ -1642,6 +1643,11 @@ async def presence_update(
                 "last_seen": now.isoformat(),
                 "provider": provider,
                 "state": state,
+                # PRES-2: host rides the per-session entry too — the shared
+                # admin role is ONE row for potentially several boxes, so a
+                # single top-level host would be "last beater wins"; the nonce
+                # map is where multi-box truth lives (hosts_seen on the roster).
+                "host": host,
             }
         metadata = {
             "kind": "presence",
@@ -1650,6 +1656,10 @@ async def presence_update(
             "overlays": overlays or [],
             "channels": channels or [],
             "last_seen": now.isoformat(),
+            # PRES-2: a host never changes for a live session, so a legacy
+            # beat (no host) must not wipe one a newer client recorded —
+            # carry forward rather than overwrite-with-None (MSG-9 rule).
+            "host": host or prior_md.get("host"),
             "sessions": sessions,
         }
         # MSG-9: this write REPLACES metadata wholesale, so any field owned by
@@ -2006,6 +2016,11 @@ async def roster_list(
             "live_sessions": live,
             "collision": live > 1 and ident not in SEAT_EXEMPT_IDENTITIES,
             "providers_seen": sorted({(i.get("provider") or "unknown") for i in fresh.values()}) if fresh else [],
+            # PRES-2: the machine axis, from the beats themselves. `host` is
+            # the row-level value (last beater for shared roles); hosts_seen
+            # is the honest multi-box set from live sessions.
+            "host": md.get("host"),
+            "hosts_seen": sorted({i.get("host") for i in fresh.values() if i.get("host")}) if fresh else [],
             "watcher_alive": watcher_alive,
             "watcher_last_seen": watcher_seen,
             # A fact, served like every other: "a watcher observed this

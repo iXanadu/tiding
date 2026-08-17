@@ -825,6 +825,13 @@ class PresenceUpdateRequest(BaseModel):
     # one seat" misconfiguration (shared acks, mutual self-echo drop). None =
     # legacy client; collision tracking skipped for that heartbeat.
     session_nonce: str | None = None
+    # PRES-2: the box this beat comes from. The bridge stamps its hostname —
+    # like listen_set, the server cannot derive it. Exists because the
+    # seat-exempt admin role has NO seat row to join a host from, so the
+    # store could not say WHICH box an admin session was on (the machine
+    # axis the doctrine calls automatic). BACKUP axis only: a spawner's own
+    # registry stays the primary source; nothing gates on this field.
+    host: str | None = Field(default=None, max_length=MAX_ADDR)
     # MSG-5: this beat came from the inbox WATCHER, not the session itself.
     # Routed to a narrow write that records only "an ear is alive here" — it
     # carries no state and joins no nonce map, because the watcher shares its
@@ -902,6 +909,15 @@ class RosterEntry(BaseModel):
     live_sessions: int = 1
     collision: bool = False
     providers_seen: list[str] = []  # providers across live sessions (collision detail)
+    # PRES-2: the box this identity's beats come from. For single-session
+    # identities this is simply its host. For the shared admin role — one
+    # presence row, potentially several boxes — the top-level value is the
+    # LAST beater's host and `hosts_seen` carries the honest multi-box set;
+    # render admin per (identity, host), never trust `host` alone when
+    # hosts_seen has more than one element. None = no beat has carried a
+    # host yet (legacy bridge); absent is not "hub".
+    host: str | None = None
+    hosts_seen: list[str] = []  # distinct hosts across live sessions
     # When a watcher OBSERVED this session's process exit. None means no such
     # observation exists — never that the session is alive. Voided by any
     # later evidence of life, so a wrong one self-heals.

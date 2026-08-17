@@ -260,6 +260,7 @@ class MemoryClient:
         session_nonce: str | None = None,
         project_dir: str | None = None,
         watcher: bool = False,
+        host: str | None = None,
     ) -> dict:
         """Self-reported liveness heartbeat (MSG-4).
 
@@ -267,6 +268,10 @@ class MemoryClient:
         rather than the session: it records that an EAR is alive at this
         address (MSG-5) and refreshes liveness (SEAT-7) without touching the
         state the session reported.
+
+        ``host`` (PRES-2) stamps the box this beat comes from — the server
+        cannot derive it, and the seat-exempt admin role has no seat row to
+        join one from.
         """
         return await self._request(
             "POST",
@@ -280,6 +285,7 @@ class MemoryClient:
                 "channels": channels or [],
                 "session_nonce": session_nonce,
                 "watcher": watcher,
+                "host": host,
             },
             headers=self._provenance_headers(project_dir),
         )

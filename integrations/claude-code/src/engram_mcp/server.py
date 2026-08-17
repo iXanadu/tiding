@@ -676,6 +676,9 @@ async def _heartbeat(project_dir: str | None) -> None:
             channels=resolve_channels() or None,
             session_nonce=_SESSION_NONCE,
             project_dir=project_dir or None,
+            # PRES-2: the machine axis, stamped at the source. This is what
+            # lets the roster say WHICH box an admin session is on.
+            host=hostname(),
         )
         global _SEAT_COLLISION
         _SEAT_COLLISION = resp.get("collision")  # dict when colliding, None clears

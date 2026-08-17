@@ -1136,6 +1136,7 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
             overlays=req.overlays,
             channels=req.channels,
             session_nonce=req.session_nonce,
+            host=req.host,
         )
         return PresenceUpdateResponse(
             status="ok", identity=req.identity, state=req.state, collision=collision
