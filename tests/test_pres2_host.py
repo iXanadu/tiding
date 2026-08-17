@@ -82,7 +82,10 @@ async def test_shared_role_multi_box_hosts_seen(services):
             provider="grok", session_nonce="web-1", host="webone",
         )
         e = await _entry("admin")
-        assert e["host"] == "webone"  # last beater — documented, not trusted alone
+        # Shared exempt roles NEVER serve a row-level host — a dead session's
+        # carried-forward stamp became a live lie in the field (2026-08-17).
+        # hosts_seen, derived from live nonces, is the only host source here.
+        assert e["host"] is None
         assert e["hosts_seen"] == ["macmini", "webone"]
         # admin stays collision-exempt: two live sessions, no collision flag.
         assert e["live_sessions"] == 2

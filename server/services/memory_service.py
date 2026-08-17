@@ -1659,7 +1659,15 @@ async def presence_update(
             # PRES-2: a host never changes for a live session, so a legacy
             # beat (no host) must not wipe one a newer client recorded —
             # carry forward rather than overwrite-with-None (MSG-9 rule).
-            "host": host or prior_md.get("host"),
+            # EXCEPT shared exempt roles (admin): one row, many boxes — a
+            # dead session's stamp carried forward becomes a live lie
+            # (measured in the wild 2026-08-17, ~30min after being flagged:
+            # a dead webone codex session's host survived on beats from a
+            # hostless MacBook desktop). For shared rows, hosts_seen (per
+            # live nonce) is the ONLY honest host source; the row level
+            # stays None so it can never outlive its session.
+            "host": (None if identity in SEAT_EXEMPT_IDENTITIES
+                     else host or prior_md.get("host")),
             "sessions": sessions,
         }
         # MSG-9: this write REPLACES metadata wholesale, so any field owned by
