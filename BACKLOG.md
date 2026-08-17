@@ -465,8 +465,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   question: should bare `admin` be a fleet-wide address at all, and do
   admin sessions eventually take host-aware seats (impact analysis
   delivered 2026-08-17, decision deferred pending a week of PRES-2-era
-  observation). Quarantine rules apply: this consolidates the ADDR pile
-  rather than reopening items piecemeal.
+  observation). Plus: bridge CLIENT MODE — the MCP bridge is session-shaped
+  (folder-derived identity, auto-heartbeat), and non-terminal consumers
+  (measured: the owner's Claude Desktop, which wore `admin` for weeks
+  because a cfg-less cwd means "maintenance shell" to the fallback) need a
+  mode with no folder fallback, env-or-nothing identity, presence opt-in.
+  Quarantine rules apply: this consolidates the ADDR pile rather than
+  reopening items piecemeal.
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
