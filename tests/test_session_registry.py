@@ -330,6 +330,60 @@ async def test_mail_the_previous_holder_already_read_still_parks_the_name(
 
 
 @pytest.mark.asyncio
+async def test_parking_a_distinctive_preferred_name_is_loud(client, db_pool):
+    """GRANT-1(a): exiling a session from its own name must not be silent.
+
+    The field chain, twice live (2026-08-16 "two Beast Chats", 2026-08-17
+    "AB vs AB-App"): a launcher injects a distinctive preferred seat, the name
+    holds open mail, R8 parks it, and the claim fell to a project-lane ordinal
+    with warning:null — the team's session lost the only string that
+    distinguished it and nobody was told. The parking stays (R8 is correct);
+    the grant must now NAME the parked address, the reason, and the drain path.
+    """
+    await _clear(db_pool)
+    name = f"{PROJ}-app-claude"
+    a = (await _claim(client, "app-session-1", preferred_seat=name)).json()
+    assert a["seat"] == name and a["warning"] is None
+    send = await client.post("/memory/send", json={
+        "to": name, "subject": "work order", "body": "parked with the name",
+    })
+    assert send.status_code == 200
+    await client.post("/session/release", json={
+        "session_key": "app-session-1", "project": PROJ,
+    })
+
+    b = (await _claim(client, "app-session-2", preferred_seat=name)).json()
+    assert b["seat"] != name  # R8 held — that is not the defect
+    warning = b["warning"] or ""
+    assert "preferred_seat_parked" in warning
+    assert name in warning          # names the parked address
+    assert "open mail" in warning   # names the reason
+    assert b["seat"] in warning     # names what was granted instead
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_base_name_preference_falling_to_ordinal_stays_quiet(
+    client, db_pool
+):
+    """The base name is a convention, not an identity — no wolf-crying.
+
+    Every launcher computes ``<project>-<provider>`` for every session, so a
+    second session preferring the base and landing on ``-2`` is ordinary
+    allocation (a colleague holds the base), not an exile. Warning on each
+    such claim would bury the GRANT-1 signal under noise.
+    """
+    await _clear(db_pool)
+    base = f"{PROJ}-claude"
+    a = (await _claim(client, "first", preferred_seat=base)).json()
+    assert a["seat"] == base
+    b = (await _claim(client, "second", preferred_seat=base)).json()
+    assert b["seat"] == f"{base}-2"
+    assert b["warning"] is None
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_resolved_mail_does_not_park_a_name_forever(client, db_pool):
     """The guard protects what a newcomer would SEE, so it must let go too.
 

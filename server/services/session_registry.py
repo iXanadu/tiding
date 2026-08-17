@@ -201,6 +201,24 @@ def _seat_ordinal(seat: str, base: str) -> int:
     return MAX_SEAT_ORDINAL + 1
 
 
+def _with_park_warning(warning: str | None, preferred: str | None,
+                       granted: str, parked_reason: str | None) -> str | None:
+    """Compose the GRANT-1(a) advisory onto an existing claim warning.
+
+    Fires only when an explicitly-preferred name was passed over AND the
+    grant landed elsewhere — a fallback that reached the preferred name after
+    all (or a claim with no preference) stays silent. Additive: rides the
+    warning channel every claim consumer already renders.
+    """
+    if not (preferred and parked_reason and granted != preferred):
+        return warning
+    park = (
+        f"preferred_seat_parked: {preferred!r} was requested but not granted "
+        f"— {parked_reason}. Granted {granted!r} instead."
+    )
+    return f"{warning}; {park}" if warning else park
+
+
 async def _address_holds_mail(conn, seat: str) -> bool:
     """Would a NEW holder of this address see mail that was not meant for it?
 
@@ -655,6 +673,26 @@ async def seat_claim(
                         "renamed_from": None}
 
         # 2-5. Allocate: first free candidate, then first reclaimable one.
+        #
+        # GRANT-1(a): when the loop passes OVER an explicitly-preferred name,
+        # the caller must hear it. Found live twice (2026-08-16 "two Beast
+        # Chats", 2026-08-17 "AB vs AB-App"): a launcher-injected preference
+        # was parked by R8 and the claim fell to a project-lane ordinal with
+        # warning:null, so the team's session was exiled from its own name in
+        # silence and the picker lost the only string that distinguished it.
+        # The parking is CORRECT (mail must never reach a stranger); the
+        # silence is the defect (ADDR-2 doctrine). Record why the preferred
+        # candidate was skipped and say so on the existing warning channel.
+        #
+        # Only a DISTINCTIVE preference is loud. When the preference IS the
+        # conventional base name (every launcher computes <project>-<provider>
+        # for every session), falling to an ordinal is ordinary allocation —
+        # a colleague holds the base — and warning on each such claim would
+        # bury the real signal. Losing a distinctive name loses identity;
+        # losing the base loses nothing but a number.
+        parked_reason = None
+        base = f"{project}-{provider}"
+        distinct_preferred = preferred if preferred != base else None
         for seat in seat_candidates(project, provider, preferred):
             # LANE-1: reserved lane strings are never minted as occupant
             # seats — skip before BOTH the insert and the takeover branch
@@ -694,6 +732,13 @@ async def seat_claim(
             # read. Closing it fully would need the address space locked, which
             # costs more than the residue is worth.
             if await _address_holds_mail(conn, seat):
+                if seat == distinct_preferred:
+                    parked_reason = (
+                        "it holds open mail a new holder would see (R8 parks "
+                        "a used name rather than hand it to a stranger); "
+                        "drain the open rows on that address (read them, then "
+                        "resolve/archive) and the next claim can take the name"
+                    )
                 continue  # R8 outranks tidy numbering: park it, take the next
 
             if await _try_insert(conn, seat, project, meta):
@@ -703,7 +748,10 @@ async def seat_claim(
                 await _apply_lane_inheritance(conn, seat, project, provider,
                                               host, session_key)
                 return {"seat": seat, "is_new": True,
-                        "reclaimed_from": None, "warning": warning}
+                        "reclaimed_from": None,
+                        "warning": _with_park_warning(
+                            warning, distinct_preferred, seat,
+                            parked_reason)}
 
             row = await conn.fetchrow(
                 """
@@ -716,6 +764,8 @@ async def seat_claim(
             if row is None:
                 continue  # freed between insert and read — next loop retries it
             if row["last_used_at"] >= live_cutoff:
+                if seat == distinct_preferred:
+                    parked_reason = "a live session currently holds it"
                 continue  # live holder; never evict
 
             prior = _md(row)
@@ -737,10 +787,23 @@ async def seat_claim(
             # are unaffected — their key is stable, so continuity returns their
             # seat directly.
             if row["last_used_at"] >= grace_cutoff:
+                if seat == distinct_preferred:
+                    parked_reason = ("its previous holder is inside the "
+                                     "reclaim grace window")
                 continue
             if await _address_holds_mail(conn, seat):
+                if seat == distinct_preferred:
+                    parked_reason = (
+                        "it holds open mail a new holder would see (R8 parks "
+                        "a used name rather than hand it to a stranger); "
+                        "drain the open rows on that address (read them, then "
+                        "resolve/archive) and the next claim can take the name"
+                    )
                 continue  # R8: never hand a stranger someone else's mail
             if await _presence_is_fresh(conn, seat, project):
+                if seat == distinct_preferred:
+                    parked_reason = ("a session is actively heartbeating "
+                                     "at it")
                 continue  # SEAT-8: an independently-live session holds this
 
             if await _try_takeover(conn, seat, project, meta,
@@ -751,7 +814,8 @@ async def seat_claim(
                     "seat": seat,
                     "is_new": True,
                     "reclaimed_from": prior.get("session_key"),
-                    "warning": warning,
+                    "warning": _with_park_warning(
+                        warning, distinct_preferred, seat, parked_reason),
                 }
 
     raise ValueError(

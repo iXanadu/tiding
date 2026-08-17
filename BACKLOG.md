@@ -190,29 +190,22 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **GRANT-1** A claim's preferred seat is SILENTLY discarded when R8 parks
-  the name, exiling a team's session to project-lane ordinals. Found live
-  2026-08-16 (owner, huddle n_bLeKN6: "two Beast Chats" in the picker).
-  Chain, all verified: launcher correctly injects folder-derived
-  `beastchat-app-grok` (peer read the live env); that address holds 7 OPEN
-  inbox rows (6 read by its previous occupant, never resolved — acks are
-  per-reader and the 2026-08-13 R8 predicate deliberately counts read-but-
-  open mail); the free-path R8 guard therefore skips the preferred
-  candidate; base is the reserved lane; grant falls to `beastchat-grok-3`
-  with `warning: null`. Reproduced by probe: preference in, foreign-base
-  ordinal out, silence. Two halves:
-  (a) SHIP WHEN NAMED, additive: parking a PREFERRED name must be loud on
-  the claim's existing warning channel, naming the address and why (ADDR-2
-  doctrine — the silence, not the parking, is the defect).
+- **GRANT-1** *(half (a) SHIPPED 2026-08-17 — parking a DISTINCTIVE
+  preferred name is now loud on the claim's warning channel, naming the
+  parked address, the reason, and the drain path; base-name preferences
+  falling to ordinals stay quiet by design (convention, not identity —
+  warning there would cry wolf on every multi-session project). Bit twice
+  before shipping: 2026-08-16 "two Beast Chats", 2026-08-17 "AB vs
+  AB-App".)* What remains:
   (b) NEEDS-DESIGN: R8's stranger-protection was built for ordinal
   allocation, but a claim that EXPLICITLY prefers a name is the intended
   recipient arriving — parking the name against exactly that claimant is a
   deadlock (mail parks name; name waits for a holder the park refuses;
   mail never drains). Grant-with-mail-inheritance vs name-squat risk —
   ties to LANE-4 succession semantics; do not decide unilaterally.
-  Immediate unblock, no code: the app session (current occupant of the
-  ordinal, rightful reader) resolves its 7 open rows on the old address;
-  the next claim then gets `beastchat-app-grok` granted.
+  Immediate unblock when it bites, no code: the current ordinal occupant
+  (rightful reader) resolves the open rows on the parked address; the next
+  claim then gets the name granted.
 
 - **CURSOR-IDENT-1** ⏸ **ON HOLD (owner, 2026-08-13) pending more information**
   — do not act, and specifically do NOT add a per-project `.cursor/mcp.json`
