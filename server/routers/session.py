@@ -9,11 +9,14 @@ See docs/design/session-registry.md.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
 from server.dependencies import check_namespace_access, get_current_principal
 from server.models import (
+    AddressEntry,
+    AddressRegisterResponse,
     DeathCertRequest,
     DeathCertResponse,
     SeatClaimRequest,
@@ -26,6 +29,7 @@ from server.models import (
 )
 from server.services.session_registry import (
     SEAT_NAMESPACE,
+    address_register,
     death_certify,
     is_reserved_lane,
     seat_claim,
@@ -170,6 +174,30 @@ async def certify_death(req: DeathCertRequest, request: Request):
         logger.exception("death_certify failed")
         raise HTTPException(status_code=500, detail="death intake failed")
     return DeathCertResponse(status="ok", **result)
+
+
+@router.get("/addresses", response_model=AddressRegisterResponse)
+async def list_addresses(request: Request, project: str | None = None):
+    """ADDR-REG: every name the store is holding, and why — the owner's view.
+
+    The register /session/seats is not: seats serves allocated rows; this
+    additionally explains each name (undrained mail count, death evidence,
+    the allocator's own skip reason) and synthesizes names that have NO seat
+    row but are parked by open mail (the R8 class invisible everywhere else).
+    Fleet-wide by default; ``?project=`` narrows. Facts plus the allocator's
+    own policy — see AddressEntry for the contract's honesty rules.
+    """
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
+    try:
+        entries = await address_register(project)
+    except Exception:
+        logger.exception("address_register failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+    return AddressRegisterResponse(
+        status="ok",
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        entries=[AddressEntry(**e) for e in entries],
+    )
 
 
 @router.post("/seats", response_model=SeatListResponse)

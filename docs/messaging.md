@@ -100,6 +100,18 @@ that conversation. The seat stays pure plumbing.
 - **`POST /session/release`** frees a seat immediately; otherwise it is
   reclaimed after a grace period — but **never** while undelivered mail is
   addressed to it.
+- **`GET /session/addresses`** (ADDR-REG) — the owner's register: every name
+  the store is holding and **why**, live or corpse. Fleet-wide by default,
+  `?project=` narrows. Per entry: what was asked vs granted
+  (`preferred_seat`; null = unrecorded, never "no preference"), `claimed_at`,
+  last beat, watcher state, death **evidence** (`farewell_at` and/or a
+  spawner's cert — absence of both ≠ alive), the undrained-mail count a new
+  holder would see, and an `allocation` block reporting the allocator's own
+  skip reason (`live-holder` / `grace-window` + expiry / `mail-parked` /
+  `presence-fresh`). Also synthesizes `mail-only` entries: names with **no
+  seat row** that open mail parks (R8) — invisible to `/session/seats`.
+  Built 2026-08-17 after a reset left ordinal corpses nobody could explain
+  from any existing surface.
 
 **Team group addresses (`groups =` in `.engram.cfg`).** A sub-team's folder
 can share its parent project's memory (`project = agentbeast`) while needing

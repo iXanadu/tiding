@@ -333,13 +333,19 @@ async def _try_takeover(conn, seat: str, project: str, meta: dict,
 
 def _meta(session_key: str, session_nonce: str | None, provider: str,
           host: str | None, superseded: list[str] | None = None,
-          runtime: bool = False) -> dict:
+          runtime: bool = False, preferred: str | None = None) -> dict:
     return {
         "kind": "seat",
         "session_key": session_key,
         "session_nonce": session_nonce,
         "provider": provider,
         "host": host,
+        # ADDR-REG: the name this claim ASKED for, recorded on the granted row
+        # so the register can serve "wanted agentbeast-app-grok, got grok-6"
+        # instead of losing the request the moment the claim response scrolls
+        # by. None on rows written before the field existed means UNRECORDED —
+        # a consumer must never render it as "no preference".
+        "preferred_seat": preferred,
         "claimed_at": datetime.now(timezone.utc).isoformat(),
         # THE ONE-WAY DOOR (SEAT-9). Nonces that have been displaced from this
         # seat. A claim bearing one of these never gets the seat back — see
@@ -638,7 +644,12 @@ async def seat_claim(
                               # flag lives here precisely because process
                               # memory does not survive).
                               runtime=held_runtime or (runtime_seat
-                                                       and preferred == seat))
+                                                       and preferred == seat),
+                              # Carry the grant-time ask forward; a refresh
+                              # must not erase what the original claim wanted.
+                              preferred=held_md.get("preferred_seat")
+                              or (preferred if preferred and preferred != base
+                                  else None))
                     ),
                     SEAT_NAMESPACE, SEAT_SCOPE,
                     SEAT_USER_ID, project, held["key"],
@@ -707,7 +718,8 @@ async def seat_claim(
             # only when the granted candidate IS the requested name — a
             # fallback to base/ordinal is an allocation, not a choice.
             meta = _meta(session_key, session_nonce, provider, host,
-                         runtime=runtime_seat and seat == preferred)
+                         runtime=runtime_seat and seat == preferred,
+                         preferred=distinct_preferred)
 
             # R8 ON THE FREE PATH. A name with NO seat row can still hold mail,
             # and until 2026-08-13 nothing checked: the guard below at the
@@ -1210,5 +1222,210 @@ async def seat_list(
             # freshness window as the roster.
             "watcher_alive": watcher_alive,
             "watcher_last_seen": watcher_seen.isoformat() if watcher_seen else None,
+        })
+    return out
+
+
+async def address_register(project: str | None = None) -> list[dict]:
+    """ADDR-REG: every name the store is holding, and why — the owner's view.
+
+    The register the roster is not: the roster answers "who is speaking",
+    this answers "which names are OCCUPIED", live or corpse, including names
+    with no seat row at all that R8 parks because they hold open mail (the
+    class that is invisible to /session/seats and cost GRANT-1 two bites).
+
+    Facts, never verdicts — with ONE deliberate exception: the ``allocation``
+    block reports what THIS allocator would do with the name right now
+    (skip and why, per its own constants). That is not a liveness verdict on
+    the session; it is engram reporting its own policy, which only engram can
+    do and which is exactly the "why is this name unavailable" question the
+    register exists to answer.
+
+    Honesty limits, part of the wire contract:
+    - ``preferred_seat`` null = UNRECORDED (pre-field row), never "no
+      preference".
+    - Death is EVIDENCE, not a field: ``farewell_at`` (a watcher observed the
+      exit; voided by later life) and/or ``death`` (a spawner's certificate).
+      Absence of both means "no death evidence", never "alive".
+    - ``claimed_at`` null = the row predates the field.
+    - Mail-only entries carry no project (an inbox address is a bare string);
+      when a ``project`` filter is given they are included by prefix
+      heuristic (``<project>`` / ``<project>-*``), documented as such.
+    - '#'-channel addresses are excluded: they are never allocatable names.
+    """
+    project = project.strip().lower() if project else None
+    now = datetime.now(timezone.utc)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        seat_rows = await conn.fetch(
+            """
+            SELECT s.key, s.project, s.metadata, s.last_used_at,
+                   p.metadata AS presence_metadata,
+                   p.last_used_at AS presence_last_used_at
+            FROM memories s
+            LEFT JOIN memories p
+              ON p.namespace = s.namespace
+             AND p.scope = $4
+             AND p.user_id = s.project
+             AND p.key = 'presence/' || substr(s.key, 6)
+            WHERE s.namespace = $1 AND s.scope = $2
+              AND ($3::text IS NULL OR s.project = $3)
+            ORDER BY s.project, s.key
+            """,
+            SEAT_NAMESPACE, SEAT_SCOPE, project, PRESENCE_SCOPE,
+        )
+        # The R8 predicate as a COUNT, grouped — same clauses as
+        # _address_holds_mail so the register and the allocator can never
+        # disagree about what parks a name.
+        mail_rows = await conn.fetch(
+            """
+            SELECT user_id, COUNT(*) AS n FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $3) = $3
+            GROUP BY user_id
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, INBOX_OPEN,
+        )
+        death_rows = await conn.fetch(
+            """
+            SELECT project, metadata FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND ($3::text IS NULL OR project = $3)
+            """,
+            SEAT_NAMESPACE, DEATH_SCOPE, project,
+        )
+
+    mail_by_addr = {r["user_id"]: int(r["n"]) for r in mail_rows}
+
+    # Death certs indexed two ways. By session_key is authoritative (the cert
+    # names the exact session). By seat name is the SEAT-6 fallback and only
+    # trustworthy when the cert carries no key — a keyed cert for a PREVIOUS
+    # holder of a reused name must not be pinned on the current one.
+    death_by_key: dict[str, dict] = {}
+    death_by_seat: dict[str, dict] = {}
+    for r in death_rows:
+        md = _md(r)
+        evidence = {
+            "died_at": md.get("died_at"),
+            "cause": md.get("cause"),
+            "graceful": md.get("graceful"),
+            "certified_by": md.get("certified_by"),
+        }
+        k = md.get("session_key")
+        if k:
+            prior = death_by_key.get(k)
+            if not prior or (md.get("died_at") or "") > (prior.get("died_at") or ""):
+                death_by_key[k] = evidence
+        elif md.get("seat"):
+            s = md["seat"]
+            prior = death_by_seat.get(s)
+            if not prior or (md.get("died_at") or "") > (prior.get("died_at") or ""):
+                death_by_seat[s] = evidence
+
+    def _allocation(age: float | None, mail_n: int,
+                    presence_age: float | None,
+                    last_used_at) -> dict:
+        # Mirrors seat_claim's skip order exactly: live -> grace -> mail ->
+        # fresh presence. A drift between this and the allocator would make
+        # the register lie about the one thing it exists to explain.
+        if age is None:  # mail-only entry: no seat row, mail parks the name
+            return {"would_skip": True, "reason": "mail-parked",
+                    "grace_expires_at": None}
+        if age < SEAT_LIVE_SECONDS:
+            return {"would_skip": True, "reason": "live-holder",
+                    "grace_expires_at": None}
+        if age < SEAT_GRACE_SECONDS:
+            expires = last_used_at + timedelta(seconds=SEAT_GRACE_SECONDS)
+            return {"would_skip": True, "reason": "grace-window",
+                    "grace_expires_at": expires.isoformat()}
+        if mail_n:
+            return {"would_skip": True, "reason": "mail-parked",
+                    "grace_expires_at": None}
+        if presence_age is not None and presence_age < SEAT_LIVE_SECONDS:
+            return {"would_skip": True, "reason": "presence-fresh",
+                    "grace_expires_at": None}
+        return {"would_skip": False, "reason": None, "grace_expires_at": None}
+
+    out = []
+    seated_addresses = set()
+    for r in seat_rows:
+        md = _md(r)
+        seat = r["key"].removeprefix("seat/")
+        seated_addresses.add(seat)
+        age = (now - r["last_used_at"]).total_seconds()
+        pmd = r["presence_metadata"]
+        if isinstance(pmd, str):
+            pmd = json.loads(pmd)
+        pmd = pmd or {}
+        watcher_alive, watcher_seen = _watcher_state(pmd, now)
+        presence_age = (
+            (now - r["presence_last_used_at"]).total_seconds()
+            if r["presence_last_used_at"] else None
+        )
+        key = md.get("session_key")
+        mail_n = mail_by_addr.get(seat, 0)
+        death = death_by_key.get(key) if key else None
+        if death is None:
+            death = death_by_seat.get(seat)
+        out.append({
+            "address": seat,
+            "entry_type": "seat",
+            "project": r["project"],
+            "provider": md.get("provider"),
+            "host": md.get("host"),
+            "hosts_seen": pmd.get("hosts_seen"),
+            "session_key": key,
+            "session_key_generated": bool(
+                key and key.startswith(GENERATED_KEY_PREFIX)
+            ),
+            "runtime": bool(md.get("runtime")),
+            "preferred_seat": md.get("preferred_seat"),
+            "claimed_at": md.get("claimed_at"),
+            "last_spoke_at": r["last_used_at"].isoformat(),
+            "age_seconds": round(age, 1),
+            "watcher_alive": watcher_alive,
+            "watcher_last_seen": (
+                watcher_seen.isoformat() if watcher_seen else None
+            ),
+            "farewell_at": pmd.get("farewell_at"),
+            "death_certified": bool(md.get("death_certified")),
+            "death": death,
+            "undrained_mail_count": mail_n,
+            "allocation": _allocation(age, mail_n, presence_age,
+                                      r["last_used_at"]),
+        })
+
+    # Names with NO seat row that still hold open mail — R8 parks these
+    # (release frees the row, never the mail), and nothing served them until
+    # now. '#'-channels are group surfaces, never allocatable names: skip.
+    for addr, n in sorted(mail_by_addr.items()):
+        if addr in seated_addresses or addr.startswith("#"):
+            continue
+        if project is not None:
+            bare = addr.split("@", 1)[0]
+            if bare != project and not bare.startswith(f"{project}-"):
+                continue
+        out.append({
+            "address": addr,
+            "entry_type": "mail-only",
+            "project": None,
+            "provider": None,
+            "host": None,
+            "hosts_seen": None,
+            "session_key": None,
+            "session_key_generated": False,
+            "runtime": False,
+            "preferred_seat": None,
+            "claimed_at": None,
+            "last_spoke_at": None,
+            "age_seconds": None,
+            "watcher_alive": None,
+            "watcher_last_seen": None,
+            "farewell_at": None,
+            "death_certified": False,
+            "death": death_by_seat.get(addr),
+            "undrained_mail_count": n,
+            "allocation": _allocation(None, n, None, None),
         })
     return out

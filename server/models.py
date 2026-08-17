@@ -1180,3 +1180,67 @@ class SeatListRequest(BaseModel):
 class SeatListResponse(BaseModel):
     status: str
     seats: list[SeatEntry] = []
+
+
+class AddressDeathEvidence(BaseModel):
+    """A spawner's death certificate, attached where it provably matches.
+
+    Evidence, not a verdict: served only when the cert's session_key matches
+    the row's, or (keyless SEAT-6 certs) the cert names this exact seat.
+    """
+    died_at: str | None = None
+    cause: str | None = None
+    graceful: bool | None = None
+    certified_by: str | None = None
+
+
+class AddressAllocation(BaseModel):
+    """What the allocator would do with this name right now.
+
+    The one deliberate exception to facts-never-verdicts: this is engram
+    reporting its OWN policy (the skip reasons seat_claim itself uses), which
+    only engram can serve and which is the register's reason to exist.
+    reason: live-holder | grace-window | mail-parked | presence-fresh | null.
+    """
+    would_skip: bool
+    reason: str | None = None
+    grace_expires_at: str | None = None
+
+
+class AddressEntry(BaseModel):
+    """One held name in the register (ADDR-REG).
+
+    Contract honesty rules, locked with the first consumer (2026-08-17):
+    - preferred_seat null = UNRECORDED (pre-field row), never "no preference".
+    - Death is evidence: farewell_at (watcher observed the exit, voided by
+      later life) and/or death (spawner cert). Neither present ≠ alive.
+    - claimed_at null = row predates the field.
+    - entry_type "mail-only" = no seat row exists; open mail alone parks the
+      name (R8). Those entries carry no project/provider/timestamps.
+    """
+    address: str
+    entry_type: str  # "seat" | "mail-only"
+    project: str | None = None
+    provider: str | None = None
+    host: str | None = None
+    hosts_seen: list[str] | None = None
+    session_key: str | None = None
+    session_key_generated: bool = False
+    runtime: bool = False
+    preferred_seat: str | None = None
+    claimed_at: str | None = None
+    last_spoke_at: str | None = None
+    age_seconds: float | None = None
+    watcher_alive: bool | None = None
+    watcher_last_seen: str | None = None
+    farewell_at: str | None = None
+    death_certified: bool = False
+    death: AddressDeathEvidence | None = None
+    undrained_mail_count: int = 0
+    allocation: AddressAllocation
+
+
+class AddressRegisterResponse(BaseModel):
+    status: str
+    generated_at: str
+    entries: list[AddressEntry] = []
