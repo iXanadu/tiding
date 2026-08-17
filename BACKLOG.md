@@ -276,6 +276,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
+- **BRIDGE-ROLLOUT-1** Spoke boxes run stale engram-mcp bridges, so recent
+  wire features exist only on the box that built them. Measured 2026-08-17:
+  webone sessions beat presence with no host (pre-PRES-2 bridge — the roster
+  cannot qualify them by machine) and their watchers die silent (no WATCH-2
+  dying gasp). The bridge ships as an editable install per box; nothing
+  rolls it fleet-wide. Needed: update cc-memory installs on every spoke
+  (pull + reinstall) and a habit/check that pairs "bridge feature shipped"
+  with "rollout swept" — a feature only on the dev box reads as done and
+  is not.
+
 - **BRIDGE-2** A dead credential is INVISIBLE to the person whose surface
   holds it. Measured on the operator's own desktop 2026-08-16: an app config
   carried a rotated token for weeks–months (death date unrecoverable, see
