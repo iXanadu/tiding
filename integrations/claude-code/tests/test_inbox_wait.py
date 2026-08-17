@@ -300,7 +300,12 @@ async def test_follow_emits_summary_then_new_mail(respx_mock, capsys):
     lines = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
     assert lines[0]["event"] == "backlog-digest"
     assert lines[1]["id"] == "inbox/2"
-    assert len(lines) == 2, "the seeded backlog must not fire twice"
+    # WATCH-2: the deadline exit ends coverage on a live session, so the
+    # watcher's last line is the dying gasp with the re-arm command — the
+    # bare `return 0` this test used to pin was the silent-deafening defect.
+    assert lines[2]["event"] == "watcher-dying"
+    assert "command" in lines[2]
+    assert len(lines) == 3, "the seeded backlog must not fire twice"
 
 
 @respx.mock(base_url="http://localhost:8920")
@@ -522,3 +527,39 @@ async def test_run_identity_flag_asserts_and_proceeds(
         _identity.clear_seat()
         _identity._IDENTITY_ANCHOR = prev_anchor
         _identity.reset_session_pin()
+
+
+# --- WATCH-2: the dying gasp (owner order 2026-08-17) ---------------------
+
+def test_dying_gasp_is_one_stdout_line_with_the_rearm_command(capsys, monkeypatch):
+    """A watcher ending coverage on a live session must say so on STDOUT
+    (Monitor injects stdout lines as session-waking notifications) and hand
+    over the exact re-arm command — argv reconstructed, flags intact."""
+    from engram_mcp.inbox_wait import _dying_gasp
+    monkeypatch.setattr(
+        "sys.argv",
+        ["/abs/path/engram-inbox-wait", "--follow",
+         "--project-dir", "/Users/x/projects/engram"],
+    )
+    _dying_gasp("test reason")
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    obj = json.loads(lines[0])
+    assert obj["event"] == "watcher-dying"
+    assert obj["reason"] == "test reason"
+    assert "Re-arm" in obj["action"] or "re-arm" in obj["action"]
+    assert obj["command"] == (
+        "/abs/path/engram-inbox-wait --follow "
+        "--project-dir /Users/x/projects/engram"
+    )
+
+
+def test_rearm_command_quotes_awkward_args(monkeypatch):
+    from engram_mcp.inbox_wait import _rearm_command
+    monkeypatch.setattr(
+        "sys.argv",
+        ["/abs/engram-inbox-wait", "--project-dir", "/tmp/has space"],
+    )
+    assert _rearm_command() == (
+        "/abs/engram-inbox-wait --project-dir '/tmp/has space'"
+    )

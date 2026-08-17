@@ -26,6 +26,8 @@ act on it.)
 import argparse
 import asyncio
 import json
+import shlex
+import signal
 import sys
 import time
 from urllib.parse import urlparse
@@ -124,6 +126,52 @@ def _warn_plaintext_url(url: str) -> None:
             file=sys.stderr,
             flush=True,
         )
+
+
+def _rearm_command() -> str:
+    """The exact command that restarts THIS watcher with THIS configuration.
+
+    Reconstructed from argv so the dying gasp never tells the session to
+    re-arm with a guessed path or dropped flag — argv[0] is the absolute
+    console-script path when launched per the startup doctrine, and every
+    identity-bearing flag (--project-dir, --identity, --address) rides along
+    verbatim.
+    """
+    return " ".join(shlex.quote(a) for a in sys.argv)
+
+
+def _dying_gasp(reason: str) -> None:
+    """WATCH-2 (owner order, 2026-08-17): never leave a live session deaf in
+    silence. One structured STDOUT line on every exit path that ends coverage
+    while the watched session is still alive — Monitor injects stdout lines
+    as session-waking notifications, so this line IS the wake that tells the
+    session to re-arm, and it carries the exact command so re-arming is one
+    tool call, not an investigation. Sessions were observed deaf for 30+
+    minutes because a watcher died (or never armed) with no last word; the
+    roster's watcher_alive going stale is the server-side detector, but
+    nothing was telling the SESSION.
+
+    Deliberately NOT emitted when the watched session itself is gone (the
+    farewell path) — there is nobody left to warn, and a gasp there would
+    wake a successor with a stale instruction.
+    """
+    print(
+        json.dumps(
+            {
+                "event": "watcher-dying",
+                "reason": reason,
+                "action": (
+                    "ACTION REQUIRED: this session's inbox watcher is "
+                    "exiting — mail will no longer wake you. Re-arm it NOW "
+                    "under Monitor with the command below (fix the stated "
+                    "reason first if it names one)."
+                ),
+                "command": _rearm_command(),
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 def _emit(msg: dict) -> None:
@@ -443,6 +491,11 @@ async def _run(args) -> int:
             except Exception as e:  # seeding failure is non-fatal — start clean
                 if _auth_error_code(e):
                     print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)
+                    _dying_gasp(
+                        f"server rejected credentials "
+                        f"({_auth_error_code(e)}) — fix the token in "
+                        f"~/.config/engram/identity, then re-arm"
+                    )
                     return EXIT_AUTH_FAILED
                 print(f"inbox-wait: seed poll failed ({e})", file=sys.stderr, flush=True)
 
@@ -499,6 +552,11 @@ async def _run(args) -> int:
                 # session with the reason.
                 if _auth_error_code(e):
                     print(_AUTH_FAIL_MSG.format(code=_auth_error_code(e)), file=sys.stderr, flush=True)
+                    _dying_gasp(
+                        f"server rejected credentials "
+                        f"({_auth_error_code(e)}) — fix the token in "
+                        f"~/.config/engram/identity, then re-arm"
+                    )
                     return EXIT_AUTH_FAILED
                 # transient server blip (e.g. macmini restart) must not kill a
                 # long-lived --follow watcher; log and keep polling.
@@ -510,6 +568,12 @@ async def _run(args) -> int:
             if fresh and not args.follow:
                 return 0  # one-shot: exit on first new mail (Bash-bg = one wake)
             if deadline is not None and time.monotonic() >= deadline:
+                # WATCH-2: an expired deadline ends coverage while the session
+                # lives — that must never be silent (it was: bare `return 0`).
+                _dying_gasp(
+                    f"--timeout {args.timeout:.0f}s reached with the watched "
+                    f"session still alive"
+                )
                 return 0
 
             # OBSERVE the session, don't announce our own death. We outlive it
@@ -525,11 +589,20 @@ async def _run(args) -> int:
                 # report costs nothing that matters.
                 gone_seen += 1
                 if gone_seen >= 2:
+                    # No gasp here, deliberately: the SESSION is what died,
+                    # so there is nobody to tell to re-arm (WATCH-2).
                     await _farewell(client, reader_identity, args.project_dir or None)
                     return 0
             else:
                 gone_seen = 0
             await asyncio.sleep(args.poll_interval)
+    except (KeyboardInterrupt, SystemExit):
+        raise  # signal paths gasp in main(), where the reason is known
+    except Exception as e:
+        # WATCH-2: an unexpected crash is the least excusable silent death —
+        # say so and hand over the re-arm command before propagating.
+        _dying_gasp(f"unexpected watcher crash: {e!r}")
+        raise
     finally:
         await client.close()
 
@@ -553,10 +626,26 @@ def main() -> None:
     args = p.parse_args()
     if args.timeout <= 0:
         args.timeout = None
+
+    # WATCH-2: a kill must not be a silent deafening. SIGTERM is how a
+    # supervisor or TaskStop ends this process; the handler raises SystemExit
+    # so the asyncio loop unwinds, and the gasp below tells the session it is
+    # now deaf and exactly how to re-arm. SIGKILL cannot be caught — for that
+    # death the roster's watcher_alive going stale is the only detector.
+    def _on_sigterm(signum, frame):
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     try:
         sys.exit(asyncio.run(_run(args)))
     except KeyboardInterrupt:
+        _dying_gasp("interrupted (SIGINT) with the session possibly alive")
         sys.exit(0)
+    except SystemExit as e:
+        if e.code == 143:
+            _dying_gasp("killed (SIGTERM) with the session possibly alive")
+        raise
 
 
 if __name__ == "__main__":
