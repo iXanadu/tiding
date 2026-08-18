@@ -112,3 +112,25 @@ async def test_wake_scope_is_rejected_on_every_generic_path(client):
     ]:
         r = await client.post(path, json=body)
         assert r.status_code == 400, (path, r.status_code, r.text[:120])
+
+
+@pytest.mark.asyncio
+async def test_self_wake_filters_bare_and_host_qualified_forms(
+        client, db_pool):
+    """Amendment 6 completed: a speaker stamps from_=<seat> while its
+    watcher reads as <seat>@<host> — both forms are self."""
+    await client.post("/memory/wake", json={
+        "to": "wakeprobe-self", "ref": "huddle/self",
+        "from_": "wakeprobe-x"})
+    r = await client.post("/memory/wake/poll", json={
+        "listen_set": ["wakeprobe-self"],
+        "reader_identity": "wakeprobe-x@somehost", "timeout_seconds": 0})
+    assert r.json()["wakes"] == [], "host-qualified reader must not self-wake"
+    # A genuinely different reader still sees it.
+    r = await client.post("/memory/wake/poll", json={
+        "listen_set": ["wakeprobe-self"],
+        "reader_identity": "wakeprobe-y@somehost", "timeout_seconds": 0})
+    assert len(r.json()["wakes"]) == 1
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='wake' AND user_id LIKE 'wakeprobe%'")

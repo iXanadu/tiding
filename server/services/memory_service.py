@@ -2661,7 +2661,14 @@ async def wake_list_fresh(
     listen = [a.lower() for a in listen_set if a]
     if not listen:
         return []
-    own = {(reader_identity or "").strip().lower()}
+    # Self-echo, both forms (amendment 6, completed): mail filters on the
+    # reader identity AND its bare name — a speaker stamps from_=<seat>
+    # while its watcher reads as <seat>@<host>, so the exact-string set
+    # alone would self-wake every huddle speaker.
+    own = set()
+    if reader_identity:
+        r = reader_identity.strip().lower()
+        own.update({r, r.split("@", 1)[0]})
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(

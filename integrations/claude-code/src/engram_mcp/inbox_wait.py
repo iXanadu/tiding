@@ -683,8 +683,21 @@ async def _run(args) -> int:
                     seen.add(wid)
                     _emit_wake(w)
                     wakes.append(w)
-            except Exception:
-                pass  # wake support is additive; mail coverage is unaffected
+            except Exception as we:
+                # An AUTH refusal is not additive-degradation: a watcher whose
+                # wake socket is refused on every poll silently misses every
+                # room ping while looking covered — the same fail-open the
+                # mail path already dies loudly on. Anything else (404 from a
+                # pre-10a server, a transient blip) costs nothing.
+                if _auth_error_code(we):
+                    print(_AUTH_FAIL_MSG.format(code=_auth_error_code(we)),
+                          file=sys.stderr, flush=True)
+                    _dying_gasp(
+                        f"server rejected credentials on the wake socket "
+                        f"({_auth_error_code(we)}) — fix the token in "
+                        f"~/.config/engram/identity, then re-arm"
+                    )
+                    return EXIT_AUTH_FAILED
             if (fresh or wakes) and not args.follow:
                 return 0  # one-shot: exit on first new mail OR wake
             if deadline is not None and time.monotonic() >= deadline:
