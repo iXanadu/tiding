@@ -50,7 +50,7 @@ from server.models import (
 )
 from server.services.audit_service import audit
 from server.services.identity import autocorrect_address, validate_listen_set
-from server.services.session_registry import SEAT_SCOPE
+from server.services.session_registry import SEAT_SCOPE, unknown_root_advisories
 from server.services.inbox_guidance import (
     ack_guidance,
     archive_guidance,
@@ -846,6 +846,15 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                         "expect a reply. Check memory_roster before dividing "
                         "work or handing off."
                     )
+        # Step 8 typo detection (ADDR-2 doctrine: warn, never reject) —
+        # fires regardless of intent: a typo'd fyi is just as lost. A known
+        # root, a person, an exempt role, or any address a session has ever
+        # held stays silent; only a string NOTHING roots draws the advisory.
+        try:
+            warnings.extend(
+                await unknown_root_advisories([t for t, _ in corrected]))
+        except Exception:
+            logger.exception("unknown_root_advisories failed (advisory only)")
         return InboxSendResponse(
             status="ok",
             id=ids[0],

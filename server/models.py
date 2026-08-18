@@ -1251,3 +1251,21 @@ class AddressRegisterResponse(BaseModel):
     status: str
     generated_at: str
     entries: list[AddressEntry] = []
+
+
+class ProjectRegistryEntry(BaseModel):
+    """Step 8: one known project root. `registered` False = observed only
+    via seat rows (predates the registry; registers on its next claim).
+    `dormant` mirrors the allocator's clock (no activity in the seat-grace
+    window) — the one policy field, allocator-style; the rest are facts."""
+    project: str
+    first_seen: str | None = None
+    last_active: str | None = None
+    registered: bool = False
+    dormant: bool = False
+
+
+class ProjectRegistryResponse(BaseModel):
+    status: str
+    generated_at: str
+    projects: list[ProjectRegistryEntry] = []

@@ -19,6 +19,8 @@ from server.models import (
     AddressRegisterResponse,
     DeathCertRequest,
     DeathCertResponse,
+    ProjectRegistryEntry,
+    ProjectRegistryResponse,
     SeatClaimRequest,
     SeatClaimResponse,
     SeatEntry,
@@ -32,6 +34,7 @@ from server.services.session_registry import (
     address_register,
     death_certify,
     is_reserved_lane,
+    project_registry,
     seat_claim,
     seat_list,
     seat_release,
@@ -197,6 +200,25 @@ async def list_addresses(request: Request, project: str | None = None):
         status="ok",
         generated_at=datetime.now(timezone.utc).isoformat(),
         entries=[AddressEntry(**e) for e in entries],
+    )
+
+
+@router.get("/projects", response_model=ProjectRegistryResponse)
+async def list_projects(request: Request):
+    """Step 8: every project root the store knows — registered (claim-path
+    census) plus observed-only (seat rows predating the registry). The
+    address tree's verifiable root: what a sender checks a destination
+    against, and where dormant projects stay visible."""
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
+    try:
+        projects = await project_registry()
+    except Exception:
+        logger.exception("project_registry failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+    return ProjectRegistryResponse(
+        status="ok",
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        projects=[ProjectRegistryEntry(**p) for p in projects],
     )
 
 

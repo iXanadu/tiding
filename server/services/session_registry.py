@@ -51,6 +51,14 @@ from server.services.memory_service import (
 
 SEAT_NAMESPACE = INBOX_NAMESPACE
 
+# Step 8 (build-plan): the project REGISTRY — the address tree's verifiable
+# root. A project registers itself on first contact (every session claims,
+# so the claim path is the census); projects that predate the registry are
+# listed from their seat rows meanwhile and register organically on their
+# next claim. Dormancy shares the seat-grace clock deliberately (see
+# PROJECT_DORMANT_SECONDS below, after SEAT_GRACE_SECONDS is defined).
+PROJECT_REGISTRY_SCOPE = "project-root"
+
 # A seat whose holder beat within this window is LIVE — never reassigned to a
 # DIFFERENT session_key. It no longer gates same-key restarts: that used to be
 # the window separating "duplicate key" from "genuine restart", and it could
@@ -109,6 +117,10 @@ SEAT_LIVE_SECONDS = 600
 # addresses, and the untidiness is bounded by explicit release doing the real
 # work.
 SEAT_GRACE_SECONDS = 604800  # 7d (was 24h until 2026-08-01)
+
+# One clock, two questions: a project none of whose sessions could still
+# hold a seat is dormant by the same rule that frees the seats.
+PROJECT_DORMANT_SECONDS = SEAT_GRACE_SECONDS
 
 # Refuse rather than allocate unbounded. A project needing >64 concurrent
 # sessions is a misconfiguration (usually a session_key that changes every
@@ -435,6 +447,26 @@ async def seat_claim(
 
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Step 8: the project root registers itself on first contact. Every
+        # session claims, so this IS the census; claims are heartbeat-
+        # throttled, so the upsert is cheap. Best-effort — the registry is
+        # an observation, never a gate on the claim.
+        try:
+            await conn.execute(
+                """
+                INSERT INTO memories (namespace, key, value, scope, user_id,
+                                      project, tags, tags_search, metadata,
+                                      last_used_at)
+                VALUES ($1, $2, 'project-root', $3, $4, $5, '', '',
+                        jsonb_build_object('kind', 'project-root'), NOW())
+                ON CONFLICT (namespace, key, scope, user_id, project)
+                  DO UPDATE SET last_used_at = NOW()
+                """,
+                SEAT_NAMESPACE, f"project/{project}",
+                PROJECT_REGISTRY_SCOPE, SEAT_USER_ID, project,
+            )
+        except Exception:
+            pass
         # 1. Continuity: do I already hold a seat in this project?
         #
         # session_key means CONTINUITY, (key, nonce) means IDENTITY. A claim
@@ -1469,4 +1501,134 @@ async def address_register(project: str | None = None) -> list[dict]:
             "allocation": _allocation(None, n, None, None,
                                       fixed_reason=_fixed_reason(addr)),
         })
+    return out
+
+
+async def project_registry() -> list[dict]:
+    """Step 8: every project the store knows — the address tree's roots.
+
+    Two sources, merged: REGISTERED roots (the claim-path census) and
+    projects only OBSERVED via seat rows (they predate the registry; they
+    register organically on their next claim and are listed meanwhile so
+    "every known project" is true from day one, no backfill migration).
+    ``dormant`` mirrors the allocator's own clock: no activity within the
+    seat-grace window. Facts plus that one policy field, allocator-style.
+    """
+    now = datetime.now(timezone.utc)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        reg_rows = await conn.fetch(
+            """
+            SELECT project, created_at, COALESCE(last_used_at, created_at) AS la
+            FROM memories WHERE namespace = $1 AND scope = $2
+            """,
+            SEAT_NAMESPACE, PROJECT_REGISTRY_SCOPE,
+        )
+        seat_rows = await conn.fetch(
+            """
+            SELECT project, MIN(created_at) AS first_seen,
+                   MAX(COALESCE(last_used_at, created_at)) AS la
+            FROM memories WHERE namespace = $1 AND scope = $2
+              AND project IS NOT NULL
+            GROUP BY project
+            """,
+            SEAT_NAMESPACE, SEAT_SCOPE,
+        )
+    merged: dict[str, dict] = {}
+    for r in seat_rows:
+        merged[r["project"]] = {
+            "project": r["project"],
+            "first_seen": r["first_seen"],
+            "last_active": r["la"],
+            "registered": False,
+        }
+    for r in reg_rows:
+        e = merged.setdefault(r["project"], {
+            "project": r["project"], "first_seen": r["created_at"],
+            "last_active": r["la"], "registered": True,
+        })
+        e["registered"] = True
+        if r["created_at"] and (not e["first_seen"]
+                                or r["created_at"] < e["first_seen"]):
+            e["first_seen"] = r["created_at"]
+        if r["la"] and (not e["last_active"] or r["la"] > e["last_active"]):
+            e["last_active"] = r["la"]
+    out = []
+    for e in sorted(merged.values(),
+                    key=lambda x: x["last_active"] or x["first_seen"] or now,
+                    reverse=True):
+        la = e["last_active"]
+        out.append({
+            "project": e["project"],
+            "first_seen": e["first_seen"].isoformat() if e["first_seen"] else None,
+            "last_active": la.isoformat() if la else None,
+            "registered": e["registered"],
+            "dormant": bool(la and (now - la).total_seconds()
+                            > PROJECT_DORMANT_SECONDS),
+        })
+    return out
+
+
+async def unknown_root_advisories(addrs: list[str]) -> list[str]:
+    """Step 8 typo detection, ADDR-2 doctrine: WARN, never reject.
+
+    A destination whose root is no known project, that names no person or
+    exempt role, and behind which no seat or presence row exists, is
+    probably a typo — the send still succeeds (queued mail is a feature and
+    a not-yet-started project is legitimate), but the sender is told that
+    nothing has ever listened there, because from the sender's side "never
+    existed" and "slow to answer" are otherwise one picture.
+    """
+    candidates = []
+    for a in addrs:
+        a = (a or "").strip().lower()
+        if not a or a.startswith("#"):
+            continue
+        candidates.append(a)
+    if not candidates:
+        return []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        projects = {
+            r["project"] for r in await conn.fetch(
+                """
+                SELECT DISTINCT project FROM memories
+                WHERE namespace = $1 AND scope IN ($2, $3)
+                  AND project IS NOT NULL
+                """,
+                SEAT_NAMESPACE, PROJECT_REGISTRY_SCOPE, SEAT_SCOPE,
+            )
+        }
+        persons = {
+            (r["name"] or "").strip().lower() for r in await conn.fetch(
+                "SELECT name FROM principals WHERE type = 'human' AND active",
+            )
+        }
+        known_addrs = {
+            r["key"].split("/", 1)[1] for r in await conn.fetch(
+                """
+                SELECT key FROM memories
+                WHERE namespace = $1 AND scope IN ($2, $3)
+                  AND key = ANY($4::text[])
+                """,
+                SEAT_NAMESPACE, SEAT_SCOPE, PRESENCE_SCOPE,
+                [f"seat/{a}" for a in candidates]
+                + [f"presence/{a}" for a in candidates],
+            )
+        }
+    out = []
+    for a in candidates:
+        bare = a.split("@", 1)[0]
+        if bare in SEAT_EXEMPT_IDENTITIES or bare in persons:
+            continue
+        if a in known_addrs:
+            continue
+        if any(bare == p or bare.startswith(p + "-") for p in projects):
+            continue
+        out.append(
+            f"{a}: no registered project roots this address, no session has "
+            f"ever held it, and nothing is listening there. Delivered and "
+            f"stored — but if this is a typo, it will queue forever. Known "
+            f"roots are served by GET /session/projects."
+        )
     return out
