@@ -365,9 +365,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   per-call approval, which headless transports surface as an elicitation
   that gets declined ("user rejected MCP tool call"). Proven and FIXED on
   macmini (memory_get/resolve/store were unlisted; 11 tools added,
-  destructive verbs deliberately left gated). Remaining: apply the same
-  allowlist audit to webone's (and every box's) `~/.codex/config.toml` —
-  per-box configs mean per-box capability skew. Lesson:
+  destructive verbs deliberately left gated). Fleet parity DONE same
+  evening on the owner's word: webone carried the identical six-tool list,
+  same 11-tool fix applied and TOML-verified (17 listed); dbone and
+  haos-host have no codex config (nothing to fix). Note: webone's list
+  already approved send/inbox, so if the overnight can't-send symptom
+  recurs there after a session restart, the residual is NOT the allowlist —
+  reopen with fresh evidence. Lesson:
   shared `lesson/codex-mcp-tool-approval-allowlist`.
 
 - **TIME-1** ★ Owner-approved 2026-08-18, MEDIUM priority — do not fold into
