@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# DEPLOY-4 — refuse to push when the CODE trees are dirty.
+#
+# The incident class (2026-08-18, ~2.5min fleet-wide send outage): a green
+# local test run proves the WORKING TREE, but the push ships only what was
+# COMMITTED. A file that exists only uncommitted (that day: a new settings
+# attribute in server/config.py) makes the pushed commit a version nobody
+# ever tested — it 500s in prod while every local probe passes.
+#
+# So: pushing with modified or untracked files under the code trees is
+# refused. Commit everything the code needs, or stash what it doesn't.
+# Docs/backlog/scripts dirt does not block — the hazard is code that tests
+# ran against but the commit lacks.
+#
+# Activate in a fresh clone with:  git config core.hooksPath .githooks
+set -uo pipefail
+
+CODE_TREES=(server/ tests/ integrations/claude-code/)
+
+dirty="$(git status --porcelain -- "${CODE_TREES[@]}")"
+if [[ -n "$dirty" ]]; then
+    {
+        echo "⛔ DEPLOY-4: refusing push — code trees are dirty, so the local"
+        echo "   test run proved a tree this push does not ship:"
+        echo "$dirty" | sed 's/^/     /'
+        echo "   Commit (or stash) these first. Context: BACKLOG DEPLOY-4 —"
+        echo "   an uncommitted config attribute 500d prod for 2.5min while"
+        echo "   every local test was green."
+    } >&2
+    exit 1
+fi
+exit 0

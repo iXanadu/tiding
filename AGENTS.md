@@ -40,6 +40,8 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + in-process s
 - Embedding model: nomic-ai/nomic-embed-text-v1.5 (in-process via sentence-transformers, no external service)
 - pyenv virtualenv: `engram-3.12` (`.python-version` in repo)
 - All memory CRUD goes through `server/services/memory_service.py`
+- Fresh clone: `git config core.hooksPath .githooks` — arms the DEPLOY-4
+  pre-push guard (refuses pushes while code trees are dirty)
 - Schema auto-created on startup; migration SQL handles upgrades from older schemas
 
 ## Data Model

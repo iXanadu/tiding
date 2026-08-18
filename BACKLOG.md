@@ -206,14 +206,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   when the row's holder shows later life (the farewell rule, applied to
   certs), or certs must carry the nonce.
 
-- **DEPLOY-4** A deploy from a tree with uncommitted changes ships code the
-  local suite never tested as-committed: a green local run proves the
-  WORKING TREE, the push ships only what was ADDED. Bit 2026-08-18 (~2.5min
-  fleet-wide send outage: a new settings attribute lived uncommitted while
-  the code referencing it shipped). Fix: graceful-deploy (or a pre-push
-  hook) refuses when `git status --porcelain` is non-empty for server/,
-  and the deploy habit checks it explicitly meanwhile.
-
 - **DEPLOY-3** graceful-deploy's 30s drain window is sized under the
   inbox-wait long-poll timeout, so a routine bounce reads as "still alive —
   investigate" while the old process is just draining held long-polls
