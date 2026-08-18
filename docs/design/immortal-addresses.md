@@ -17,6 +17,10 @@ Immortal: the project channel (`softphone`), declared sub-team groups
 (`beastchat-app`), **lanes** (`softphone-grok`), machines, humans, `#channels`.
 Mortal: a session's occupant identity (`agentbeast-grok-4`).
 
+> **2026-08-18:** `#channels` were retired (Step 18 of the comms build plan —
+> the project channel subsumed them; `#` sends now 409). References to them
+> below are the design as shipped, kept as record.
+
 **[v2] Seat DMs remain first-class, not vestigial.** Two legitimate uses
 survive review: (1) targeting one specific occupant when a lane has two
 (build vs audit in one folder — the founding case); (2) mail that must

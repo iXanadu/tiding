@@ -60,6 +60,14 @@ a headless box; this is why it needs `sudo`, unlike a LaunchAgent). Linux
 gets a **systemd unit** ordered after PostgreSQL. Logs land in
 `<clone>/logs/`.
 
+**Optional second unit — the inbox janitor** (`scripts/inbox-janitor.sh` +
+`launchd/com.engram.inbox-janitor.plist`): an hourly climb+sweep pass so
+unhandled asks at dead addresses surface where somebody live is listening
+and old chatter drains (see [messaging.md](messaging.md#climb-and-sweep-unhandled-asks-rise-dead-chatter-drains)).
+Run it as a **dedicated non-owner admin principal** whose token lives in a
+mode-600 file read at runtime — never bake the owner's bearer into a
+scheduled job.
+
 ## The one file you configure: `.env`
 
 `install.sh` seeds `.env` from `.env.example`. The three decisions that

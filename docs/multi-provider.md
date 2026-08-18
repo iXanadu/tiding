@@ -197,7 +197,7 @@ pair.
 > block wins over the parent environment** — so a seat pinned there silently
 > defeats every per-launch override, with no error and no banner. Grok already
 > pins `ENGRAM_IDENTITY` (the *credential selector*) there, which is correct
-> and must stay; seats and channels must not join it. Claude Code has no such
+> and must stay; seats must not join it. Claude Code has no such
 > block. Verified by controlled probe 2026-07-23: Grok inherits the full parent
 > environment and merges the config block **on top**.
 >
@@ -295,7 +295,7 @@ Consequences, in order of how easily they bite:
   identity" with no error.
 - **`ENGRAM_PROVIDER` belongs there too.** It does not vary per launch (a
   `cursor-agent` session is always `cursor`), so it is the same safe category as
-  the credential selector — unlike seats and channels.
+  the credential selector — unlike seats.
 - **A launcher cannot prefer a seat.** `ENGRAM_INBOX_IDENTITY` in the parent
   environment is simply lost. Note what this does *not* mean: sessions still
   **auto-allocate** seats server-side (`myproject-cursor`, then `-2`), so
@@ -386,17 +386,18 @@ shell process for exactly that reason.
 
 The owner is a first-class participant, not an outsider. An owner (admin)
 principal's messages carry a server-stamped `authority: true` that **no agent
-token can forge** — so "everyone on `#courseware`: approved, proceed" lands
-with verified weight on every agent across every project in the coalition,
-from one send. See [messaging.md](messaging.md) for intent and verification
-details.
+token can forge** — so "everyone on `courseware`: approved, proceed" lands
+with verified weight on every session in that project, from one send (a
+cross-project coalition is a fan-out list). See
+[messaging.md](messaging.md) for intent and verification details.
 
 ## Boundaries that keep it clean
 
 - Tokens live in provider-global config (`~/.config/…`, launcher env) —
   **never in the repo**. The folder carries only `project = <name>`.
-- The folder also carries **zero addressing** — identity, role overlays, and
-  channel membership are all injected at launch, so N providers can share
-  one checkout without stepping on each other.
+- The folder carries **no session addressing** — identity and role overlays
+  are injected at launch, so N providers can share one checkout without
+  stepping on each other. (Team `groups =` in `.engram.cfg` is the deliberate
+  exception: a team address binds to the codebase, not a session.)
 - One provider = one principal. One project = one memory bucket. Identity
   discriminates; access does not.

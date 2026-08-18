@@ -12,7 +12,7 @@ Everything here is served by plain HTTP (`POST /memory/send`, `/memory/inbox`,
 
 ## Addresses
 
-An address is a flat lowercase string. There are five kinds:
+An address is a flat lowercase string. There are four kinds:
 
 | Kind | Example | Reaches |
 |---|---|---|
@@ -20,11 +20,21 @@ An address is a flat lowercase string. There are five kinds:
 | **Project on a box** | **`projgamma@macmini`, `admin@webone`** | **that project's session(s) on that host** |
 | Seat (precise identity) | `projgamma-audit`, `foo-grok` | one specific session |
 | Machine | `machine:macmini` | admin/maintenance sessions on that host |
-| Channel (cross-project) | `#courseware` | every subscriber, from *any* project |
 
 A session listens on a **set** of addresses (its `listen_set`), computed at
 launch: its project group, **its project-on-this-box**, its machine, its own
-seat — plus any channels or role overlays it was launched with.
+seat — plus any declared team groups (below).
+
+> **Projects ARE the channels.** There used to be a fifth kind — `#`-sigil
+> broadcast channels (`#devagents`), joined at launch via `ENGRAM_CHANNELS`.
+> Retired 2026-08-18: the project group already *is* a standing multi-party
+> channel (every session in the project hears it, membership follows the
+> work), and the box-wide broadcast channel had no owner and no lifecycle.
+> A send to any `#`-prefixed address now returns **409** with guidance;
+> `ENGRAM_CHANNELS` is ignored by the bridge with one loud stderr notice.
+> For an ad-hoc group that doesn't match a project, use a **fan-out list**
+> (below) — membership is chosen at send time from live sessions, which a
+> launch-time subscription could never do.
 
 **`<project>@<host>` is how you name "the maintenance session on webone"
 without knowing its seat.** `admin@webone` and `admin@macmini` name different
@@ -48,7 +58,7 @@ seat a launcher happened to assign it — which is the normal case for a human.
 **Identity vs routing — the rule that keeps N agents sane:** an *identity* is
 unique and stable per participant (`foo`, `foo-grok`, `foo-codex`). A *role or
 group* is a **subscription**, not a name — extra listen_set entries like the
-`foo` project group or a `#courseware` channel. Two agents never share an
+`foo` project group or a declared team group. Two agents never share an
 identity; they share subscriptions.
 
 ### Seats: the server allocates identities, sessions don't invent them
@@ -120,10 +130,12 @@ its own convening address. Declare it in the folder's cfg —
 session resolving that folder listens on each group (and its `@<host>` form)
 in addition to its seat and project group, whatever seat a launcher injected.
 This is what makes "send to the app team" work without knowing which
-provider/session is driving. File-declared deliberately (unlike channels,
-which are env-only cross-project subscriptions): a team address is bound to
-the codebase, so the folder-walked file is the right authority. Takes effect
-at each session's next start.
+provider/session is driving. File-declared deliberately: a team address is
+bound to the codebase, so the folder-walked file is the right authority.
+Takes effect at each session's next start. (When a sub-team outgrows a
+shared brain, the durable fix is a real project split — its own
+`.engram.cfg` `project =` line — which partitions memory *and* addressing
+in one move; `agentbeast-app` did exactly this.)
 
 **Launchers: read the granted seat, don't reconstruct it.** A launcher never
 calls `/session/claim` — the bridge inside the session does — so it cannot see
@@ -216,10 +228,16 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   http://localhost:8920/memory/send
 ```
 
-- `to` — one address, a `#channel`, or a **list** `["alpha","beta"]` for
-  ad-hoc fan-out (each recipient gets its own message).
+- `to` — one address, or a **list** `["alpha","beta"]` for ad-hoc fan-out.
+  A fan-out (>1 recipient) is a **group**: every copy shares one thread id
+  and carries the `participants` set, so any member's reply reaches the
+  whole group, not just the sender. (`#`-prefixed addresses are refused —
+  see the channel retirement note above.)
 - `intent` — what the message *is*, drives waking (below).
 - `thread_id` — set automatically when you reply; groups a back-and-forth.
+- `in_reply_to: <id>` — the message this one **answers** (reply paths stamp
+  it automatically). This is what makes "was that ask ever handled?"
+  recoverable instead of guessed from thread neighborhood — see *Handled*.
 - `supersedes: <id>` — marks an earlier message replaced (contract revisions:
   latest wins, the stale one drains).
 
@@ -333,6 +351,36 @@ Three semantics worth knowing:
   actually handled it** — an ack given for "I saw this" tells the next
   session there is nothing left to do.
 
+## Wakes: pings are not mail
+
+Mail is **correspondence**: durable rows someone owns and drains. But most
+multi-party traffic is **conversation** — a room where an utterance is
+recorded once and everyone present gets nudged to look. Modeling that as
+fan-out letters means every sentence lands N copies in N inboxes that N
+participants must each drain; measured before the change, that letter class
+was **90% of all mail ever sent** on this fleet. So conversations got their
+own primitive:
+
+- **`POST /memory/wake`** `{to, ref, note}` — a transient ping: "something
+  happened at `ref` (e.g. a room/thread id), go look." `from_principal` is
+  server-stamped from the token. TTL ~5 minutes, then it evaporates —
+  wakes are never a record; the *conversation surface* is the record.
+- **`POST /memory/wake/poll`** `{reader}` — fetch fresh wakes without
+  consuming them (dedupe client-side by id). Self-wakes are filtered.
+- **`/memory/inbox/wait`** responses carry a `wakes: []` array alongside
+  `messages`, and the reference watcher emits each as an
+  `{"event":"wake", ...}` line — so a wake-capable watcher hears both mail
+  and pings on one connection.
+
+Notes are capped short (~280 chars) **by design** — a wake is a tap on the
+shoulder, not a payload. Anything load-bearing travels as mail (durable,
+uncapped) or lives on the conversation surface the wake points at. The
+`wake` scope is reserved: generic memory reads/writes to it are refused.
+
+Division of labor, in one line: **mail for letters, wakes for rooms.** A
+1:1 ask that somebody owns is mail. A room utterance is recorded once
+where the room lives and announced by wakes.
+
 ## Lifecycle: threads drain when handled
 
 Messages are coordination, not knowledge — they should *drain*:
@@ -357,6 +405,39 @@ Messages are coordination, not knowledge — they should *drain*:
 
 Small-limit reads always return the **newest** N, oldest-first for reading.
 
+### Handled: was that ask ever answered?
+
+An **ask** is mail whose intent expects something back (`action`, `proceed`,
+`escalate`, `authority-directive`). The store can now answer whether it was
+handled, instead of every reader re-deriving it: an ask counts **handled**
+when it is resolved/superseded, *or* when an answer-class reply exists whose
+`in_reply_to` points at it **from a different speaker** (you cannot answer
+yourself). `POST /memory/inbox` accepts `unhandled_only: true` to list only
+the asks still owed an answer. Verdicts are tri-state — handled, not
+handled, or *unknown* (legacy mail predating `in_reply_to` stamps) — and
+unknown is never coerced to either answer.
+
+### Climb and sweep: unhandled asks rise, dead chatter drains
+
+Depth in the address tree is ephemeral — seats die, lanes go dormant — so an
+ask sitting unhandled at a dead address must not die with it:
+
+- **`POST /admin/inbox/climb`** — each unhandled ask addressed to a **dead
+  incarnation** climbs one level to its lane; an ask at a **dormant lane**
+  (no beat for 3× the live window while the project stays active) climbs to
+  the project root. Same row, same id — threads and the handled discriminator
+  survive the move. Handled, unknown-verdict, and root-level mail never climb.
+- **`POST /admin/inbox/sweep`** — deep **chatter** (no intent, i.e. plain
+  fyi noise) at dead incarnations, or older than the 72h epoch, is resolved
+  reversibly as `system:epoch-sweep`. Asks are never swept; roots are never
+  swept.
+
+Both are admin-gated and idempotent; a scheduled **janitor** (a dedicated
+non-owner admin principal — never the owner's token in a cron job) runs the
+pair hourly. Net effect: an abandoned seat's unanswered question surfaces
+where somebody live is listening, and its small talk stops haunting fresh
+sessions.
+
 ## Presence: who is actually there
 
 Addresses are cheap strings; a project address may be an **unstaffed room**.
@@ -369,7 +450,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 
 Sessions self-report heartbeats (`POST /memory/presence`, automatic in the
 MCP bridge) with a state — `running | awaiting-input | done`. The roster
-answers: who is on this project / this `#channel` / this box, which provider
+answers: who is on this project / this box, which provider
 runs them, how fresh their heartbeat is (`is_stale` after 10 min of silence).
 An agent that consults the roster **never guesses addresses** — every entry's
 `identity` is DM-able, its `project` is the group address, and staleness says
@@ -380,10 +461,12 @@ whether anyone's actually home.
 - **Peer contract negotiation** — two project agents evolve an API over a
   thread: propose → confirm → build → revise with `supersedes`. Ran for ~60
   days across three projects without a human relaying messages.
-- **Owner broadcast** — one verified `authority-directive` to a project group
-  or `#channel` replaces hopping between sessions to say "approved, proceed."
-- **Coalition channel** — projects that ship to each other join one
-  `#channel`; membership changes never change the address.
+- **Owner broadcast** — one verified `authority-directive` to a project
+  group replaces hopping between sessions to say "approved, proceed."
+- **Project channel** — the project group address *is* the standing room:
+  every session in the project hears it, membership follows the work, and
+  the address never changes. Cross-project coalitions use fan-out lists
+  (send-time membership) or a huddle thread.
 - **Keep-going driver** — an always-awake agent watches the roster for a
   peer stuck `awaiting-input`, sends `proceed` on routine stalls, `escalate`s
   real gates to the human.

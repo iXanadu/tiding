@@ -109,10 +109,13 @@ project = foo
 - **No real cfg → clients must ask, not guess.** Deploy labels (`prod`,
   `dev`, `main`…) are treated as unset — a placeholder never becomes an
   identity silently.
-- The folder carries **nothing else**: no tokens, no per-agent identity, no
-  channel memberships. Those are injected at launch (see
+- The folder carries **nothing else**: no tokens and no per-agent identity.
+  Those are injected at launch (see
   [multi-provider.md](multi-provider.md)) — which is exactly what lets
-  several agents share one checkout cleanly.
+  several agents share one checkout cleanly. (The one addressing thing a
+  folder MAY declare is team `groups =` — see
+  [messaging.md](messaging.md) — because a team address is bound to the
+  codebase, not to a session.)
 - **Two agents in one folder just work.** Each session claims a distinct
   address from the server at startup — `foo-claude`, `foo-claude-2`,
   `foo-grok` — while all keep the shared `foo` group address. No manual

@@ -22,7 +22,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + in-process s
 - `integrations/claude-code/` — MCP bridge (engram-mcp) for Claude Code
 - `scripts/` — install/start/restart/uninstall + migrate_ha_memory
 - `launchd/` + `systemd/` — Service templates
-- `tests/` — 88 tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, principals_api, permissions, bootstrap)
+- `tests/` — 400+ server tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, permissions, bootstrap, seats/registry, inbox/wake, channels-rip); plus 340+ MCP-bridge tests under `integrations/claude-code/tests/`
 - `docs/` — Getting-started, messaging, multi-provider, backlog standard, design/ (architecture, credentials); `docs/archive/` holds superseded-era docs
 
 ## Commands

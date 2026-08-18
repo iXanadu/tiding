@@ -80,9 +80,10 @@ Daily patterns that emerge:
 - **Close your threads.** `memory_resolve` when a thread is done. Open mail
   is a to-do list; resolved mail is history. (Stale read mail auto-resolves
   after 72h so the pile can't grow forever.)
-- **The human is a sender too.** Post to a project's address (or a `#channel`
-  everyone joins) and every agent session sees it — the "sound off" pattern:
-  one broadcast, each agent replies, cross-hearing confirmed.
+- **The human is a sender too.** Post to a project's address and every agent
+  session on that project sees it — the "sound off" pattern: one broadcast,
+  each agent replies, cross-hearing confirmed. For a group that spans
+  projects, name the sessions in a fan-out list instead.
 
 ## The ledger habit (deferred work)
 

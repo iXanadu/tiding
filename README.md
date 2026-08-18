@@ -43,7 +43,7 @@ the owner, command the whole team with verified authority from a single message.
   turns multi-hour unattended runs from hope into mechanism.
 - **The owner's voice is unforgeable.** Sender identity and owner authority
   are stamped server-side from the authenticated token. One
-  `authority-directive` to a project group or cross-project `#channel` lands
+  `authority-directive` to a project group lands
   on every agent as **✓ VERIFIED OWNER** — and no agent token can fake it.
 - **Several agents, one folder, zero fuss.** Run an orchestrator, a tester,
   and an implementer in the same project and each is handed a distinct
@@ -430,15 +430,21 @@ Built on top of the memory table. Enables Claude Code sessions (or any agent) to
 - `POST /memory/inbox/{id}/ack` — Mark a message as read (per-reader)
 - `POST /memory/inbox/{id}/resolve` — Close a finished thread so it drains from the default view (kept, reversible; either party may resolve)
 - `POST /memory/inbox/{id}/archive` — Archive a message (global hide; for noise/mistakes — prefer resolve)
-- `POST /memory/inbox/wait` — Long-poll for new mail (what the watcher uses)
+- `POST /memory/inbox/wait` — Long-poll for new mail **and wakes** (what the watcher uses)
+- `POST /memory/inbox/resolve-thread` — Drain a whole finished thread in one call (your own copies only; idempotent)
+- `POST /memory/wake` — Send a transient **wake**: a short TTL'd ping ("look at `ref`") for room-style conversation, instead of landing N letter copies in N inboxes ("mail for letters, wakes for rooms")
+- `POST /memory/wake/poll` — Fetch fresh wakes without consuming them
 - `POST /memory/presence` — Heartbeat: a session self-reports its liveness state (also the safety-net seat-collision check)
-- `POST /memory/roster` — Who's listening where: identities, providers, liveness, channel membership
+- `POST /memory/roster` — Who's listening where: identities, providers, liveness
+- `POST /admin/inbox/climb` / `POST /admin/inbox/sweep` — Admin janitor pair: unhandled asks at dead/dormant addresses climb the address tree toward a live listener; deep intent-less chatter drains (reversibly) after 72h. Asks are never swept
 
 **Session registry (seats).** So N sessions in one project folder get N distinct addresses with no human step, a session *claims* an address instead of computing one — the server hands out one nobody else holds.
 
 - `POST /session/claim` — Claim this session's unique seat (the bridge does this at startup; idempotent per session, so a restart keeps the same seat)
 - `POST /session/release` — Free a seat immediately (otherwise reclaimed after a grace period, never while it holds undelivered mail)
 - `POST /session/seats` — List allocated seats; pass `session_key` for a launcher's direct lookup of the seat that was actually granted, with `provider` as a field
+- `GET /session/addresses` — The operator's address register: every name the store holds and **why** (live holder, grace window, parked mail, death evidence), including mail-only entries no seat row shows
+- `GET /session/projects` — Known project roots (registered on claim + observed-only), the census behind root-name reservation
 
 **Message lifecycle.** Every message has a status (`open` → `resolved`/`superseded`) and an `intent` (`fyi | action | proceed | escalate`). `fyi` never wakes a dormant peer; `action` does. Stale open messages (72h default) are annotated, never auto-deleted.
 
@@ -544,6 +550,9 @@ All settings use the `ENGRAM_` environment variable prefix. Set them in `.env` o
 | `ENGRAM_INBOX_AUTORESOLVE_ENABLED` | `true` | Auto-resolve inbox mail that is **already read** and stale, so the open pile doesn't grow without bound (reversible — resolve, not delete; unread mail is never touched) |
 | `ENGRAM_INBOX_AUTORESOLVE_INTERVAL_HOURS` | `6` | Hours between auto-resolve sweeps |
 | `ENGRAM_INBOX_AUTORESOLVE_AFTER_HOURS` | `72` | Read-message age before auto-resolve |
+| `ENGRAM_LANE_RESERVATION_ENABLED` | `false` | Reserve lane strings (`<project>-<provider>`) so the seat allocator never mints an occupant seat equal to a lane (the immortal mailbox). Flip only after all deployed bridges treat injected identities as lanes |
+| `ENGRAM_HUDDLE_FANOUT_REFUSAL_ENABLED` | `false` | Refuse the huddle fan-out **letter** class at `/memory/send` (owner principal + `huddle/*` thread + non-owner recipient, lifecycle letters exempt). Guards the wake-not-letter model against relay regressions; flip only after the relay itself has stopped writing letters |
+| `ENGRAM_OWNER_PRINCIPAL_NAME` | _(empty)_ | The owner principal's name the fan-out refusal keys on. **Empty disables the refusal entirely** — a public default must not encode an operator's identity; each deployment sets its own |
 | `ENGRAM_VECTOR_THRESHOLD` | `0.35` | Minimum cosine similarity |
 | `ENGRAM_TRIGRAM_WEIGHT` | `0.15` | Weight for trigram score in combined ranking |
 | `ENGRAM_TRIGRAM_THRESHOLD` | `0.1` | Minimum trigram similarity |
