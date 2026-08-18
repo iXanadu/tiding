@@ -33,9 +33,18 @@ rather than blindly ripped):**
 - R8 park + grace machinery — **deliberately deferred, not ripped**: live
   code with an open design question (GRANT-1(b)); needs its own arc.
 
-**OPEN:** Step 5 (closes at the PM session's own wrapup mail-drain) ·
-Step 20 (lane-keyed DM view — AB/app lane, no owner input) · DEC-NAV-1
-Chat-inline (app polish). Possible callback: post-flip
+**Step 20 CLOSED 2026-08-18 ~18:26Z** — owner-driven same-day arc: Rob
+un-parked it at midday, sidebar-specced it with claude-2, approved the
+spec in-room; spec-of-record committed AB-side and scored; store + owner-
+only API + capture + WS shipped and live-passed (one re-score: outbound
+capture was dead-gated on `SeatEntry.is_live`, a field engram removed
+2026-08-01 — WIRE-1's second measured case); TF 193's Mail surface closed
+on the owner's own screens (project rows, both directions, no send box).
+Residuals on the AB/app cadence: reply-into-DM deep-link (in tree),
+HUB-RERESOLVE-1, LAUNCHER-CHANNELS-1, DEPLOY-RESEAT-1, huddle-mic path.
+
+**OPEN:** Step 5 only (closes at the PM session's own wrapup mail-drain) ·
+DEC-NAV-1 Chat-inline (app polish). Possible callback: post-flip
 ENGRAM_INBOX_IDENTITY shadow check (app-grok pings engram if env shadows
 cfg identity lines).
 
