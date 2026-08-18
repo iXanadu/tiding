@@ -80,8 +80,10 @@ may run concurrently where marked ∥. Every step starts on the owner's name.
 1. **Bridge rollout sweep** — engram-claude. Update cc-memory installs on
    every spoke; record the swept bridge version per box in project memory.
    *Verify:* every box's presence beats carry host (PRES-2) and watchers die
-   loud (WATCH-2). **Hard gate for everything below — no wire change lands on
-   mixed readers.**
+   loud (WATCH-2). **Hard gate for every WIRE change below — no wire change
+   lands on mixed readers. Provider-internal items (e.g. Step 3, AB's /speak
+   auth) are not gated by the sweep; ∥-marked Band A items run concurrently.**
+   *(Scope confirmed by PM at kickoff, on agentbeast-claude's question.)*
 2. ∥ **Small fixes** (engram §9) — engram-claude. ADDR-REG label noise,
    `preferred_seat` refresh-overwrite. *Verify:* register output on
    admin/owner rows; refresh probe.
@@ -142,6 +144,18 @@ may run concurrently where marked ∥. Every step starts on the owner's name.
     *Rollback at every sub-step:* the previous path is still deployed; revert
     is a config flip, not a rebuild. *Verify (final):* a live huddle where
     every participant wakes and the room's inbox row-count is zero.
+    **Consumer acceptance asks (agentbeast-claude, accepted at kickoff, part
+    of the Band D contract):** (a) a probe path verifying "watcher X woke on
+    event Y" without live-firing at the owner; (b) both-paths delivery counts
+    readable during the 10b soak, so parity is measured rather than claimed;
+    (c) AB's 10c flip sits behind a config flag for symmetric rollback.
+    **Auditor criteria (agentbeast-grok, drafted at kickoff, pre-registered
+    for Band D):** server-side ordering as the only wake evidence (agent
+    self-report is not evidence); 10a not closed until every deployed watcher
+    on every swept box wakes on the primitive; a soak huddle that wakes only
+    via lingering inbox rows proves nothing; mid-job interrupt wake is a
+    separate claim needing its own named probe; rollback needing a redeploy
+    means the step is ordered wrong.
 11. **Remove mail-gating of seat assignment + grace-window machinery**
     (rip list) — engram-claude. Only now safe: O6 killed the echo that parked
     seats, O5 makes deep mail ephemeral. *Verify:* seat churn probe — claim,
