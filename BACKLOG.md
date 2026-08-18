@@ -359,6 +359,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   hazard (surfaces that can compose or exercise owner authority deserve
   suspicion).
 
+- **PROV-CODEX-1** Codex sessions cannot send/read inbox mail while Cursor
+  can (owner's overnight extended test, reported 2026-08-18; both sessions
+  otherwise fine). Root unknown — candidates: MCP wiring in codex's global
+  config, token, or bridge incompatibility. Not chased mid-Step-18 per the
+  owner's own framing ("need not address unless helpful"); pinned so it is
+  not rediscovered. Governs against shared `reference/provider-parity-matrix`.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
