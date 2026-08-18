@@ -507,9 +507,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   zero-AB messaging · address tree with reusable names + session-key
   identity · depth-is-ephemeral with climb-for-unhandled-asks ·
   conversations-are-not-letters). Retroactive cleanup executed (18,097
-  rows archived, reversible). What remains here: execute the build orders
-  in that doc (engram §1-9, AB §1-7), confirm the `#channels` rip, and the
-  agentbeast-app split timing — each starts when the owner names it.
+  rows archived, reversible). What remains here: finish the build plan's
+  tail (`docs/design/comms-build-plan.md`) — Step 17 app split (in flight,
+  owner said ASAP), Step 19 rip list (rides with 17), Step 20 DM view
+  (AB/app lane). The `#channels` rip (Step 18) SHIPPED and closed
+  2026-08-18; Bands A-E complete.
   Still folded in, unruled: bridge CLIENT MODE for non-terminal consumers
   (the Claude-Desktop-wore-admin incident) and the bare-`admin` rescind
   question (deferred pending PRES-2-era observation).
