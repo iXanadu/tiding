@@ -696,6 +696,12 @@ class InboxMessage(BaseModel):
     # LANE-5: the sender's immortal lane, when its bridge stamped one — the
     # address a reply should target so it survives the sender's death.
     from_lane: str | None = None
+    # O2 (reply-to-channel): the sender's PROJECT, server-derived from the
+    # X-Engram-Project provenance header every client already sends. A
+    # cross-project reply targets this channel — the requesting project's
+    # root — because the asking seat (and even its lane's provider) may be
+    # gone by the time the answer comes. Absent on pre-field rows.
+    from_project: str | None = None
     intent: str | None = None          # fyi | action | proceed | escalate | authority-directive
     subject: str
     body: str

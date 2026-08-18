@@ -1856,6 +1856,11 @@ async def memory_reply(
     need to know who else is in it. These replies keep the waking default:
     the group is small and was convened deliberately.
 
+    CROSS-PROJECT: if the parent came from a DIFFERENT project, the reply
+    goes to that project's CHANNEL (its bare project name) — the answer
+    belongs to the requesting project, whose asking session may be gone by
+    the time it arrives. Every session on that project hears it.
+
     Args:
         message_id: The id of the message being replied to
         body: The reply body
@@ -1920,6 +1925,20 @@ async def memory_reply(
             # Degenerate: we are the only listed participant. Fall back to the
             # sender so the reply still lands somewhere real.
             reply_to = reader_to_address(raw_from)
+    elif (parent.get("from_project")
+          and (parent["from_project"] or "").strip().lower()
+              != derive_project_name(remember_project_dir(project_dir or None))):
+        # O2 (reply-to-channel): a CROSS-project parent is a request from
+        # another project, and the answer belongs to that project, not to
+        # whichever of its sessions happened to ask — the asking seat, and
+        # even its provider's lane, may be gone by the time the answer
+        # comes. Route to the requesting project's CHANNEL (its root);
+        # every session on that project listens there by construction, on
+        # every deployed bridge. `from_project` is server-stamped from the
+        # provenance header, so legacy rows without it fall through to
+        # LANE-5/sender routing below, unchanged.
+        reply_to = (parent["from_project"] or "").strip().lower()
+        effective_intent = intent  # a cross-project answer deserves the wake
     else:
         # LANE-5: replies target the sender's immortal LANE whenever its
         # bridge stamped one — the reply then survives the sender's death and

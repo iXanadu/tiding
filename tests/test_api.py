@@ -1359,3 +1359,41 @@ async def test_lane5_from_lane_roundtrips(client):
     })
     msgs = [m for m in r.json()["messages"] if m["to"] == "lane5probe"]
     assert msgs and msgs[0]["from_lane"] == "lane5probe-claude"
+
+
+@pytest.mark.asyncio
+async def test_o2_from_project_stamped_from_header_and_served(client):
+    """O2 reply-to-channel: the sender's project rides the provenance header
+    every client already sends, is stored server-side, and is served back so
+    a recipient's reply can target the requesting project's channel."""
+    r = await client.post(
+        "/memory/send",
+        json={
+            "to": "o2probe-target", "body": "b", "subject": "s",
+            "from_": "o2probe-claude-2@macmini",
+        },
+        headers={"X-Engram-Project": "O2Probe-Requester"},
+    )
+    assert r.status_code == 200
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["o2probe-target"], "reader_identity": "o2probe-target@x",
+    })
+    msgs = [m for m in r.json()["messages"] if m["to"] == "o2probe-target"]
+    # Normalized at the router (strip + lower), like every address string.
+    assert msgs and msgs[0]["from_project"] == "o2probe-requester"
+
+
+@pytest.mark.asyncio
+async def test_o2_from_project_absent_header_serves_none(client):
+    """Legacy senders without the header stay legible as UNRECORDED — the
+    reply path must fall through to LANE-5/sender routing, never guess."""
+    r = await client.post("/memory/send", json={
+        "to": "o2probe-legacy", "body": "b", "subject": "s",
+        "from_": "someone",
+    })
+    assert r.status_code == 200
+    r = await client.post("/memory/inbox", json={
+        "listen_set": ["o2probe-legacy"], "reader_identity": "o2probe-legacy@x",
+    })
+    msgs = [m for m in r.json()["messages"] if m["to"] == "o2probe-legacy"]
+    assert msgs and msgs[0]["from_project"] is None

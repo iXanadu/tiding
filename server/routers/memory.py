@@ -781,6 +781,13 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 model=request.headers.get("x-engram-model"),
                 model_source=request.headers.get("x-engram-model-source"),
                 from_lane=req.from_lane,
+                # O2: the sender's project, from the provenance header every
+                # client already sends — the address a cross-project reply
+                # targets (reply-to-channel). Header-derived so even
+                # pre-sweep bridges stamp it; provenance, not proof.
+                from_project=(
+                    request.headers.get("x-engram-project") or ""
+                ).strip().lower() or None,
             )
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]

@@ -1186,3 +1186,68 @@ async def test_memory_send_stamps_from_lane(respx_mock):
                           project_dir="/Users/ixanadu/projects/projgamma")
     sent = json.loads(send_route.calls.last.request.content)
     assert sent["from_lane"] == "projgamma-claude"
+
+
+# --- O2: cross-project replies target the requesting project's channel ------
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_cross_project_routes_to_project_channel(respx_mock):
+    """O2 reply-to-channel: a parent stamped from ANOTHER project routes the
+    reply to that project's channel — the asking seat, and even its lane, may
+    be gone by the time the answer comes. Channel beats lane here."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/X1", "to": "engram",
+             "from_": "projgamma-claude-4@macbook",
+             "from_lane": "projgamma-claude",
+             "from_project": "projgamma",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-18T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/X1/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/X1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/X1", body="answer",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["to"] == "projgamma", (
+        "cross-project reply must target the requesting project's CHANNEL, "
+        "not the asking seat or its lane"
+    )
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_same_project_keeps_lane_routing(respx_mock):
+    """A same-project parent is not a cross-project request — LANE-5 routing
+    is unchanged; from_project only redirects when the projects differ."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/X2", "to": "engram",
+             "from_": "engram-claude-4@macmini",
+             "from_lane": "engram-claude",
+             "from_project": "engram",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-18T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/X2/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/X2"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/X2", body="ack",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["to"] == "engram-claude", (
+        "same-project mail keeps LANE-5 routing"
+    )

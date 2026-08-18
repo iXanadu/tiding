@@ -1187,6 +1187,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         model=md.get("model"),
         model_source=md.get("model_source"),
         from_lane=md.get("from_lane"),
+        from_project=md.get("from_project"),
         intent=md.get("intent"),
         subject=md.get("subject", ""),
         body=row["value"],
@@ -1220,6 +1221,7 @@ async def inbox_send(
     model: str | None = None,
     model_source: str | None = None,
     from_lane: str | None = None,
+    from_project: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -1268,6 +1270,10 @@ async def inbox_send(
         # LANE-5: sender's immortal lane, bridge-stamped like listen_set —
         # what a reply targets so it outlives the sender's seat.
         "from_lane": from_lane,
+        # O2: sender's project, derived from the X-Engram-Project provenance
+        # header at the router (every client sends it already) — what a
+        # CROSS-project reply targets, per reply-to-channel.
+        "from_project": from_project,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,
