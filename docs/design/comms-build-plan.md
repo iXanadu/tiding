@@ -40,8 +40,13 @@ only API + capture + WS shipped and live-passed (one re-score: outbound
 capture was dead-gated on `SeatEntry.is_live`, a field engram removed
 2026-08-01 — WIRE-1's second measured case); TF 193's Mail surface closed
 on the owner's own screens (project rows, both directions, no send box).
-Residuals on the AB/app cadence: reply-into-DM deep-link (in tree),
-HUB-RERESOLVE-1, LAUNCHER-CHANNELS-1, DEPLOY-RESEAT-1, huddle-mic path.
+Post-close polish, same evening (each owner-verified on TF 193–195 or
+wire-measured): MAIL-CARDJUMP-1, MAIL-BADGE-1, VOICE-DICTATE-1 (the
+owner's primary comms, shipped same-day on his ASAP), HUB-RERESOLVE-1
+(found by the PM's load audit, wire-verified dead). Still on the AB/app
+cadence: LAUNCHER-CHANNELS-1, DEPLOY-RESEAT-1, VOICE-STT-GROK-1,
+VOICE-WAKE-1 (parked, owner trigger), card-envelope counter,
+STEP20-DMVIEW WS refetch.
 
 **OPEN:** Step 5 only (closes at the PM session's own wrapup mail-drain) ·
 DEC-NAV-1 Chat-inline (app polish). Possible callback: post-flip
