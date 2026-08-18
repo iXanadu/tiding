@@ -197,6 +197,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **DEPLOY-3** graceful-deploy's 30s drain window is sized under the
+  inbox-wait long-poll timeout, so a routine bounce reads as "still alive —
+  investigate" while the old process is just draining held long-polls
+  (measured 2026-08-18: exit at ~40s, script had already given up at 30s;
+  correctly refused SIGKILL). Fix: size the wait to the long-poll timeout
+  plus margin, or close wait connections on SIGTERM so drains are fast.
+
 - **GRANT-1** *(half (a) SHIPPED 2026-08-17 — parking a DISTINCTIVE
   preferred name is now loud on the claim's warning channel, naming the
   parked address, the reason, and the drain path; base-name preferences
