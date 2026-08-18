@@ -58,6 +58,7 @@ async def test_owner_fanout_triple_is_refused_flag_on(
     """The refusal triple, exercised by patching the resolved principal to
     an admin (the router consults get_current_principal)."""
     monkeypatch.setattr(settings, "huddle_fanout_refusal_enabled", True)
+    monkeypatch.setattr(settings, "owner_principal_name", "ixanadu")
     import server.routers.memory as mem_router
     monkeypatch.setattr(
         mem_router, "get_current_principal",
@@ -92,6 +93,7 @@ async def test_lifecycle_letters_and_host_qualified_owner_pass(
     close/add) stay mail even under the triple; the owner exemption covers
     ixanadu@host, so the source/ingest leg lives host-qualified too."""
     monkeypatch.setattr(settings, "huddle_fanout_refusal_enabled", True)
+    monkeypatch.setattr(settings, "owner_principal_name", "ixanadu")
     import server.routers.memory as mem_router
     monkeypatch.setattr(
         mem_router, "get_current_principal",
@@ -118,3 +120,32 @@ async def test_lifecycle_letters_and_host_qualified_owner_pass(
         await conn.execute(
             "DELETE FROM memories WHERE scope='inbox' AND user_id = 'ixanadu@macmini' "
             "AND value = 'source'")
+
+
+@pytest.mark.asyncio
+async def test_admin_but_not_owner_is_never_refused(client, db_pool, monkeypatch):
+    """The audit hold: is_admin also matches the janitor — the refusal keys
+    on the owner NAME. An admin that is not the owner passes; an unset
+    owner name disables the refusal entirely, whatever the flag."""
+    monkeypatch.setattr(settings, "huddle_fanout_refusal_enabled", True)
+    monkeypatch.setattr(settings, "owner_principal_name", "ixanadu")
+    import server.routers.memory as mem_router
+    monkeypatch.setattr(
+        mem_router, "get_current_principal",
+        lambda request: {"name": "janitor", "is_admin": True})
+    r = await client.post("/memory/send", json={
+        "to": "s10d-j", "body": "b", "subject": "s", "from_": "janitor",
+        "thread_id": "huddle/s10d"})
+    assert r.status_code == 200, "an admin that is not the owner must pass"
+    # Unset owner name: even the owner-shaped send passes (refusal disabled).
+    monkeypatch.setattr(settings, "owner_principal_name", "")
+    monkeypatch.setattr(
+        mem_router, "get_current_principal",
+        lambda request: {"name": "ixanadu", "is_admin": True})
+    r = await client.post("/memory/send", json={
+        "to": "s10d-k", "body": "b", "subject": "s", "from_": "ixanadu",
+        "thread_id": "huddle/s10d"})
+    assert r.status_code == 200
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id LIKE 's10d%'")

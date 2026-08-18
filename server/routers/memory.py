@@ -773,13 +773,17 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     # SPEAK into rooms (agent principal → owner, huddle thread: the ingest
     # leg), the owner's true DMs (no huddle thread), and self-sends.
     from server.config import settings as _settings
+    _owner_name = (_settings.owner_principal_name or "").strip().lower()
     if (_settings.huddle_fanout_refusal_enabled
-            and principal and principal.get("is_admin")
+            and _owner_name  # unset = refusal disabled, whatever the flag
+            # By NAME, not is_admin (audit hold): is_admin also matches the
+            # janitor and any future admin principal — the refusal targets
+            # the relay's owner-token writes and nothing else.
+            and principal and (principal.get("name") or "").lower() == _owner_name
             and (req.thread_id or "").startswith("huddle/")
             # Lifecycle letters (kickoff/close/add-participant) are TRUE
             # correspondence and stay mail — the relay declares them.
             and not req.huddle_lifecycle):
-        _owner_name = (principal.get("name") or "").lower()
         # Owner-recipient exemption, bare AND host-qualified (the same
         # split as the wake self-filter): the ingest/source leg lives.
         _blocked = [t for t, _ in corrected

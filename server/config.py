@@ -114,11 +114,17 @@ class Settings(BaseSettings):
     # allocated occupant seat plus an explicit `lane_reserved` notice —
     # degraded-loud, never silently unseated (reviewer condition, v3).
     lane_reservation_enabled: bool = False
-    # Band D 10d: refuse the huddle-fanout LETTER class at the door (owner
-    # principal + huddle/* thread + non-owner recipient). Flip ON only after
-    # 10c (the relay's letter-stop) is live — the guard catches regressions,
-    # it never races the relay. OFF = pre-flip behavior, byte-identical.
+    # Band D 10d: refuse the huddle-fanout LETTER class at the door (OWNER
+    # principal + huddle/* thread + non-owner recipient + not lifecycle).
+    # Flip ON only after 10c (the relay's letter-stop) is live — the guard
+    # catches regressions, it never races the relay. OFF = byte-identical.
     huddle_fanout_refusal_enabled: bool = False
+    # The refusal keys on the owner BY NAME (audit hold: is_admin also
+    # matches the janitor and any future admin — wrong class). Empty
+    # disables the refusal entirely regardless of the flag: a public-repo
+    # default must not encode an operator's principal name; prod sets
+    # ENGRAM_OWNER_PRINCIPAL_NAME in .env.
+    owner_principal_name: str = ""
 
     # Search tuning
     vector_threshold: float = 0.35
