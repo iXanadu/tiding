@@ -95,7 +95,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   bridge naming the daemon process. Decision thread: AB CODEX-SEATKEY-1;
   a per-thread identity through a shared bridge is infeasible unless the
   transport conveys thread identity per call, which codex's MCP client
-  does not.)*
+  does not. RESOLUTION CHOSEN + owner GO 2026-08-18 ~22:00Z: one codex
+  daemon per (project, posture), launched with `-c` config overrides —
+  mcp_servers.engram.env.ENGRAM_SESSION_KEY=<project-derived stable key>
+  plus sandbox_mode — the measured lever that actually reaches the bridge
+  (daemon env does NOT; config.toml env block builds the child env).
+  Unifies the seat fix with POSTURE-WIRE-1. Owner rider: the pattern goes
+  FLEET-WIDE via the spawner (macmini + webone at minimum), never as a
+  one-box hand-fix. AB implements (CODEX-SEATKEY-1); engram unchanged.)*
   Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the
