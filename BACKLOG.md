@@ -359,11 +359,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   suspicion).
 
 - **PROV-CODEX-1** Codex sessions cannot send/read inbox mail while Cursor
-  can (owner's overnight extended test, reported 2026-08-18; both sessions
-  otherwise fine). Root unknown — candidates: MCP wiring in codex's global
-  config, token, or bridge incompatibility. Not chased mid-Step-18 per the
-  owner's own framing ("need not address unless helpful"); pinned so it is
-  not rediscovered. Governs against shared `reference/provider-parity-matrix`.
+  can (owner's overnight extended test, reported 2026-08-18).
+  ★ LIKELY ROOT FOUND same evening: codex gates MCP tools with a per-tool
+  approval allowlist in `~/.codex/config.toml`; unlisted tools fall back to
+  per-call approval, which headless transports surface as an elicitation
+  that gets declined ("user rejected MCP tool call"). Proven and FIXED on
+  macmini (memory_get/resolve/store were unlisted; 11 tools added,
+  destructive verbs deliberately left gated). Remaining: apply the same
+  allowlist audit to webone's (and every box's) `~/.codex/config.toml` —
+  per-box configs mean per-box capability skew. Lesson:
+  shared `lesson/codex-mcp-tool-approval-allowlist`.
 
 - **TIME-1** ★ Owner-approved 2026-08-18, MEDIUM priority — do not fold into
   the Step 17/18 sprint. Stamp the authoritative server time into the banner
