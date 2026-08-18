@@ -84,7 +84,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   constraint is the correct gate. Quarantined here as addressing; the owner
   reopens it by name.
 
-- **SEAT-6** Grok seat integration is incomplete (AgentBeast-owned, engram
+- **SEAT-6** *(now measured for CODEX too, at scale: 2026-08-18 21:05–21:45Z
+  a crashing codex session burned TEN ordinals — agentbeast-codex-3
+  through -12, every key `auto-`-derived, zero beats — because AB injects
+  no `ENGRAM_SESSION_KEY` on codex spawns either. The original seat's mail
+  correctly R8-parked to the corpse name. Cure is the one already
+  prescribed below: launcher injects a handle-derived stable key; applies
+  to BOTH grok and codex spawn paths.)*
+  Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the
   enumeration in `b82860a`). What remains: grok gets no `ENGRAM_SESSION_KEY`
