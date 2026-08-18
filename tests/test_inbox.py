@@ -1090,9 +1090,10 @@ async def test_presence_heartbeat_and_roster(client, db_pool):
     assert grok["is_stale"] is False
     assert grok["age_seconds"] < 60
 
-    # Channel roster crosses projects (both foo agents joined #courseware)
+    # Step 18 (#channels rip): the channel filter is honest-inert — it keys
+    # on data no longer served, so it matches NOTHING (was: crossed projects).
     r = await client.post("/memory/roster", json={"channel": "#courseware"})
-    assert {e["identity"] for e in r.json()["entries"]} == {"foo", "foo-grok"}
+    assert r.json()["entries"] == []
 
     # Whole-box roster sees all three
     r = await client.post("/memory/roster", json={})
@@ -1133,31 +1134,28 @@ async def test_presence_heartbeat_and_roster(client, db_pool):
 # --- Broadcast: #channels + multi-recipient fan-out (MSG-5) ---------------
 
 @pytest.mark.asyncio
-async def test_channel_send_and_subscribe(client, db_pool):
-    """MSG-5b: '#channel' is a valid address; agents from DIFFERENT projects
-    that include the channel in their listen_set all receive one message."""
+async def test_channel_legacy_rows_still_readable(client, db_pool):
+    """Step 18 (#channels rip): NEW '#' sends are refused at the router, but
+    the READ path is untouched — a deployed bridge whose listen_set still
+    carries '#devagents' must keep seeing legacy unarchived '#' rows rather
+    than having history vanish out from under it (WIRE-1 on the read side).
+    Seeded via the service layer, the only door pre-rip rows came through."""
     await _cleanup_inbox(db_pool)
-    r = await client.post("/memory/send", json={
-        "to": "#courseware", "body": "coalition broadcast", "from_": "owner1",
-        "intent": "authority-directive",
+    from server.services.memory_service import inbox_send
+    await inbox_send(to="#courseware", body="pre-rip broadcast",
+                     subject="s", from_="owner1",
+                     intent="authority-directive")
+
+    resp = await client.post("/memory/inbox", json={
+        "listen_set": ["projalpha", "#courseware"],
+        "reader_identity": "projalpha@m",
+        "unread_only": True,
     })
-    assert r.status_code == 200, r.text
+    msgs = resp.json()["messages"]
+    assert len(msgs) == 1, "legacy channel row vanished from a subscriber"
+    assert msgs[0]["to"] == "#courseware"
 
-    # Agents from three different projects, all subscribed to the channel
-    for reader, home in [("projalpha@m", "projalpha"),
-                         ("projgamma@m", "projgamma"),
-                         ("projbeta@m", "projbeta")]:
-        resp = await client.post("/memory/inbox", json={
-            "listen_set": [home, "#courseware"],
-            "reader_identity": reader,
-            "unread_only": True,
-        })
-        msgs = resp.json()["messages"]
-        assert len(msgs) == 1, f"{reader} missed the channel broadcast"
-        assert msgs[0]["to"] == "#courseware"
-        assert msgs[0]["intent"] == "authority-directive"
-
-    # An agent NOT subscribed does not receive it
+    # An agent whose listen_set lacks the channel still does not see it
     resp = await client.post("/memory/inbox", json={
         "listen_set": ["unrelated"],
         "reader_identity": "unrelated@m",

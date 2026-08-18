@@ -23,6 +23,7 @@ inside this subprocess, which is unreliable (see commit 223b17b).
 """
 
 import os
+import sys
 import socket
 import subprocess
 
@@ -846,28 +847,36 @@ def admin_was_fallback(project_dir: str | None) -> bool:
     return not declared
 
 
+# Step 18: one-notice latch for the retired ENGRAM_CHANNELS env.
+_channels_rip_notified = False
+
+
 def resolve_channels() -> list[str]:
-    """Coalition channels this session subscribes to, from ``ENGRAM_CHANNELS``.
+    """RETIRED (Step 18 #channels rip) — always returns ``[]``.
 
-    Comma-separated, each entry MUST carry the ``#`` sigil (``"#devagents,#fleet"``).
-    Entries without the sigil are dropped — a bare name is a *project* address,
-    and silently promoting a typo into a channel subscription would collide
-    with the flat project namespace.
-
-    Env-only by design (docs/design/messaging-architecture.md §3.3–3.4): the
-    project folder carries zero addressing, and channel membership is a LAUNCH
-    concern injected by whatever spawns the session (launcher env, shell
-    export). Authoritative membership lives in the roster via presence
-    heartbeats — this env var is how a session *joins*; the roster is how
-    membership is *seen*.
+    Broadcast ``#channels`` were launch-time subscription lists that O2's
+    project channels replaced. A launcher that still injects
+    ``ENGRAM_CHANNELS`` gets one stderr notice and an empty subscription set;
+    the server refuses ``#`` sends outright, so nothing could reach such a
+    subscription anyway.
     """
     raw = os.environ.get("ENGRAM_CHANNELS", "")
-    out: list[str] = []
-    for entry in raw.split(","):
-        entry = entry.strip()
-        if entry.startswith("#") and len(entry) > 1 and entry not in out:
-            out.append(entry)
-    return out
+    # Step 18 (#channels rip): broadcast channels are retired — O2's project
+    # channels replaced them. The env var is IGNORED (one loud notice, not
+    # silent): launchers that still inject it keep working, they just no
+    # longer subscribe to anything. The server refuses '#' sends outright, so
+    # a subscription would be a listen-set entry no mail can ever match.
+    if raw.strip():
+        global _channels_rip_notified
+        if not _channels_rip_notified:
+            _channels_rip_notified = True
+            print(
+                "engram: ENGRAM_CHANNELS is retired (Step 18 #channels rip) — "
+                f"ignoring {raw.strip()!r}. Broadcast channels were replaced "
+                "by project channels; remove the env from this launcher.",
+                file=sys.stderr,
+            )
+    return []
 
 
 def resolve_provider() -> str:

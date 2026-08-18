@@ -355,36 +355,62 @@ def test_two_siblings_get_distinct_identities_sharing_a_group(monkeypatch):
     assert "beastchat-server@macmini" not in app_set
 
 
-# --- ENGRAM_CHANNELS channel-join (MSG-5 bridge half) -----------------------
+# --- ENGRAM_CHANNELS — RETIRED (Step 18 #channels rip) ----------------------
 
 class TestChannelJoin:
-    def test_channels_appended_to_listen_set(self, monkeypatch, tmp_path):
+    """Step 18: ENGRAM_CHANNELS is ignored with one loud notice. A launcher
+    that still injects it keeps working — it just subscribes to nothing
+    (the server refuses '#' sends, so nothing could land there anyway)."""
+
+    def _reset_latch(self, monkeypatch):
+        from engram_mcp import identity as _identity
+        monkeypatch.setattr(_identity, "_channels_rip_notified", False)
+
+    def test_env_no_longer_joins_channels(self, monkeypatch, tmp_path):
+        self._reset_latch(monkeypatch)
         monkeypatch.setenv("ENGRAM_CHANNELS", "#devagents,#fleet")
         from engram_mcp.identity import compute_identity
         reader, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
-        assert "#devagents" in listen and "#fleet" in listen
-        # channels ride along; core addresses unchanged
+        assert not any(a.startswith("#") for a in listen)
+        # core addresses unchanged — the launcher is degraded, not broken
         assert "myproj" in listen and reader.startswith("myproj@")
 
-    def test_sigil_required_bare_names_dropped(self, monkeypatch, tmp_path):
-        """A bare name is a PROJECT address — never silently promoted."""
+    def test_resolve_channels_always_empty(self, monkeypatch, tmp_path):
+        self._reset_latch(monkeypatch)
         monkeypatch.setenv("ENGRAM_CHANNELS", "devagents, #ok, #, ,#dup,#dup")
         from engram_mcp.identity import resolve_channels
-        assert resolve_channels() == ["#ok", "#dup"]
+        assert resolve_channels() == []
 
-    def test_unset_env_changes_nothing(self, monkeypatch, tmp_path):
+    def test_notice_emitted_once_not_silent(self, monkeypatch, capsys):
+        """Degraded-LOUD: the env is ignored with exactly one stderr notice —
+        a silent drop would leave the launcher owner believing the
+        subscription still works."""
+        self._reset_latch(monkeypatch)
+        monkeypatch.setenv("ENGRAM_CHANNELS", "#devagents")
+        from engram_mcp.identity import resolve_channels
+        resolve_channels()
+        first = capsys.readouterr().err
+        assert "ENGRAM_CHANNELS is retired" in first
+        assert "#devagents" in first
+        resolve_channels()
+        assert "retired" not in capsys.readouterr().err  # latched
+
+    def test_unset_env_no_notice_no_channels(self, monkeypatch, capsys, tmp_path):
+        self._reset_latch(monkeypatch)
         monkeypatch.delenv("ENGRAM_CHANNELS", raising=False)
         from engram_mcp.identity import compute_identity
         _, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
         assert not any(a.startswith("#") for a in listen)
+        assert "retired" not in capsys.readouterr().err
 
-    def test_channels_with_identity_override(self, monkeypatch, tmp_path):
+    def test_channels_ignored_with_identity_override(self, monkeypatch, tmp_path):
+        self._reset_latch(monkeypatch)
         monkeypatch.setenv("ENGRAM_CHANNELS", "#courseware")
         monkeypatch.setenv("ENGRAM_INBOX_IDENTITY", "myproj-grok")
         from engram_mcp.identity import compute_identity
         reader, listen = compute_identity(str(tmp_path / "projects" / "myproj"))
         assert reader.startswith("myproj-grok@")
-        assert "#courseware" in listen and "myproj" in listen
+        assert "#courseware" not in listen and "myproj" in listen
 
 
 class TestResolveProvider:

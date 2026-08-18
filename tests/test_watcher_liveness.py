@@ -152,7 +152,11 @@ async def test_watcher_beat_does_not_revert_reported_state(client, db_pool):
 
     entry = await _roster_entry(client, "blocked", "blocked")
     assert entry["provider"] == "grok"
-    assert entry["channels"] == ["#devagents"]
+    # Step 18 (#channels rip): the param above is still ACCEPTED (deployed
+    # bridges send it) but the served field is pinned empty — this is
+    # engram's own analog of AB's poll-stable assertion, changed WITH the
+    # serve change per the scored v2 design (Hole 4).
+    assert entry["channels"] == []
     assert entry["watcher_alive"] is True
     # `state` left the roster payload on 2026-08-01 (one distinct value across
     # every row ever recorded), but the no-clobber behaviour it guarded is

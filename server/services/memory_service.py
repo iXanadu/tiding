@@ -1798,7 +1798,12 @@ async def presence_update(
             "provider": provider,
             "state": state,
             "overlays": overlays or [],
-            "channels": channels or [],
+            # Step 18 (#channels rip): subscriptions are no longer persisted.
+            # The PARAM stays accepted — deployed bridges still send it — but
+            # the stored value is always empty; the wire FIELD survives so
+            # deployed roster readers keep parsing (removing a served field is
+            # the WIRE-1 breakage class).
+            "channels": [],
             "last_seen": now.isoformat(),
             # PRES-2: a host never changes for a live session, so a legacy
             # beat (no host) must not wipe one a newer client recorded —
@@ -2125,7 +2130,10 @@ async def roster_list(
         state = md.get("state")
         if state == "done" and not include_done:
             continue
-        if channel and channel.lower() not in [c.lower() for c in md.get("channels") or []]:
+        # Step 18 (#channels rip): the channel filter keys on data no longer
+        # served (channels is always [] below), so it matches NOTHING —
+        # honest-inert rather than matching stale pre-rip rows only.
+        if channel:
             continue
         last_seen = r["last_used_at"] or now
         age = (now - last_seen).total_seconds()
@@ -2161,7 +2169,9 @@ async def roster_list(
             "state": state or "unknown",
             "provider": md.get("provider"),
             "overlays": md.get("overlays") or [],
-            "channels": md.get("channels") or [],
+            # Step 18: served inert — field kept for deployed readers (WIRE-1),
+            # value pinned empty regardless of what a pre-rip row stored.
+            "channels": [],
             "last_seen": last_seen,
             "age_seconds": round(age, 1),
             "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,

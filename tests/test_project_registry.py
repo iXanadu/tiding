@@ -92,7 +92,9 @@ async def test_known_root_person_exempt_and_channel_stay_silent(
             "ON CONFLICT (name) DO UPDATE SET type='human', active=TRUE",
             person)
 
-    for to in (f"{PROJ}-grok-4", person, "admin@webone", "#regrootchan"):
+    # ('#' targets left this loop at Step 18 — they now 409 at the door
+    # before the advisory logic runs; see test_step18_channels_rip.)
+    for to in (f"{PROJ}-grok-4", person, "admin@webone"):
         r = await client.post("/memory/send", json={
             "to": to, "body": "b", "subject": "s", "from_": "someone"})
         assert r.status_code == 200

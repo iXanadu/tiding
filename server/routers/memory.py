@@ -745,6 +745,25 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         ]
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # Step 18 (#channels rip): '#'-addressed mail is refused at the door.
+    # Broadcast channels were launch-time subscription lists (ENGRAM_CHANNELS)
+    # that O2's project channels replaced; the last legitimate '#' letter
+    # predates the rip by 12 days. Refusal, not silent drop — a deployed
+    # writer that still targets '#' must fail LOUD (WIRE-1), and the guidance
+    # must not pretend equivalence: #devagents was box-wide, and no single
+    # project channel is its rename.
+    _hash_targets = [t for t, _ in corrected if t.startswith("#")]
+    if _hash_targets:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "#channels are retired (Step 18): broadcast channels were "
+                "replaced by project channels. #devagents was box-wide and "
+                "has NO one-project equivalent — address the specific "
+                "project channel or lane you mean. Refused: "
+                + ", ".join(_hash_targets[:8])
+            ),
+        )
     # HUD-1 — private multi-party threads. A fan-out is a GROUP, so record who
     # is in it and give every copy ONE thread id. Both are load-bearing:
     #
