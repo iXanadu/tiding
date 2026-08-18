@@ -700,18 +700,29 @@ def _seat_collision_banner(project_dir: str | None = None) -> str:
         seat = "<this identity>"
     n = _SEAT_COLLISION.get("live_sessions", 2)
     provs = ", ".join(_SEAT_COLLISION.get("providers", [])) or "unknown"
+    # T2/O4 rewrite: succession no longer flags (the server now treats a
+    # displaced nonce as a corpse at the write door too), so a flag that
+    # persists means a GENUINE rival — two distinct live sessions on one
+    # declared identity. The old text prescribed relaunch-with-a-new-name,
+    # which taught a successor to flee its own address; the O4 model says
+    # take a runtime incarnation seat instead: your LANE (project-provider)
+    # keeps listening for you either way — an ordinal is mortal by design
+    # and minting one loses nothing durable.
     return (
         f"⛔ SEAT COLLISION — {n} live sessions share inbox identity '{seat}' "
         f"(providers: {provs}).\n"
         f"Two sessions on one seat SHARE ack-state and CANNOT message or wake "
         f"each other (self-echo suppression treats them as one sender).\n"
-        f"FIX NOW: tell the user this session (or the other one) should be "
-        f"relaunched with a distinct seat, e.g.\n"
-        f"    ENGRAM_INBOX_IDENTITY={seat}-<role> <harness-command>\n"
-        f"and its watcher armed with the same env. Discriminate by ROLE "
-        f"(-audit, -remediate), or provider/model if that is the real cut.\n"
-        f"(If a bridge just restarted mid-session this clears itself within "
-        f"~5 minutes.)\n\n"
+        f"FIRST: if this appeared within ~5 minutes of your startup or a "
+        f"bridge restart, it may be your predecessor's dying tail — re-check "
+        f"after your next call before acting; it clears itself.\n"
+        f"IF IT PERSISTS, this is a real rival on a shared declared name. "
+        f"FIX from inside the session — no relaunch needed:\n"
+        f"    memory_take_seat(name='{seat}-<role>', project_dir=<your cwd>)\n"
+        f"Discriminate by ROLE (-audit, -remediate), or provider/model if "
+        f"that is the real cut. Your project and lane addresses keep "
+        f"listening for you; only the mortal incarnation name changes, and "
+        f"your watcher follows the seat file by itself within one poll.\n\n"
     )
 
 

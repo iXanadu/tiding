@@ -1644,7 +1644,14 @@ async def presence_update(
         # Merge this beat into the pruned nonce map. Legacy clients (no nonce)
         # don't participate in collision tracking but keep normal presence.
         sessions = _fresh_sessions(prior_md, now, superseded)
-        if session_nonce:
+        # T2 (succession ≠ collision): SEAT-12 filters displaced nonces on
+        # READ, but this insert ran unconditionally — so a displaced
+        # predecessor's own dying-tail beat re-added itself to the map, and
+        # a clean succession oscillated into a 2-live collision flag for as
+        # long as the old bridge kept beating (measured live 2026-08-18:
+        # the successor obeyed the banner and minted an ordinal to escape a
+        # corpse). A displaced nonce is a corpse at the WRITE door too.
+        if session_nonce and session_nonce not in superseded:
             sessions[session_nonce] = {
                 "last_seen": now.isoformat(),
                 "provider": provider,

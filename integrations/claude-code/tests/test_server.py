@@ -746,9 +746,16 @@ async def test_heartbeat_sends_nonce_and_collision_sets_banner(respx_mock):
         beat_payload = json.loads(
             [c for c in respx_mock.calls if "/memory/presence" in str(c.request.url)][-1].request.read())
         assert beat_payload["session_nonce"] == srv._SESSION_NONCE
-        # STOP banner prepended to the tool result
+        # STOP banner prepended to the tool result — T2/O4 text: the fix is
+        # an in-session runtime seat, never a relaunch-and-flee, and the
+        # dying-tail case is named before the rival case.
         assert "SEAT COLLISION" in result
-        assert "ENGRAM_INBOX_IDENTITY=" in result
+        assert "memory_take_seat" in result
+        assert "dying tail" in result
+        assert "ENGRAM_INBOX_IDENTITY=" not in result, (
+            "the old relaunch prescription taught a successor to flee its "
+            "own address"
+        )
     finally:
         srv._SEAT_COLLISION = old
 

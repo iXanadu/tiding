@@ -72,13 +72,28 @@ Only addressing splits. If the session was launched with
 `ENGRAM_INBOX_IDENTITY` already set, a launcher seated you — keep that seat
 and skip this step.
 
+**⛔ SEAT COLLISION banner at startup? Do NOT flee your seat by reflex.**
+Within ~5 minutes of your startup (or a bridge restart), a collision flag is
+usually your predecessor's dying tail — its bridge outlives its goodbye and
+keeps beating briefly. The server treats displaced predecessors as corpses
+and the flag self-clears; re-check on your next call before acting. Only a
+flag that PERSISTS is a real rival (two live sessions on one declared name)
+— then, and only then, take a role-suffixed runtime seat via
+`memory_take_seat` (no relaunch). Your project and lane addresses keep
+listening for you either way; the incarnation ordinal is mortal by design,
+so moving it loses nothing durable — but moving it for a corpse costs your
+successor the address's thread continuity for no reason.
+
 ## 4b. Arm the Inbox Watcher (always-listen)
 
-**If you took a seat in 4a-bis, prefix the command below with
-`ENGRAM_INBOX_IDENTITY=<your seat>`** — bridge and watcher must resolve one
-identity. A seated bridge with an unseated watcher is the worst state
-available: the roster shows you correctly seated and you silently never wake
-on DMs.
+**If you took a seat via `memory_take_seat`, no env prefix is needed** — the
+tool records the seat server-side AND in the seat file, and the watcher
+re-reads that file every poll (~45s), so bridge and watcher converge by
+themselves. The env prefix below is only for a seat that arrived by ENV
+(launcher-injected `ENGRAM_INBOX_IDENTITY`): there the watcher must be armed
+with the SAME env, because a seated bridge with an unseated watcher is the
+worst state available — the roster shows you correctly seated and you
+silently never wake on DMs.
 
 So this session wakes on *any* inbound message for its whole lifetime — not just after you send one and wait — launch the inbox watcher as a background **Monitor** stream. Each new message becomes an injected notification; when one fires, read it (`memory_inbox`) and handle it.
 

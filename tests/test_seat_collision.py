@@ -100,3 +100,63 @@ async def test_stale_nonce_pruned_no_false_collision(client, db_pool):
 
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE key = 'presence/restarty'")
+
+
+@_pytest.mark.asyncio
+async def test_a_displaced_nonces_own_beat_cannot_reflag_collision(
+        client, db_pool):
+    """T2 (succession ≠ collision): SEAT-12 filtered corpses on READ, but a
+    displaced predecessor's own dying-tail beat re-inserted its nonce — so a
+    clean succession oscillated into a 2-live collision for as long as the
+    old bridge kept beating. Measured live 2026-08-18: the successor obeyed
+    the banner and minted an ordinal to escape a corpse. The write door must
+    apply the same rule as the read door.
+    """
+    from server.services.memory_service import PRESENCE_NAMESPACE
+    ident, proj = "t2probe", "t2proj"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='seat' AND project=$1", proj)
+
+    # Succession: gen2 holds the seat; gen1 is recorded displaced.
+    await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen2"})
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id, project,
+                                  tags, tags_search, metadata)
+            VALUES ($1, $2, 'seat', 'seat', 'global', $3, '', '',
+                    jsonb_build_object('superseded_nonces',
+                                       jsonb_build_array('gen1')))
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+              SET metadata = EXCLUDED.metadata
+            """,
+            PRESENCE_NAMESPACE, f"seat/{ident}", proj,
+        )
+
+    # The dying tail beats — its OWN write must not re-add it.
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen1"})
+    assert not r.json().get("collision"), (
+        "the corpse's own beat re-flagged the succession as a collision"
+    )
+    # And the successor's next beat still sees exactly one live session.
+    r = await client.post("/memory/presence", json={
+        "identity": ident, "project": proj, "state": "running",
+        "session_nonce": "gen2"})
+    assert not r.json().get("collision")
+    r = await client.post("/memory/roster", json={"project": proj})
+    entry = next(e for e in r.json()["entries"] if e["identity"] == ident)
+    assert entry["live_sessions"] == 1
+    assert entry["collision"] is False
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='seat' AND project=$1", proj)
