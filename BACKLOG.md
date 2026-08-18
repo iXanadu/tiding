@@ -84,13 +84,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   constraint is the correct gate. Quarantined here as addressing; the owner
   reopens it by name.
 
-- **SEAT-6** *(now measured for CODEX too, at scale: 2026-08-18 21:05–21:45Z
-  a crashing codex session burned TEN ordinals — agentbeast-codex-3
-  through -12, every key `auto-`-derived, zero beats — because AB injects
-  no `ENGRAM_SESSION_KEY` on codex spawns either. The original seat's mail
-  correctly R8-parked to the corpse name. Cure is the one already
-  prescribed below: launcher injects a handle-derived stable key; applies
-  to BOTH grok and codex spawn paths.)*
+- **SEAT-6** *(CODEX twin measured 2026-08-18 then CORRECTED by AB's
+  claude-3 the same hour: codex ordinal burn (agentbeast-codex-3..12,
+  auto- keys, zero beats — count inflated by AB's own bisection probes) is
+  NOT missing injection. AB injects a stable per-thread key correctly
+  (manager.py:745, snake_case right); it never ARRIVES because the codex
+  bridge is DAEMON-SCOPED — one bridge process spawned at daemon launch,
+  env frozen, shared by every thread — so per-thread config aims at a
+  process that already exists. The auto-<host>-<pid> fallback is engram's
+  bridge naming the daemon process. Decision thread: AB CODEX-SEATKEY-1;
+  a per-thread identity through a shared bridge is infeasible unless the
+  transport conveys thread identity per call, which codex's MCP client
+  does not.)*
   Grok seat integration is incomplete (AgentBeast-owned, engram
   needs no change). Grok already carries `ENGRAM_PROVIDER` — the roster and
   AB's enumeration both report `provider=grok` correctly (AB fixed the
