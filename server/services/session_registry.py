@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 
 from server.db import get_pool
 from server.services.memory_service import (
+    ASK_INTENTS,
     INBOX_NAMESPACE,
     INBOX_OPEN,
     INBOX_SCOPE,
@@ -46,6 +47,8 @@ from server.services.memory_service import (
     SEAT_EXEMPT_IDENTITIES,
     SEAT_SCOPE,
     SEAT_USER_ID,
+    _mark_handled,
+    _row_to_inbox_message,
     _watcher_state,
 )
 
@@ -1528,6 +1531,46 @@ async def address_register(project: str | None = None) -> list[dict]:
         death = death_by_key.get(key) if key else None
         if death is None:
             death = death_by_seat.get(seat)
+        allocation = _allocation(age, mail_n, presence_age,
+                                 r["last_used_at"],
+                                 lane=is_reserved_lane(seat, r["project"]),
+                                 root=_is_root(seat),
+                                 fixed_reason=_fixed_reason(seat))
+        # REG-DEATH-1: EVIDENCE OF LIFE AFTER died_at voids a cert — the
+        # farewell rule, applied. By-key attachment assumed keys are
+        # per-session; a launcher's slot-derived key survives respawns, so
+        # a predecessor's cert pinned to the name's CURRENT holder
+        # (measured live 2026-08-18 on this project's own PM seat).
+        #
+        # The rule is AFTER-death life, deliberately NOT bare liveness:
+        # a heartbeat can outlive a kill (PICK-REG-1b — the cert is
+        # accepted while the row still looks live, and must ride it), so a
+        # fresh corpse and a live successor look identical on age alone.
+        # What separates them is the clock ORDER: a genuine corpse has no
+        # beat, no claim, no presence after its died_at; a reused-key
+        # successor always has at least its CLAIM after the predecessor's
+        # death. Lock 1's late-cert case falls to the same order: an honest
+        # died_at predates the successor's claimed_at, which voids it.
+        if death is not None:
+            try:
+                died = datetime.fromisoformat(death.get("died_at"))
+                if died.tzinfo is None:
+                    died = died.replace(tzinfo=timezone.utc)
+                life_after = r["last_used_at"] > died
+                if not life_after and r["presence_last_used_at"]:
+                    life_after = r["presence_last_used_at"] > died
+                if not life_after and md.get("claimed_at"):
+                    try:
+                        claimed = datetime.fromisoformat(md["claimed_at"])
+                        if claimed.tzinfo is None:
+                            claimed = claimed.replace(tzinfo=timezone.utc)
+                        life_after = claimed > died
+                    except (TypeError, ValueError):
+                        pass
+                if life_after:
+                    death = None  # someone lived here after the "death"
+            except (TypeError, ValueError):
+                pass  # unparseable died_at: attach as before, facts kept
         out.append({
             "address": seat,
             "entry_type": "seat",
@@ -1552,12 +1595,7 @@ async def address_register(project: str | None = None) -> list[dict]:
             "death_certified": bool(md.get("death_certified")),
             "death": death,
             "undrained_mail_count": mail_n,
-            "allocation": _allocation(age, mail_n, presence_age,
-                                      r["last_used_at"],
-                                      lane=is_reserved_lane(seat,
-                                                            r["project"]),
-                                      root=_is_root(seat),
-                                      fixed_reason=_fixed_reason(seat)),
+            "allocation": allocation,
         })
 
     # Names with NO seat row that still hold open mail — R8 parks these
@@ -1723,3 +1761,175 @@ async def unknown_root_advisories(addrs: list[str]) -> list[str]:
             f"roots are served by GET /session/projects."
         )
     return out
+
+
+# Step 13 (climb): how long a LANE must have been silent — across the lane
+# row, every incarnation under it, and their presence — before an unhandled
+# ask climbs to the project root. Lock 2: dormancy is a WINDOW, not a
+# snapshot; a lane empty for two minutes between occupants is succession,
+# not abandonment. 3× the live window, same style as the collision window's
+# 2.5× — one existing clock multiplied for margin, no new number invented.
+CLIMB_LANE_DWELL_SECONDS = SEAT_LIVE_SECONDS * 3
+
+
+def _parse_tree_node(addr: str, roots: set[str]) -> tuple[str, str, str] | None:
+    """Parse an address against the O4 grammar using KNOWN roots.
+
+    Returns (kind, root, parent_address) — kind ∈ {"root", "lane",
+    "incarnation"} — or None when no known root grammars the string (a
+    role-named seat, a person, a channel: not tree-shaped, never climbed).
+    Longest root wins, so 'agentbeast-app-grok' parses under
+    'agentbeast-app' when that root exists, not under 'agentbeast'.
+    """
+    bare = addr.split("@", 1)[0]
+    root = max((r for r in roots
+                if bare == r or bare.startswith(r + "-")),
+               key=len, default=None)
+    if root is None:
+        return None
+    if bare == root:
+        return ("root", root, "")
+    rest = bare[len(root) + 1:]
+    if rest in LANE_PROVIDERS:
+        return ("lane", root, root)
+    head, dash, ordinal = rest.rpartition("-")
+    if head in LANE_PROVIDERS and ordinal.isdigit():
+        return ("incarnation", root, f"{root}-{head}")
+    return None
+
+
+async def climb_pass() -> dict:
+    """Step 13: unHANDLED asks rise to the nearest living ancestor (O5's
+    one exception to depth-is-ephemeral).
+
+    Explicit, idempotent, admin-gated — invoked by the sweep cron, never
+    lazy-on-read (climb WRITES). Per pass, per row: at most ONE level up,
+    recorded in metadata so history survives. The row keeps its id, so
+    threads and in_reply_to answers keep working at the new address, and
+    the Step-12 discriminator keeps judging the climbed row.
+
+    Who climbs: open, ASK-class letters whose Step-12 verdict is FALSE.
+    True never climbs; UNKNOWN never climbs — the store does not act on a
+    guess. Exempt roles never climb (Lock 3). Rows not shaped by the O4
+    grammar (role seats, persons, channels) never climb.
+
+    When: an INCARNATION climbs on death evidence for its holder — a cert
+    surviving REG-DEATH-1's later-life voiding (Lock 1: a live-holder or
+    presence-fresh row voids; a row that spoke after died_at voids), or a
+    farewell the register has not voided. A goodbye alone is nothing (T5).
+    A LANE climbs when the whole lane subtree has been silent longer than
+    CLIMB_LANE_DWELL_SECONDS while the project shows fresh presence
+    elsewhere — dormancy-while-ancestor-active; a fully quiet project
+    climbs nothing, because quiet is not dead.
+    """
+    now = datetime.now(timezone.utc)
+    climbed: list[dict] = []
+    skipped = {"handled": 0, "unknown": 0, "not_tree": 0, "root": 0,
+               "exempt": 0, "holder_alive": 0, "no_evidence": 0,
+               "lane_active": 0, "project_quiet": 0}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, value, user_id, metadata, created_at FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $3) = $3
+              AND lower(COALESCE(metadata->>'intent', '')) = ANY($4::text[])
+              AND COALESCE(metadata->>'thread_id', '') NOT LIKE 'huddle/%'
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, INBOX_OPEN, list(ASK_INTENTS),
+        )
+        if not rows:
+            return {"climbed": [], "skipped": skipped}
+        messages = [_row_to_inbox_message(dict(r)) for r in rows]
+        await _mark_handled(conn, messages)
+        roots = await _fetch_known_roots(conn)
+        register = {e["address"]: e for e in await address_register(None)}
+        # Project-level freshness: any register entry under the root that a
+        # live session is beating (the ancestor-active half of Lock 2).
+        def project_fresh(root: str) -> bool:
+            for a, e in register.items():
+                node = _parse_tree_node(a, roots)
+                if node and node[1] == root and e["allocation"].get(
+                        "reason") in ("live-holder", "presence-fresh"):
+                    return True
+            return False
+
+        def lane_subtree_quiet_since(lane: str, root: str) -> float | None:
+            """Newest activity age across the lane and its incarnations;
+            None when the subtree has no register entries at all."""
+            ages = []
+            for a, e in register.items():
+                node = _parse_tree_node(a, roots)
+                in_subtree = (a == lane) or (node is not None
+                                             and node[2] == lane)
+                if in_subtree and e.get("age_seconds") is not None:
+                    ages.append(e["age_seconds"])
+            return min(ages) if ages else None
+
+        for m in messages:
+            if m.handled is True:
+                skipped["handled"] += 1
+                continue
+            if m.handled is None:
+                skipped["unknown"] += 1
+                continue
+            bare = m.to.split("@", 1)[0]
+            if bare in SEAT_EXEMPT_IDENTITIES:
+                skipped["exempt"] += 1
+                continue
+            node = _parse_tree_node(m.to, roots)
+            if node is None:
+                skipped["not_tree"] += 1
+                continue
+            kind, root, parent = node
+            if kind == "root":
+                skipped["root"] += 1
+                continue
+            reason = None
+            if kind == "incarnation":
+                entry = register.get(bare)
+                if entry is None:
+                    # No register entry at all: nothing has ever held the
+                    # name — no death evidence exists either. Hold.
+                    skipped["no_evidence"] += 1
+                    continue
+                if entry["allocation"].get("reason") in (
+                        "live-holder", "presence-fresh"):
+                    skipped["holder_alive"] += 1
+                    continue
+                # Death evidence AFTER REG-DEATH-1 voiding (the register
+                # already applied it), or an unvoided farewell.
+                if entry.get("death"):
+                    reason = "holder-death-certified"
+                elif entry.get("farewell_at"):
+                    reason = "holder-farewell-observed"
+                else:
+                    skipped["no_evidence"] += 1
+                    continue
+            else:  # lane
+                if not project_fresh(root):
+                    skipped["project_quiet"] += 1
+                    continue
+                newest = lane_subtree_quiet_since(bare, root)
+                if newest is not None and newest < CLIMB_LANE_DWELL_SECONDS:
+                    skipped["lane_active"] += 1
+                    continue
+                reason = "lane-dormant-while-project-active"
+            await conn.execute(
+                """
+                UPDATE memories
+                SET user_id = $1,
+                    metadata = metadata || jsonb_build_object(
+                        'climbed_from', $2::text,
+                        'climbed_at', $3::text,
+                        'climb_reason', $4::text)
+                WHERE namespace = $5 AND scope = $6 AND key = $7
+                """,
+                parent, m.to, now.isoformat(), reason,
+                INBOX_NAMESPACE, INBOX_SCOPE, m.id,
+            )
+            climbed.append({"id": m.id, "from": m.to, "to": parent,
+                            "reason": reason})
+    return {"climbed": climbed, "skipped": skipped}

@@ -496,6 +496,15 @@ class CleanupResponse(BaseModel):
     deleted_count: int
 
 
+class ClimbResponse(BaseModel):
+    """Step 13: one climb pass — what rose one level, and why everything
+    else held still. The skip counts are the honesty half: a pass that
+    reports only movement reads as 'covered everything' when it didn't."""
+    status: str
+    climbed: list[dict] = []
+    skipped: dict = {}
+
+
 # --- Principal models ---
 
 class PrincipalCreate(BaseModel):

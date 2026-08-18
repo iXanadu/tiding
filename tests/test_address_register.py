@@ -197,15 +197,27 @@ async def test_lane_named_row_reads_reserved_when_reservation_on(
 
 @pytest.mark.asyncio
 async def test_death_certificate_attaches_by_session_key(client, db_pool):
-    """A spawner's cert is the stopped-at evidence; it must ride the row."""
+    """A spawner's cert is the stopped-at evidence; it must ride the row —
+    INCLUDING while the row still looks live (PICK-REG-1b: a heartbeat can
+    outlive a kill, it can never observe one).
+
+    The timeline must be coherent: died_at AFTER the row's last beat. The
+    original fixture certified death YESTERDAY on a row that beat TODAY —
+    contradictory facts that REG-DEATH-1's life-after-death voiding now
+    correctly rejects (that shape is a reused-key successor, not a corpse).
+    """
+    from datetime import datetime, timedelta, timezone
+
     await _clear(db_pool)
     seat = (await _claim(client, "certified")).json()["seat"]
+    died_at = (datetime.now(timezone.utc)
+               + timedelta(seconds=2)).isoformat()
     r = await client.post("/session/death", json={
         "session_key": "certified",
         "seat": seat,
         "project": PROJ,
         "provider": "claude",
-        "died_at": "2026-08-17T12:00:00Z",
+        "died_at": died_at,
         "cause": "stop",
         "graceful": True,
     })
@@ -213,10 +225,12 @@ async def test_death_certificate_attaches_by_session_key(client, db_pool):
 
     reg = await _register(client)
     entry = reg[seat]
+    # The row is seconds old — it LOOKS live — and the cert still rides.
+    assert entry["allocation"]["reason"] == "live-holder"
     assert entry["death_certified"] is True
     assert entry["death"]["cause"] == "stop"
     assert entry["death"]["graceful"] is True
-    assert entry["death"]["died_at"].startswith("2026-08-17T12:00:00")
+    assert entry["death"]["died_at"] == died_at
     await _clear(db_pool)
 
 

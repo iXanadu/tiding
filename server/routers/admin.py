@@ -10,6 +10,7 @@ from server.models import (
     BulkDeleteRequest,
     BulkDeleteResponse,
     CleanupResponse,
+    ClimbResponse,
     DeletionQueueItem,
     DeletionQueueResponse,
     DeletionRejectRequest,
@@ -357,6 +358,24 @@ async def deletion_queue_reject_endpoint(
         "user_id": req.user_id, "project": req.project, "reason": req.reason,
     })
     return DeletionRejectResponse(status="ok", key=req.key)
+
+
+@router.post("/inbox/climb", response_model=ClimbResponse)
+async def climb_endpoint(_caller=Depends(admin_or_open)):
+    """Step 13: run one climb pass — unhandled asks rise one level toward
+    the project root on death evidence (incarnations) or dormancy-while-
+    ancestor-active (lanes). Explicit and idempotent; the sweep cron is the
+    intended caller. Never climbs on a guess: handled=UNKNOWN holds."""
+    from server.services.session_registry import climb_pass
+    try:
+        result = await climb_pass()
+        if result["climbed"]:
+            logger.info("climb pass moved %d ask(s): %s",
+                        len(result["climbed"]), result["climbed"])
+        return ClimbResponse(status="ok", **result)
+    except Exception:
+        logger.exception("climb_pass failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
 @router.post("/cleanup", response_model=CleanupResponse)
