@@ -766,6 +766,35 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     #
     # Deliberately only for genuine fan-out (>1 recipient): a 1:1 DM has no
     # group, and single-recipient sends stay byte-identical to before.
+    # Band D 10d (flag-gated; ON only after 10c): the huddle-fanout LETTER
+    # class is refused at the door. O6's measurement: 90.2% of all inbox
+    # rows ever were this class. The triple below is precisely the relay's
+    # fan-out write and nothing else — refusing more would break how agents
+    # SPEAK into rooms (agent principal → owner, huddle thread: the ingest
+    # leg), the owner's true DMs (no huddle thread), and self-sends.
+    from server.config import settings as _settings
+    if (_settings.huddle_fanout_refusal_enabled
+            and principal and principal.get("is_admin")
+            and (req.thread_id or "").startswith("huddle/")
+            # Lifecycle letters (kickoff/close/add-participant) are TRUE
+            # correspondence and stay mail — the relay declares them.
+            and not req.huddle_lifecycle):
+        _owner_name = (principal.get("name") or "").lower()
+        # Owner-recipient exemption, bare AND host-qualified (the same
+        # split as the wake self-filter): the ingest/source leg lives.
+        _blocked = [t for t, _ in corrected
+                    if t.split("@", 1)[0] != _owner_name]
+        if _blocked:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "huddle fan-out letters are retired (O6): a room "
+                    "utterance is recorded ONCE in the room and delivered "
+                    "as wakes — POST /memory/wake for the ping; the "
+                    "transcript is the record. Refused recipients: "
+                    + ", ".join(_blocked[:8])
+                ),
+            )
     is_fanout = len(corrected) > 1
     participants: list[str] | None = None
     thread_id = req.thread_id
@@ -813,6 +842,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                     request.headers.get("x-engram-project") or ""
                 ).strip().lower() or None,
                 in_reply_to=req.in_reply_to,
+                huddle_lifecycle=req.huddle_lifecycle,
             )
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]

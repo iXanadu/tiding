@@ -1224,6 +1224,7 @@ async def inbox_send(
     from_lane: str | None = None,
     from_project: str | None = None,
     in_reply_to: str | None = None,
+    huddle_lifecycle: bool = False,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -1280,6 +1281,9 @@ async def inbox_send(
         # makes "a reply to that ask" recoverable instead of guessed from
         # thread neighborhood.
         "in_reply_to": in_reply_to,
+        # 10d audit trail: relay-declared room-lifecycle letter (kickoff/
+        # close/add-participant) — the class the fan-out refusal exempts.
+        "huddle_lifecycle": huddle_lifecycle or None,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,

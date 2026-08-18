@@ -650,6 +650,12 @@ class InboxSendRequest(BaseModel):
     # had to be guessed from thread neighborhood (the smear the design
     # audit killed). Stamped by replying clients; optional and additive.
     in_reply_to: str | None = Field(default=None, max_length=MAX_ADDR)
+    # 10d discriminator: room LIFECYCLE correspondence (kickoff, close,
+    # add-participant) — true letters by O6's definition (the recipient may
+    # be dormant), stamped by the relay on exactly those sites. Declared,
+    # not proven: 10d is a regression guard within one trust domain (only
+    # the owner-token relay writes this class), never a security boundary.
+    huddle_lifecycle: bool = False
 
     @field_validator("to")
     @classmethod
