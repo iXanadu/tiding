@@ -216,6 +216,70 @@ def _is_immortal_address(to: str, occupant: str, project: str) -> bool:
     return True
 
 
+def _emit_estate_survey(entries: list, project: str) -> int:
+    """Build-plan Step 6: the project-subtree's OPEN mail, surveyed at arm
+    time — grouped by node, owner liveness split from register FACTS.
+
+    The backlog digest above answers "what is waiting for ME"; this answers
+    "what is waiting anywhere under this project" — the estate a successor
+    inherits, including mail parked on dead incarnations' seats that no
+    session's own listen_set covers. Counts and facts only, never bodies.
+
+    Owner split, facts not verdicts (the register's honesty limits carry
+    through): "live" = the allocator itself would skip the name for a live
+    holder; "dead" = death evidence exists (a spawner's certificate, or a
+    watcher-observed farewell — the register already voids farewells on
+    later life); "none" = mail-only, no session was ever behind the name;
+    anything else is "unknown" — quiet is not dead.
+
+    Returns the number of nodes surveyed (0 = nothing emitted). Purely
+    informational: never a wake, never affects one-shot exit.
+    """
+    nodes: dict = {}
+    total = 0
+    for e in entries:
+        n = int(e.get("undrained_mail_count") or 0)
+        if not n:
+            continue
+        if e.get("death"):
+            owner = "dead"
+        elif (e.get("allocation") or {}).get("reason") == "live-holder":
+            owner = "live"
+        elif e.get("farewell_at"):
+            owner = "dead"
+        elif e.get("entry_type") == "mail-only":
+            owner = "none"
+        else:
+            owner = "unknown"
+        nodes[e.get("address")] = {
+            "open_mail": n,
+            "kind": e.get("entry_type"),
+            "owner": owner,
+        }
+        total += n
+    if not nodes:
+        return 0
+    print(
+        json.dumps(
+            {
+                "event": "estate-survey",
+                "note": (
+                    "open mail across this project's subtree, by node — "
+                    "the estate a successor inherits; owner from register "
+                    "facts (quiet is not dead); read via memory_inbox, "
+                    "drain per the wrapup rules"
+                ),
+                "project": project,
+                "total_open": total,
+                "nodes": nodes,
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    return len(nodes)
+
+
 def _emit_backlog_digest(backlog: list, occupant: str, project: str) -> int:
     """LANE-3: ONE digest line for pre-arm backlog on immortal addresses,
     plus at most ONE individual wake for an unread authority-directive.
@@ -485,8 +549,20 @@ async def _run(args) -> int:
                 backlog = await _poll(client, listen_set, reader_identity, seen)
                 occupant = reader_to_address(reader_identity or "")
                 anchor_project = derive_project_name(args.project_dir or None)
-                if (_emit_backlog_digest(backlog, occupant, anchor_project)
-                        and not args.follow):
+                digest_hits = _emit_backlog_digest(
+                    backlog, occupant, anchor_project)
+                # Step 6: the subtree estate, own try — informational, never
+                # a wake, and a register hiccup must not cost the digest or
+                # the arm (an old server without ADDR-REG 404s here).
+                try:
+                    reg = await client.session_addresses(
+                        project=anchor_project)
+                    _emit_estate_survey(
+                        reg.get("entries") or [], anchor_project)
+                except Exception as se:
+                    print(f"inbox-wait: estate survey skipped ({se})",
+                          file=sys.stderr, flush=True)
+                if digest_hits and not args.follow:
                     return 0  # one-shot: the digest IS the wake
             except Exception as e:  # seeding failure is non-fatal — start clean
                 if _auth_error_code(e):

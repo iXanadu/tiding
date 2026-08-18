@@ -211,6 +211,13 @@ class MemoryClient:
         Shape: ``{"status": "ok", "read": [...], "write": [...]}``."""
         return await self._request("GET", "/namespaces")
 
+    async def session_addresses(self, project: str | None = None) -> dict:
+        """ADDR-REG: every name the store holds (optionally one project's
+        subtree), each with its mail count, liveness facts, and why the
+        allocator would skip it. Shape: ``{"status": "ok", "entries": [...]}``."""
+        params = {"project": project} if project else None
+        return await self._request("GET", "/session/addresses", params=params)
+
     async def inbox_send(
         self,
         to: str | list[str],

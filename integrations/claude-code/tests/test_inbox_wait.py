@@ -563,3 +563,50 @@ def test_rearm_command_quotes_awkward_args(monkeypatch):
     assert _rearm_command() == (
         "/abs/engram-inbox-wait --project-dir '/tmp/has space'"
     )
+
+
+# --- Step 6: estate survey at arm time --------------------------------------
+
+
+def test_estate_survey_groups_by_node_and_splits_owner(capsys):
+    from engram_mcp.inbox_wait import _emit_estate_survey
+    entries = [
+        {"address": "proj-claude-2", "entry_type": "seat",
+         "undrained_mail_count": 3,
+         "allocation": {"reason": "live-holder"}},
+        {"address": "proj-claude-4", "entry_type": "seat",
+         "undrained_mail_count": 2,
+         "death": {"cause": "stop"}, "allocation": {"reason": "grace-window"}},
+        {"address": "proj-grok", "entry_type": "mail-only",
+         "undrained_mail_count": 1, "allocation": {"reason": "mail-parked"}},
+        {"address": "proj-claude-9", "entry_type": "seat",
+         "undrained_mail_count": 4,
+         "allocation": {"reason": "grace-window"}},
+        {"address": "proj-codex", "entry_type": "seat",
+         "undrained_mail_count": 0,          # no open mail -> not surveyed
+         "allocation": {"reason": "live-holder"}},
+    ]
+    n = _emit_estate_survey(entries, "proj")
+    assert n == 4
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1, "the survey is ONE line, not one per node"
+    ev = json.loads(out[0])
+    assert ev["event"] == "estate-survey"
+    assert ev["total_open"] == 10
+    assert ev["nodes"]["proj-claude-2"]["owner"] == "live"
+    assert ev["nodes"]["proj-claude-4"]["owner"] == "dead"
+    assert ev["nodes"]["proj-grok"]["owner"] == "none"
+    assert ev["nodes"]["proj-claude-9"]["owner"] == "unknown", (
+        "quiet is not dead — no death evidence means unknown"
+    )
+    assert "proj-codex" not in ev["nodes"]
+    body_fields = json.dumps(ev)
+    assert "body" not in body_fields, "counts and facts only, never bodies"
+
+
+def test_estate_survey_empty_emits_nothing(capsys):
+    from engram_mcp.inbox_wait import _emit_estate_survey
+    assert _emit_estate_survey(
+        [{"address": "x", "entry_type": "seat", "undrained_mail_count": 0,
+          "allocation": {"reason": None}}], "proj") == 0
+    assert capsys.readouterr().out == ""
