@@ -658,6 +658,24 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   narrows the inbox trust surface. Not urgent: exposure is bounded by what
   the shared tokens already grant.
 
+- **NAME-1** ★ RENAME DECIDED (owner, 2026-08-18): the project becomes
+  **Tiding** — "engram" is saturated (8+ same-niche projects incl. a funded
+  LLC at engrammemory.ai; PyPI engram-mcp squatted by a competitor).
+  Holdings secured: tiding.sh (front door) + tidinglabs.com (insurance),
+  both in the owner's registrar. PyPI `tiding` + npm `tiding` verified free
+  at decision time — claim placeholders in Phase 0 THIS WEEK before any
+  public mention. Phased plan, outside-in behind logged compat shims
+  (full sequence in project memory `decision/name-1-tiding-rename-plan`):
+  P0 registry claims → P1 public face (GitHub repo rename auto-redirects;
+  README/docs "Tiding, formerly engram"; tiding.sh site) → P2 compat layer
+  (TIDING_*/ENGRAM_* env fallback, .tiding.cfg/.engram.cfg walk-up,
+  config-path fallback — every fallback hit LOGGED à la
+  NAMESPACE-ALIAS-HIT; MCP server names deliberately do NOT move for
+  deployed installs) → P3 one announced fleet day (service labels, prod
+  paths incl. the CWD-decides gotcha, identity files, AB env names) →
+  P4 evidence-gated shim retirement. Data untouched throughout (namespace
+  is already `fleet`); DB/venv names may keep old names indefinitely.
+
 ## Adoption (owner direction 2026-08-18: make a stranger's install one button)
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
