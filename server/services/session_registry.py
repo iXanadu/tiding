@@ -42,6 +42,7 @@ from server.services.memory_service import (
     ASK_INTENTS,
     INBOX_NAMESPACE,
     INBOX_OPEN,
+    INBOX_RESOLVED,
     INBOX_SCOPE,
     PRESENCE_SCOPE,
     SEAT_EXEMPT_IDENTITIES,
@@ -1933,3 +1934,88 @@ async def climb_pass() -> dict:
             climbed.append({"id": m.id, "from": m.to, "to": parent,
                             "reason": reason})
     return {"climbed": climbed, "skipped": skipped}
+
+
+# Step 14 (sweep tuning): how old DEEP chatter may grow before its epoch is
+# spent — O5's own 72h figure, not a new number. Applies only below a
+# project root and never to ask-class mail.
+DEEP_CHATTER_EPOCH_SECONDS = 259200  # 72h
+
+
+async def sweep_pass() -> dict:
+    """Step 14: epoch expiry for deep CHATTER (O5 — depth is fragility).
+
+    Chatter only, deep only: open letters that are NOT ask-class, addressed
+    below a project root (lane / incarnation per the O4 grammar). Asks are
+    NEVER swept — they belong to climb whatever their age; handled asks are
+    their parties' to resolve, not the janitor's. Root-level mail is never
+    swept (durability lives at the root). huddle/* threads are Band D's.
+
+    Expiry, either condition: the addressed INCARNATION has death evidence
+    (the epoch ended — chatter to a dead process is spent by definition), or
+    the row is older than DEEP_CHATTER_EPOCH_SECONDS. Mechanism: resolved
+    with resolved_by="system:epoch-sweep" — drains from default views,
+    retrievable via include_resolved, reversible; never archive's hard hide.
+    """
+    now = datetime.now(timezone.utc)
+    swept: list[dict] = []
+    skipped = {"ask": 0, "root": 0, "not_tree": 0, "fresh": 0, "exempt": 0}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, user_id, created_at, metadata FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $3) = $3
+              AND COALESCE(metadata->>'thread_id', '') NOT LIKE 'huddle/%'
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, INBOX_OPEN,
+        )
+        if not rows:
+            return {"swept": [], "skipped": skipped}
+        roots = await _fetch_known_roots(conn)
+        register = {e["address"]: e for e in await address_register(None)}
+        for r in rows:
+            md = _md({"metadata": r["metadata"]})
+            if (md.get("intent") or "").strip().lower() in ASK_INTENTS:
+                skipped["ask"] += 1
+                continue
+            to = r["user_id"]
+            bare = to.split("@", 1)[0]
+            if bare in SEAT_EXEMPT_IDENTITIES:
+                skipped["exempt"] += 1
+                continue
+            node = _parse_tree_node(to, roots)
+            if node is None:
+                skipped["not_tree"] += 1
+                continue
+            kind, _root, _parent = node
+            if kind == "root":
+                skipped["root"] += 1
+                continue
+            age = (now - r["created_at"]).total_seconds()
+            entry = register.get(bare)
+            epoch_dead = bool(kind == "incarnation" and entry
+                              and entry.get("death"))
+            if not epoch_dead and age < DEEP_CHATTER_EPOCH_SECONDS:
+                skipped["fresh"] += 1
+                continue
+            reason = ("incarnation-dead" if epoch_dead
+                      else "older-than-epoch")
+            await conn.execute(
+                """
+                UPDATE memories
+                SET metadata = COALESCE(metadata, '{}'::jsonb)
+                    || jsonb_build_object(
+                        'status', $1::text,
+                        'resolved_at', $2::text,
+                        'resolved_by', 'system:epoch-sweep',
+                        'sweep_reason', $3::text)
+                WHERE namespace = $4 AND scope = $5 AND key = $6
+                """,
+                INBOX_RESOLVED, now.isoformat(), reason,
+                INBOX_NAMESPACE, INBOX_SCOPE, r["key"],
+            )
+            swept.append({"id": r["key"], "to": to, "reason": reason})
+    return {"swept": swept, "skipped": skipped}

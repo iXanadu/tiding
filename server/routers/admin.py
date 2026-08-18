@@ -11,6 +11,7 @@ from server.models import (
     BulkDeleteResponse,
     CleanupResponse,
     ClimbResponse,
+    SweepResponse,
     DeletionQueueItem,
     DeletionQueueResponse,
     DeletionRejectRequest,
@@ -375,6 +376,22 @@ async def climb_endpoint(_caller=Depends(admin_or_open)):
         return ClimbResponse(status="ok", **result)
     except Exception:
         logger.exception("climb_pass failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/inbox/sweep", response_model=SweepResponse)
+async def sweep_endpoint(_caller=Depends(admin_or_open)):
+    """Step 14: epoch expiry for deep chatter (O5). Chatter only, deep only;
+    asks are never swept (climb owns them); root mail never swept. Resolved
+    with resolved_by=system:epoch-sweep — reversible, never hard-hidden."""
+    from server.services.session_registry import sweep_pass
+    try:
+        result = await sweep_pass()
+        if result["swept"]:
+            logger.info("epoch sweep resolved %d row(s)", len(result["swept"]))
+        return SweepResponse(status="ok", **result)
+    except Exception:
+        logger.exception("sweep_pass failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 

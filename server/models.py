@@ -505,6 +505,14 @@ class ClimbResponse(BaseModel):
     skipped: dict = {}
 
 
+class SweepResponse(BaseModel):
+    """Step 14: one epoch-sweep pass — deep chatter resolved, and why
+    everything else held. Same honesty contract as ClimbResponse."""
+    status: str
+    swept: list[dict] = []
+    skipped: dict = {}
+
+
 # --- Principal models ---
 
 class PrincipalCreate(BaseModel):
