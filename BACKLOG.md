@@ -358,6 +358,20 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   owner's own framing ("need not address unless helpful"); pinned so it is
   not rediscovered. Governs against shared `reference/provider-parity-matrix`.
 
+- **TIME-1** ★ Owner-approved 2026-08-18, MEDIUM priority — do not fold into
+  the Step 17/18 sprint. Stamp the authoritative server time into the banner
+  every bridge tool result already renders (`server time: <UTC ISO>`), so
+  every agent passively sees "now" on every call it was already making.
+  Fixes the real AI time failure — models quoting stale timestamps from
+  context because time doesn't pass between turns — with zero polling and no
+  opt-in; engram's DB clock is already the fleet's ordering authority. A
+  dedicated GET /time endpoint was considered and rejected as redundant (an
+  agent that doesn't check `date` won't call it either). Scope: ~one line in
+  bridge response formatting + tests; ride the next bridge change, never a
+  bounce of its own. Companion (app lane, not ours): surfaces should render
+  timestamps in the owner's LOCAL time — the UTC-vs-9:30AM confusion that
+  raised this was a rendering gap, not clock drift.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
