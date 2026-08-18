@@ -397,7 +397,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **SEAT-13** Decide whether an observed farewell should shorten a seat's
+- **SEAT-13** *(evidence add 2026-08-18: the bare-watcher gap measured on a
+  real corpse — the 24h endurance test's Cursor session died on the owner's
+  "close," but its bare-launched watcher had no process to observe, never
+  sent a farewell, and kept beating the presence row indefinitely; the row
+  read fresh+watcher-alive for a session dead for minutes until the PM
+  killed the orphan by hand. "Closed on the owner's screen" left THREE
+  server-side agent processes plus that watcher running on the spoke.)*
+  Decide whether an observed farewell should shorten a seat's
   allocation backstop, and how. The goodbye now records `farewell_at` when a
   watcher observes its session's process exit, and any later evidence of life
   voids it — but nothing yet CONSUMES it during allocation, so an abandoned
