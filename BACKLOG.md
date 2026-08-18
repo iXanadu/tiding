@@ -262,7 +262,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Removing `state` from `/memory/roster` on 2026-08-01 broke `memory_roster`
   for every ALREADY-RUNNING session for 2h19m: the shipped bridge renders it
   with `f"{e['state']:<15}"`, a direct subscript, and bridge updates only land
-  at a session's next start. The peer consumer who requested the removal had
+  at a session's next start.
+  ⚠️ SECOND MEASURED CASE (2026-08-18): `SeatEntry.is_live`, dropped in the
+  same 2026-08-01 facts-not-verdicts change, silently killed a hub feature
+  gate for SEVENTEEN DAYS — a `.get()`-style reader doesn't crash, it just
+  goes always-false, so the failure surfaced only when a new feature (DM
+  outbound capture) was built on the dead gate and the owner's own message
+  didn't capture. Crash-on-remove is the LOUD failure mode; default-on-remove
+  is the quiet one, and it is worse. The peer consumer who requested the removal had
   migrated and said it was safe — but the bridge is also a consumer and every
   running session holds an old copy. **A wire contract has as many consumers
   as there are DEPLOYED READERS, not as many as there are maintainers who
