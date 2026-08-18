@@ -159,6 +159,103 @@ GENERATED_KEY_PREFIX = "auto-"
 LANE_PROVIDERS = {"claude", "grok", "codex", "cursor", "gpt"}
 
 
+def is_reserved_root(seat: str, project: str) -> bool:
+    """True when ``seat`` IS the bare project string and reservation is on.
+
+    Step 9 / O4: bare ``{proj}`` is the channel — the immortal root — and
+    never grantable as a seat. Allocation never yields it (seat_candidates
+    starts at the lane base), but the runtime/preferred path only
+    lane-checked, so ``memory_take_seat(name="<project>")`` could still
+    squat the root — the exact ``seat/engram`` cursor-corpse class the
+    outcomes review measured. Cross-project roots are caught against the
+    Step-8 registry at claim time (async, see seat_claim).
+    """
+    from server.config import settings
+    if not settings.lane_reservation_enabled:
+        return False
+    if project in SEAT_EXEMPT_IDENTITIES:
+        return False
+    return seat == project
+
+
+def allocation_decision(*, root: bool, lane: bool, age: float | None,
+                        holds_mail: bool, presence_fresh: bool,
+                        last_used_at=None) -> dict:
+    """THE skip ladder — the single copy (ADDR-REG-1).
+
+    Consulted by BOTH seat_claim (which gathers facts per candidate and
+    performs the actions) and the register's ``_allocation`` (which maps its
+    batch-read columns onto the same facts). Two copies of this ORDER is how
+    the register starts lying about what the allocator would do; the
+    fact-gathering necessarily differs (point-reads vs batch), the decision
+    must not.
+
+    Ladder: root -> lane -> (no row: mail parks, else free) -> live ->
+    grace -> mail -> fresh presence -> free.
+    """
+    if root:
+        return {"would_skip": True, "reason": "reserved-root",
+                "grace_expires_at": None}
+    if lane:
+        return {"would_skip": True, "reason": "reserved-lane",
+                "grace_expires_at": None}
+    if age is None:
+        if holds_mail:
+            return {"would_skip": True, "reason": "mail-parked",
+                    "grace_expires_at": None}
+        return {"would_skip": False, "reason": None, "grace_expires_at": None}
+    if age < SEAT_LIVE_SECONDS:
+        return {"would_skip": True, "reason": "live-holder",
+                "grace_expires_at": None}
+    if age < SEAT_GRACE_SECONDS:
+        expires = (last_used_at + timedelta(seconds=SEAT_GRACE_SECONDS)
+                   if last_used_at else None)
+        return {"would_skip": True, "reason": "grace-window",
+                "grace_expires_at":
+                    expires.isoformat() if expires else None}
+    if holds_mail:
+        return {"would_skip": True, "reason": "mail-parked",
+                "grace_expires_at": None}
+    if presence_fresh:
+        return {"would_skip": True, "reason": "presence-fresh",
+                "grace_expires_at": None}
+    return {"would_skip": False, "reason": None, "grace_expires_at": None}
+
+
+# GRANT-1(a)'s loud-park texts, keyed by the ladder's own reason strings so
+# the warning a claimant reads and the reason the register serves can never
+# say different things about the same skip.
+_PARKED_REASON_TEXT = {
+    "live-holder": "a live session currently holds it",
+    "grace-window": "its previous holder is inside the reclaim grace window",
+    "mail-parked": (
+        "it holds open mail a new holder would see (R8 parks a used name "
+        "rather than hand it to a stranger); drain the open rows on that "
+        "address (read them, then resolve/archive) and the next claim can "
+        "take the name"
+    ),
+    "presence-fresh": "a session is actively heartbeating at it",
+    "reserved-root": "it is a project root (channel), never a seat",
+    "reserved-lane": "it is a lane (immortal mailbox), never a seat",
+}
+
+
+async def _fetch_known_roots(conn) -> set[str]:
+    """Every project root the store knows — registered on the claim census
+    OR observed via seat rows (the Step-9 audit amendment: registered-only
+    would leave a root squattable exactly while its registry row waits for
+    the project's next claim). Exempt roles are not roots."""
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT project FROM memories
+        WHERE namespace = $1 AND scope IN ($2, $3)
+          AND project IS NOT NULL
+        """,
+        SEAT_NAMESPACE, PROJECT_REGISTRY_SCOPE, SEAT_SCOPE,
+    )
+    return {r["project"] for r in rows} - SEAT_EXEMPT_IDENTITIES
+
+
 def is_reserved_lane(seat: str, project: str) -> bool:
     """True when ``seat`` is a lane string for ``project`` and reservation is on.
 
@@ -440,6 +537,16 @@ async def seat_claim(
             f"addressed at their occupant seat."
         )
         preferred = None
+    elif preferred and not runtime_seat and is_reserved_root(preferred,
+                                                             project):
+        # Step 9: the bare project string is the CHANNEL — the immortal
+        # root — never a seat. Same degraded-loud shape as the lane net.
+        lane_notice = (
+            f"root_reserved: {preferred!r} is this project's channel (the "
+            f"immortal root), not a claimable seat; allocated an occupant "
+            f"seat instead. Mail to the channel still reaches this session."
+        )
+        preferred = None
 
     now = datetime.now(timezone.utc)
     live_cutoff = now - timedelta(seconds=SEAT_LIVE_SECONDS)
@@ -587,18 +694,31 @@ async def seat_claim(
                 # inherit its predecessor's in-flight rename request.
                 if (runtime_seat and preferred and preferred != seat
                         and same_process):
-                    # LANE-1: a deliberate rename onto a lane string is
-                    # REFUSED loudly (exact-or-refused already governs
-                    # take_seat; a lane is never grantable, whatever its
-                    # row state).
-                    if is_reserved_lane(preferred, project):
+                    # LANE-1 + Step 9: a deliberate rename onto a lane OR a
+                    # known project ROOT is REFUSED loudly (exact-or-refused
+                    # already governs take_seat; reserved strings are never
+                    # grantable, whatever their row state). Roots checked
+                    # against the full known set — registered or observed —
+                    # per the audit amendment.
+                    if (is_reserved_lane(preferred, project)
+                            or is_reserved_root(preferred, project)
+                            or preferred in await _fetch_known_roots(conn)):
+                        # Prefixes are shipped strings (WIRE-1: deployed
+                        # readers may match them) — lanes keep the exact
+                        # prefix that shipped; roots get their own.
+                        if is_reserved_lane(preferred, project):
+                            prefix, kind = ("lane_reserved",
+                                            "a lane (immortal mailbox)")
+                        else:
+                            prefix, kind = ("root_reserved",
+                                            "a project root (channel)")
                         return {"seat": seat, "is_new": False,
                                 "reclaimed_from": None,
                                 "warning": (
-                                    f"lane_reserved: {preferred!r} is a lane "
-                                    f"(immortal mailbox), not a takeable seat; "
-                                    f"still registered as {seat!r}. Pick a "
-                                    f"different name, or keep this one."
+                                    f"{prefix}: {preferred!r} is {kind}, "
+                                    f"not a takeable seat; still registered "
+                                    f"as {seat!r}. Pick a different name, "
+                                    f"or keep this one."
                                 ),
                                 "renamed_from": None}
                     # The taken name IS the ask — record it, or the move
@@ -741,15 +861,27 @@ async def seat_claim(
         parked_reason = None
         base = f"{project}-{provider}"
         distinct_preferred = preferred if preferred != base else None
+        # Step 9 (audit amendment): ANY known root — registered on the claim
+        # census OR merely observed via seat rows — is reserved. Registered-
+        # only would leave take_seat("engram") open exactly while engram's
+        # own registry row waits for its next claim (measured registered=
+        # false minutes before this shipped). One fetch per allocation, not
+        # per candidate.
+        known_roots = await _fetch_known_roots(conn)
         for seat in seat_candidates(project, provider, preferred):
-            # LANE-1: reserved lane strings are never minted as occupant
-            # seats — skip before BOTH the insert and the takeover branch
-            # (a takeover would re-mint a not-yet-drained lane-named row as
-            # an occupant, which is the same defect through the other door).
-            # With reservation on, the base candidate IS the lane, so first
-            # occupants allocate from `<base>-2` upward; the ADDR-3 kind
-            # marker is what keeps surfaces rendering that correctly.
-            if is_reserved_lane(seat, project):
+            # LANE-1 + Step 9: reserved lane AND root strings are never
+            # minted as occupant seats — skip before BOTH the insert and the
+            # takeover branch (a takeover would re-mint a not-yet-drained
+            # reserved-named row as an occupant, the same defect through the
+            # other door). With reservation on, the base candidate IS the
+            # lane, so first occupants allocate from `<base>-2` upward.
+            if (is_reserved_lane(seat, project)
+                    or is_reserved_root(seat, project)
+                    or seat in known_roots):
+                if seat == distinct_preferred:
+                    parked_reason = _PARKED_REASON_TEXT["reserved-root"] \
+                        if not is_reserved_lane(seat, project) \
+                        else _PARKED_REASON_TEXT["reserved-lane"]
                 continue
             # The runtime flag marks a DELIBERATELY-CHOSEN name. It applies
             # only when the granted candidate IS the requested name — a
@@ -758,50 +890,19 @@ async def seat_claim(
                          runtime=runtime_seat and seat == preferred,
                          preferred=distinct_preferred)
 
-            # R8 ON THE FREE PATH. A name with NO seat row can still hold mail,
-            # and until 2026-08-13 nothing checked: the guard below at the
-            # takeover branch only runs when a row still exists, and
-            # ``seat_release`` DELETEs the row without consulting the inbox at
-            # all. So the whole clean-shutdown path — the one a launcher drives
-            # on every despawn — freed a name and let the next claimant INSERT
-            # into it and read a stranger's mail. Inbox rows key on the ADDRESS
-            # STRING, not on the seat row, so dropping the row moves nothing.
-            #
-            # The slow path was guarded and the fast path added later was not:
-            # explicit release short-circuits the 7d grace that made takeover
-            # the only way a used name changed hands, and the guard never came
-            # with it.
-            #
-            # RESIDUAL, stated rather than papered over: this is check-then-act
-            # on a bare connection (see the acquire above — no transaction), so
-            # mail arriving between the check and the insert still lands on the
-            # new holder. That window is milliseconds against the unbounded one
-            # it replaces, and it cannot be closed by a transaction anyway —
-            # nothing serialises an INSERT by a different session against our
-            # read. Closing it fully would need the address space locked, which
-            # costs more than the residue is worth.
-            if await _address_holds_mail(conn, seat):
-                if seat == distinct_preferred:
-                    parked_reason = (
-                        "it holds open mail a new holder would see (R8 parks "
-                        "a used name rather than hand it to a stranger); "
-                        "drain the open rows on that address (read them, then "
-                        "resolve/archive) and the next claim can take the name"
-                    )
-                continue  # R8 outranks tidy numbering: park it, take the next
-
-            if await _try_insert(conn, seat, project, meta):
-                # LANE-4: a newly allocated occupant may inherit the lane's
-                # read-cursor (succession) — see _apply_lane_inheritance for
-                # the conditions and the live-colleague block.
-                await _apply_lane_inheritance(conn, seat, project, provider,
-                                              host, session_key)
-                return {"seat": seat, "is_new": True,
-                        "reclaimed_from": None,
-                        "warning": _with_park_warning(
-                            warning, distinct_preferred, seat,
-                            parked_reason)}
-
+            # THE LADDER, one copy (ADDR-REG-1): facts gathered here, the
+            # DECISION made by allocation_decision — the same function the
+            # register serves, so the two can never drift. The load-bearing
+            # history lives with the function and stays true here:
+            # R8 on the free path (a name with NO row can still hold mail;
+            # seat_release bare-DELETEs, so the clean-shutdown path once
+            # handed a stranger a dead session's unread mail — 2026-08-13);
+            # takeover on ONE condition, past the full grace window (the
+            # "same slot" shortcut was a live-address steal, dropped
+            # 2026-07-24); check-then-act residual stated not papered over:
+            # no transaction can serialise a foreign INSERT against our
+            # read, so a milliseconds window remains, against the unbounded
+            # one it replaced.
             row = await conn.fetchrow(
                 """
                 SELECT metadata, last_used_at FROM memories
@@ -810,51 +911,42 @@ async def seat_claim(
                 """,
                 SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, f"seat/{seat}",
             )
-            if row is None:
-                continue  # freed between insert and read — next loop retries it
-            if row["last_used_at"] >= live_cutoff:
+            age = ((now - row["last_used_at"]).total_seconds()
+                   if row is not None else None)
+            holds_mail = await _address_holds_mail(conn, seat)
+            # Presence only decides at the last rung — don't pay the query
+            # on candidates the earlier rungs already park.
+            presence_fresh = False
+            if (row is not None and age is not None
+                    and age >= SEAT_GRACE_SECONDS and not holds_mail):
+                presence_fresh = await _presence_is_fresh(conn, seat, project)
+            d = allocation_decision(
+                root=False, lane=False, age=age, holds_mail=holds_mail,
+                presence_fresh=presence_fresh,
+                last_used_at=row["last_used_at"] if row is not None else None,
+            )
+            if d["would_skip"]:
                 if seat == distinct_preferred:
-                    parked_reason = "a live session currently holds it"
-                continue  # live holder; never evict
-
-            prior = _md(row)
-            # ONE condition for takeover: the seat is past the full grace window.
-            #
-            # There used to be a "same slot" shortcut here — same provider, same
-            # host, past the LIVE window — meant to let a harness that restarted
-            # with a new session_key re-take its own seat instead of drifting to
-            # an ordinal. It permitted a takeover after only ~10 minutes of
-            # quiet, and it could not tell "my own restart" from "a different
-            # session that happens to match provider and host". With liveness
-            # inferred from tool activity, ten minutes of quiet is an ordinary
-            # state for a working session, so the shortcut was a live-address
-            # steal waiting for the right timing.
-            #
-            # Dropping it costs only tidiness, and only in the narrow case of a
-            # session whose KEY changed (a hand-launched restart): it gets a
-            # fresh ordinal rather than its old one. Launcher-spawned sessions
-            # are unaffected — their key is stable, so continuity returns their
-            # seat directly.
-            if row["last_used_at"] >= grace_cutoff:
-                if seat == distinct_preferred:
-                    parked_reason = ("its previous holder is inside the "
-                                     "reclaim grace window")
+                    parked_reason = _PARKED_REASON_TEXT.get(
+                        d["reason"], d["reason"])
                 continue
-            if await _address_holds_mail(conn, seat):
-                if seat == distinct_preferred:
-                    parked_reason = (
-                        "it holds open mail a new holder would see (R8 parks "
-                        "a used name rather than hand it to a stranger); "
-                        "drain the open rows on that address (read them, then "
-                        "resolve/archive) and the next claim can take the name"
-                    )
-                continue  # R8: never hand a stranger someone else's mail
-            if await _presence_is_fresh(conn, seat, project):
-                if seat == distinct_preferred:
-                    parked_reason = ("a session is actively heartbeating "
-                                     "at it")
-                continue  # SEAT-8: an independently-live session holds this
-
+            if row is None:
+                if await _try_insert(conn, seat, project, meta):
+                    # LANE-4: a newly allocated occupant may inherit the
+                    # lane's read-cursor (succession) — see
+                    # _apply_lane_inheritance for the conditions.
+                    await _apply_lane_inheritance(conn, seat, project,
+                                                  provider, host, session_key)
+                    return {"seat": seat, "is_new": True,
+                            "reclaimed_from": None,
+                            "warning": _with_park_warning(
+                                warning, distinct_preferred, seat,
+                                parked_reason)}
+                # Raced: a row appeared between decision and insert. It is
+                # by construction a fresh (live) holder — the old ladder
+                # re-read and parked it at the live rung; next candidate.
+                continue
+            prior = _md(row)
             if await _try_takeover(conn, seat, project, meta,
                                    older_than=live_cutoff):
                 await _apply_lane_inheritance(conn, seat, project, provider,
@@ -1337,9 +1429,25 @@ async def address_register(project: str | None = None) -> list[dict]:
         human_rows = await conn.fetch(
             "SELECT name FROM principals WHERE type = 'human' AND active",
         )
+        # Step 9: known roots (registered OR observed-only — the audit
+        # amendment) are reserved; the register serves the same reason the
+        # allocator skips on.
+        root_rows = await conn.fetch(
+            """
+            SELECT DISTINCT project FROM memories
+            WHERE namespace = $1 AND scope IN ($2, $3)
+              AND project IS NOT NULL
+            """,
+            SEAT_NAMESPACE, PROJECT_REGISTRY_SCOPE, SEAT_SCOPE,
+        )
 
     mail_by_addr = {r["user_id"]: int(r["n"]) for r in mail_rows}
     person_names = {(r["name"] or "").strip().lower() for r in human_rows}
+    known_roots = ({r["project"] for r in root_rows}
+                   - SEAT_EXEMPT_IDENTITIES)
+
+    def _is_root(addr: str) -> bool:
+        return addr.split("@", 1)[0] in known_roots
 
     def _fixed_reason(addr: str) -> str | None:
         bare = addr.split("@", 1)[0]
@@ -1377,6 +1485,7 @@ async def address_register(project: str | None = None) -> list[dict]:
     def _allocation(age: float | None, mail_n: int,
                     presence_age: float | None,
                     last_used_at, *, lane: bool = False,
+                    root: bool = False,
                     fixed_reason: str | None = None) -> dict:
         # Names allocation NEVER touches get their own label instead of
         # "mail-parked" noise: an exempt role (admin — seat_claim returns
@@ -1387,34 +1496,16 @@ async def address_register(project: str | None = None) -> list[dict]:
         if fixed_reason:
             return {"would_skip": True, "reason": fixed_reason,
                     "grace_expires_at": None}
-        # Mirrors seat_claim's skip order exactly: lane -> live -> grace ->
-        # mail -> fresh presence. A drift between this and the allocator would
-        # make the register lie about the one thing it exists to explain.
-        # The lane check first, as in the claim loop (audit residual,
-        # 2026-08-17): with reservation ON a lane-named row is never
-        # allocatable whatever its age — without this, a past-grace empty
-        # lane row would read would_skip=false while seat_claim continues.
-        # Reservation OFF → is_reserved_lane is False → no change today.
-        if lane:
-            return {"would_skip": True, "reason": "reserved-lane",
-                    "grace_expires_at": None}
-        if age is None:  # mail-only entry: no seat row, mail parks the name
-            return {"would_skip": True, "reason": "mail-parked",
-                    "grace_expires_at": None}
-        if age < SEAT_LIVE_SECONDS:
-            return {"would_skip": True, "reason": "live-holder",
-                    "grace_expires_at": None}
-        if age < SEAT_GRACE_SECONDS:
-            expires = last_used_at + timedelta(seconds=SEAT_GRACE_SECONDS)
-            return {"would_skip": True, "reason": "grace-window",
-                    "grace_expires_at": expires.isoformat()}
-        if mail_n:
-            return {"would_skip": True, "reason": "mail-parked",
-                    "grace_expires_at": None}
-        if presence_age is not None and presence_age < SEAT_LIVE_SECONDS:
-            return {"would_skip": True, "reason": "presence-fresh",
-                    "grace_expires_at": None}
-        return {"would_skip": False, "reason": None, "grace_expires_at": None}
+        # ADDR-REG-1 closed: the ladder is allocation_decision — the SAME
+        # function seat_claim consults — so the register and the allocator
+        # can no longer drift. This wrapper only maps the register's
+        # batch-read columns onto the decision's facts.
+        return allocation_decision(
+            root=root, lane=lane, age=age, holds_mail=bool(mail_n),
+            presence_fresh=(presence_age is not None
+                            and presence_age < SEAT_LIVE_SECONDS),
+            last_used_at=last_used_at,
+        )
 
     out = []
     seated_addresses = set()
@@ -1465,6 +1556,7 @@ async def address_register(project: str | None = None) -> list[dict]:
                                       r["last_used_at"],
                                       lane=is_reserved_lane(seat,
                                                             r["project"]),
+                                      root=_is_root(seat),
                                       fixed_reason=_fixed_reason(seat)),
         })
 
@@ -1499,6 +1591,7 @@ async def address_register(project: str | None = None) -> list[dict]:
             "death": death_by_seat.get(addr),
             "undrained_mail_count": n,
             "allocation": _allocation(None, n, None, None,
+                                      root=_is_root(addr),
                                       fixed_reason=_fixed_reason(addr)),
         })
     return out
@@ -1589,16 +1682,7 @@ async def unknown_root_advisories(addrs: list[str]) -> list[str]:
         return []
     pool = await get_pool()
     async with pool.acquire() as conn:
-        projects = {
-            r["project"] for r in await conn.fetch(
-                """
-                SELECT DISTINCT project FROM memories
-                WHERE namespace = $1 AND scope IN ($2, $3)
-                  AND project IS NOT NULL
-                """,
-                SEAT_NAMESPACE, PROJECT_REGISTRY_SCOPE, SEAT_SCOPE,
-            )
-        }
+        projects = await _fetch_known_roots(conn)
         persons = {
             (r["name"] or "").strip().lower() for r in await conn.fetch(
                 "SELECT name FROM principals WHERE type = 'human' AND active",

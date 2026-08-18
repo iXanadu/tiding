@@ -179,6 +179,9 @@ may run concurrently where marked ∥. Every step starts on the owner's name.
     agentbeast-app. Asks-to-owner become stateful objects
     (open/answered/declined/expired), replacing letters-to-Rob. *Verify:* a
     live ask round-trips owner-answer → asking session notified.
+    *(Pulled forward 2026-08-18 by PM re-sequence under this band's own
+    "may start earlier" provision — no mail-wire dependency; auditor
+    reviews the API shape before build. Band D's gate is untouched.)*
 16. ∥ **Status digest** (AB §4) — agentbeast-claude + agentbeast-app. Agent
     progress reports leave the DM plane. *Verify:* one morning's digest
     replaces the day's status letters, counted.
