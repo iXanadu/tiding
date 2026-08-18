@@ -595,6 +595,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   readback + documented manual step acceptable, no picker-state endpoint
   unless the first run demands it. Starts when the owner names it.
 
+- **AUTH-SEAT-1** No credential attests a SEAT. Fleet tokens identify a
+  provider class (one shared token per provider); seats are session-asserted
+  (env/take_seat), so no consumer can verify "this bearer IS seat X" —
+  measured 2026-08-18 when the hub's archive endpoint tried participant-grain
+  auth and had to settle for provider-class grain. Same root as the inbox's
+  client-asserted listen_set/reader_identity (the server trusts the caller's
+  claim of who is reading). Fix direction: server-side seat resolution from
+  token+nonce (a session's live seat attested by engram, queryable by
+  consumers) — rides the principals arc. Unlocks per-seat archive grain and
+  narrows the inbox trust surface. Not urgent: exposure is bounded by what
+  the shared tokens already grant.
+
 ## Blocked-external
 
 - **DOCKER-1** Verify the full-stack compose path (build, health,
