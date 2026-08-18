@@ -241,10 +241,17 @@ def _emit_estate_survey(entries: list, project: str) -> int:
         n = int(e.get("undrained_mail_count") or 0)
         if not n:
             continue
-        if e.get("death"):
-            owner = "dead"
-        elif (e.get("allocation") or {}).get("reason") == "live-holder":
+        # PRESENT LIFE BEATS HISTORICAL DEATH EVIDENCE. Found on this
+        # feature's own first live verify (2026-08-18): a death cert keyed
+        # on a REUSED session key (a launcher's slot key survives respawns)
+        # attaches to the name's CURRENT holder, so death-first labeled a
+        # live, currently-beating session "dead". A live-holder is beating
+        # NOW; a cert is about some past process. Register-side residual
+        # pinned as REG-DEATH-1.
+        if (e.get("allocation") or {}).get("reason") == "live-holder":
             owner = "live"
+        elif e.get("death"):
+            owner = "dead"
         elif e.get("farewell_at"):
             owner = "dead"
         elif e.get("entry_type") == "mail-only":

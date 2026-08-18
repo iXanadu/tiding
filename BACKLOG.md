@@ -197,6 +197,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **REG-DEATH-1** The register attaches death evidence by session_key, and a
+  launcher's slot-derived key SURVIVES respawns — so a predecessor's death
+  cert pins to the name's current, live holder. Measured 2026-08-18 on this
+  project's own PM seat: register served a death cert alongside
+  allocation.reason=live-holder on the same row. By-key attachment assumed
+  keys are per-session; slot keys are per-slot. Needs: cert must not attach
+  when the row's holder shows later life (the farewell rule, applied to
+  certs), or certs must carry the nonce.
+
 - **DEPLOY-3** graceful-deploy's 30s drain window is sized under the
   inbox-wait long-poll timeout, so a routine bounce reads as "still alive —
   investigate" while the old process is just draining held long-polls

@@ -610,3 +610,18 @@ def test_estate_survey_empty_emits_nothing(capsys):
         [{"address": "x", "entry_type": "seat", "undrained_mail_count": 0,
           "allocation": {"reason": None}}], "proj") == 0
     assert capsys.readouterr().out == ""
+
+
+def test_estate_survey_live_holder_beats_stale_death_cert(capsys):
+    """REG-DEATH-1's client-side guard: a cert keyed on a reused slot key
+    attaches to the current holder — present life outranks it."""
+    from engram_mcp.inbox_wait import _emit_estate_survey
+    entries = [
+        {"address": "proj-claude-7", "entry_type": "seat",
+         "undrained_mail_count": 1,
+         "death": {"cause": "stop"},           # predecessor's cert, reused key
+         "allocation": {"reason": "live-holder"}},
+    ]
+    _emit_estate_survey(entries, "proj")
+    ev = json.loads(capsys.readouterr().out)
+    assert ev["nodes"]["proj-claude-7"]["owner"] == "live"
