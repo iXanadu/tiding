@@ -1974,12 +1974,25 @@ async def memory_reply(
         effective_intent = intent  # DM replies keep waking by default
     thread_id = parent.get("thread_id") or parent["id"]
 
+    # Step 12, LOCK 1's mechanics: an answer only COUNTS as handling when it
+    # carries answer-class intent, and most genuine answers pass none. A
+    # direct (non-channel) reply to an ask-class parent therefore defaults
+    # to intent=action — same wake behavior it already had, but the ask it
+    # answers reads HANDLED by structure instead of by discipline. Channel
+    # replies keep their quiet fyi default; an explicit intent always wins.
+    if (not effective_intent
+            and not (parent.get("to") or "").startswith("#")
+            and (parent.get("intent") or "").strip().lower() in (
+                "action", "proceed", "escalate", "authority-directive")):
+        effective_intent = "action"
+
     send_result = await _client.inbox_send(
         to=reply_to,
         body=body,
         subject=subject or f"re: {parent.get('subject', '')}",
         from_=reader_identity,
         thread_id=thread_id,
+        in_reply_to=parent["id"],
         intent=effective_intent or None,
         project_dir=project_dir or None,
         # ADDR-1, reply half: memory_send has always forwarded this and

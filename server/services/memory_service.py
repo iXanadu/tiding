@@ -1188,6 +1188,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         model_source=md.get("model_source"),
         from_lane=md.get("from_lane"),
         from_project=md.get("from_project"),
+        in_reply_to=md.get("in_reply_to"),
         intent=md.get("intent"),
         subject=md.get("subject", ""),
         body=row["value"],
@@ -1222,6 +1223,7 @@ async def inbox_send(
     model_source: str | None = None,
     from_lane: str | None = None,
     from_project: str | None = None,
+    in_reply_to: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -1274,6 +1276,10 @@ async def inbox_send(
         # header at the router (every client sends it already) — what a
         # CROSS-project reply targets, per reply-to-channel.
         "from_project": from_project,
+        # Step 12: the message this one ANSWERS (reply-path stamped). What
+        # makes "a reply to that ask" recoverable instead of guessed from
+        # thread neighborhood.
+        "in_reply_to": in_reply_to,
         "intent": intent,
         "subject": subject,
         "thread_id": thread_id,
@@ -1402,6 +1408,113 @@ async def inbox_unread_by_sender(
     ]
 
 
+# Step 12: ask-class intents — the letters whose life ends only answered or
+# declined (O5). Everything else dies by being read.
+ASK_INTENTS = frozenset(
+    {"action", "proceed", "escalate", "authority-directive"})
+
+
+def _speaker(from_lane: str | None, from_: str | None) -> str:
+    """The truthful speaker of a LETTER: the bridge-stamped lane (LANE-5,
+    the sender's own routing declaration) over the self-asserted label.
+    Never valid on relay-carried rows — those are excluded upstream."""
+    return ((from_lane or "").strip().lower()
+            or (from_ or "").strip().lower())
+
+
+def _is_meeting_thread(thread_id: str | None) -> bool:
+    """huddle/* threads are MEETING traffic (O6): every row wears the
+    relay's stamp, speakers live in body prose, and Band D removes these
+    rows from the inbox entirely. The discriminator never applies."""
+    return bool(thread_id and thread_id.startswith("huddle/"))
+
+
+async def _mark_handled(conn, messages: list[InboxMessage]) -> None:
+    """Step 12: annotate ask-class LETTERS with the structural handled
+    verdict. A STORE query on in_reply_to — never a pass over the viewer's
+    own list window (the answer lives in the ASKER's inbox, which the
+    recipient listing the ask does not see) and never read_by.
+    """
+    asks = [
+        m for m in messages
+        if (m.intent or "").strip().lower() in ASK_INTENTS
+        and not _is_meeting_thread(m.thread_id)
+    ]
+    if not asks:
+        return
+    # Resolved/superseded asks are handled by lifecycle, no query needed.
+    open_asks: dict[str, InboxMessage] = {}
+    for m in asks:
+        if m.status in ("resolved", "superseded"):
+            m.handled, m.handled_via = True, m.status
+        else:
+            open_asks[m.id] = m
+    if not open_asks:
+        return
+    # Answer-class replies TO these asks, wherever they were delivered.
+    # LOCK 1: empty intent is NOT a handling event — a default-wake
+    # "got it" must not mark the ask handled; only an explicit answer-class
+    # reply (or resolve/supersede above) does. The bridge defaults replies
+    # to ask-class parents to intent=action, so the common answer counts
+    # by mechanics, not discipline.
+    rows = await conn.fetch(
+        """
+        SELECT metadata->>'in_reply_to' AS parent,
+               metadata->>'from_lane' AS from_lane,
+               metadata->>'from' AS from_
+        FROM memories
+        WHERE namespace = $1 AND scope = $2
+          AND metadata->>'in_reply_to' = ANY($3::text[])
+          AND lower(COALESCE(metadata->>'intent', '')) = ANY($4::text[])
+        """,
+        INBOX_NAMESPACE, INBOX_SCOPE, list(open_asks),
+        list(ASK_INTENTS),
+    )
+    for r in rows:
+        ask = open_asks.get(r["parent"])
+        if ask is None:
+            continue
+        if (_speaker(r["from_lane"], r["from_"])
+                != _speaker(ask.from_lane, ask.from_)):
+            ask.handled, ask.handled_via = True, "replied"
+    remaining = [m for m in open_asks.values() if m.handled is None]
+    if not remaining:
+        return
+    # Legacy fallback, thread-ROOT asks only: answers sent before
+    # in_reply_to existed carry only the thread — and only when the ask
+    # STARTED the thread does thread membership identify its target. A
+    # mid-thread legacy ask stays UNKNOWN (handled=None), never guessed.
+    roots = {m.id: m for m in remaining
+             if not m.thread_id or m.thread_id == m.id}
+    if roots:
+        rows = await conn.fetch(
+            """
+            SELECT metadata->>'thread_id' AS t,
+                   metadata->>'from_lane' AS from_lane,
+                   metadata->>'from' AS from_, key
+            FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND metadata->>'thread_id' = ANY($3::text[])
+              AND lower(COALESCE(metadata->>'intent', '')) = ANY($4::text[])
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, list(roots), list(ASK_INTENTS),
+        )
+        for r in rows:
+            ask = roots.get(r["t"])
+            if ask is None or r["key"] == ask.id:
+                continue
+            if (_speaker(r["from_lane"], r["from_"])
+                    != _speaker(ask.from_lane, ask.from_)):
+                ask.handled, ask.handled_via = True, "replied"
+        for m in roots.values():
+            if m.handled is None:
+                m.handled = False  # checkable and unanswered
+    # Mid-thread asks that found no in_reply_to answer: if the ask itself
+    # postdates the field (it carries in_reply_to or arrived with the field
+    # era), False would be honest — but the row cannot attest its era, so
+    # UNKNOWN stands for all of them. Facts, never guesses.
+
+
 async def inbox_list(
     listen_set: list[str],
     reader_identity: str | None = None,
@@ -1409,6 +1522,7 @@ async def inbox_list(
     limit: int = 20,
     include_resolved: bool = False,
     newest_first: bool = False,
+    unhandled_only: bool = False,
 ) -> list[InboxMessage]:
     """List inbox messages addressed to any member of ``listen_set``.
 
@@ -1473,7 +1587,20 @@ async def inbox_list(
             include_resolved,
             INBOX_OPEN,
         )
-    return [_row_to_inbox_message(dict(r)) for r in rows]
+        messages = [_row_to_inbox_message(dict(r)) for r in rows]
+        # Step 12: annotate ask-class letters with the structural verdict —
+        # inside the same connection scope, one batched query per rung.
+        await _mark_handled(conn, messages)
+    if unhandled_only:
+        # Sweep/climb view: open asks whose verdict is not True (False or
+        # unknown). Chatter and handled asks drain out.
+        messages = [
+            m for m in messages
+            if (m.intent or "").strip().lower() in ASK_INTENTS
+            and m.handled is not True
+            and m.status == INBOX_OPEN
+        ]
+    return messages
 
 
 # --- Presence / liveness roster (MSG-4) ----------------------------------

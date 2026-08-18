@@ -230,8 +230,13 @@ class MemoryClient:
         supersedes: str | None = None,
         listen_set: list[str] | None = None,
         from_lane: str | None = None,
+        in_reply_to: str | None = None,
     ) -> dict:
         payload: dict = {"to": to, "body": body, "subject": subject}
+        if in_reply_to:
+            # Step 12: the id this message ANSWERS — what makes "a reply to
+            # that ask" recoverable for the handled discriminator.
+            payload["in_reply_to"] = in_reply_to
         if from_lane:
             # LANE-5: the sender's immortal lane — recipients' replies route
             # here so they survive this session's death. Empty = legacy routing.

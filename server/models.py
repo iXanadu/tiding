@@ -627,6 +627,12 @@ class InboxSendRequest(BaseModel):
     # reaches the lane's next occupant. Optional: older bridges omit it and
     # replies to their mail keep the legacy seat routing.
     from_lane: str | None = Field(default=None, max_length=MAX_ADDR)
+    # Step 12: the id of the message this one ANSWERS. The reply path has
+    # always known its parent and discarded it — replies carried only the
+    # THREAD, so "a reply to that ask" was unrecoverable and handled-ness
+    # had to be guessed from thread neighborhood (the smear the design
+    # audit killed). Stamped by replying clients; optional and additive.
+    in_reply_to: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("to")
     @classmethod
@@ -702,6 +708,19 @@ class InboxMessage(BaseModel):
     # root — because the asking seat (and even its lane's provider) may be
     # gone by the time the answer comes. Absent on pre-field rows.
     from_project: str | None = None
+    # Step 12 — the handled-vs-read discriminator (STRUCTURAL, never
+    # read-state). Only ASK-class letters get a verdict:
+    #   handled=True  — resolved/superseded, or an answer-class reply TO
+    #                   THIS message (in_reply_to) from another speaker.
+    #   handled=False — an ask the store could check and found unanswered.
+    #   handled=None  — not an ask; meeting traffic (huddle/* threads,
+    #                   O6's domain); or a legacy mid-thread ask whose
+    #                   answers predate in_reply_to — UNKNOWN, never
+    #                   guessed.
+    # handled_via: "resolved" | "superseded" | "replied" | None.
+    in_reply_to: str | None = None
+    handled: bool | None = None
+    handled_via: str | None = None
     intent: str | None = None          # fyi | action | proceed | escalate | authority-directive
     subject: str
     body: str
@@ -748,6 +767,9 @@ class InboxListRequest(BaseModel):
     include_resolved: bool = False  # default view hides resolved/superseded
     limit: int = Field(default=20, ge=1, le=MAX_INBOX_LIMIT)
     newest_first: bool = False  # watcher sets True so new mail never truncates out
+    # Step 12: sweep/climb tooling — only open ASK-class letters whose
+    # handled verdict is not True (False or unknown). Additive; default off.
+    unhandled_only: bool = False
 
 
 class InboxListResponse(BaseModel):

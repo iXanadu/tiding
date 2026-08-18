@@ -1251,3 +1251,63 @@ async def test_memory_reply_same_project_keeps_lane_routing(respx_mock):
     assert sent["to"] == "engram-claude", (
         "same-project mail keeps LANE-5 routing"
     )
+
+
+# --- Step 12: replies stamp their parent; answers count by mechanics --------
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_reply_stamps_in_reply_to_and_defaults_answer_class(
+        respx_mock):
+    """A direct reply to an ask-class parent carries in_reply_to AND
+    defaults to intent=action — the ask reads HANDLED by structure, not by
+    the replier remembering to set a flag (Lock 1's mechanics)."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/S1", "to": "engram",
+             "from_": "projgamma-claude-4@macbook",
+             "from_lane": "projgamma-claude", "intent": "action",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-18T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/S1/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/S1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/S1", body="done",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["in_reply_to"] == "inbox/S1"
+    assert sent["intent"] == "action"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_channel_reply_keeps_quiet_fyi_despite_ask_parent(respx_mock):
+    """The quiet-channel default outranks the answer-class default: a busy
+    room must not wake every peer per reply. Explicit intent still wins."""
+    respx_mock.post("/memory/inbox").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "messages": [
+            {"id": "inbox/S2", "to": "#devagents",
+             "from_": "projgamma-claude-4@macbook", "intent": "action",
+             "subject": "o", "body": "b", "thread_id": None,
+             "read_by": [], "archived": False,
+             "created_at": "2026-08-18T00:00:00Z"}]})
+    )
+    send_route = respx_mock.post("/memory/send").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/r"})
+    )
+    respx_mock.post("/memory/inbox/inbox/S2/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/S2"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/ixanadu"}), \
+         patch("engram_mcp.identity.hostname", return_value="macmini"):
+        await memory_reply(message_id="inbox/S2", body="noted",
+                           project_dir="/Users/ixanadu/projects/engram")
+    sent = json.loads(send_route.calls.last.request.content)
+    assert sent["intent"] == "fyi"
+    assert sent["in_reply_to"] == "inbox/S2"

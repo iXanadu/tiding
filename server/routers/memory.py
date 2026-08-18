@@ -788,6 +788,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 from_project=(
                     request.headers.get("x-engram-project") or ""
                 ).strip().lower() or None,
+                in_reply_to=req.in_reply_to,
             )
             ids.append(msg_id)
         first_to, first_corrected = corrected[0]
@@ -884,6 +885,7 @@ async def list_inbox(req: InboxListRequest, request: Request):
             limit=req.limit,
             include_resolved=req.include_resolved,
             newest_first=req.newest_first,
+            unhandled_only=req.unhandled_only,
         )
         counts = await inbox_counts(
             listen_set=listen_set,
