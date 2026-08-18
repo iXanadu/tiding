@@ -106,3 +106,22 @@ async def test_known_root_person_exempt_and_channel_stay_silent(
             await conn.execute(
                 "DELETE FROM memories WHERE scope='inbox' AND user_id=$1", to)
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_bare_unknown_name_stays_silent_o1_seeding(client, db_pool):
+    """O1: mailing a channel that has never existed is legitimate by design
+    (seeding a project before any session runs). A bare name declares a
+    root; only a suffixed name asserts one — bare stays silent even when
+    unknown. (This is also the absent-is-not-dead boundary the liveness
+    warnings hold.)"""
+    r = await client.post("/memory/send", json={
+        "to": "totallynewproject", "body": "b", "subject": "s",
+        "from_": "someone"})
+    assert r.status_code == 200
+    warns = r.json().get("recipient_warnings") or []
+    assert not any("no registered project roots" in w for w in warns), warns
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id=$1",
+            "totallynewproject")

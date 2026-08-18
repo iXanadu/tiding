@@ -1619,6 +1619,13 @@ async def unknown_root_advisories(addrs: list[str]) -> list[str]:
     out = []
     for a in candidates:
         bare = a.split("@", 1)[0]
+        # A BARE name is a root declaration — O1 makes mailing a channel
+        # that has never existed legitimate by design (seeding a project
+        # before any session runs), so it must stay silent even when
+        # unknown. Only a SUFFIXED name ASSERTS an existing root, and an
+        # assertion nothing backs is what a typo looks like.
+        if "-" not in bare:
+            continue
         if bare in SEAT_EXEMPT_IDENTITIES or bare in persons:
             continue
         if a in known_addrs:
