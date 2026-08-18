@@ -206,6 +206,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   when the row's holder shows later life (the farewell rule, applied to
   certs), or certs must carry the nonce.
 
+- **PYVER-1** Fleet Python patch drift, measured 2026-08-18: within every
+  box the server venv and bridge venv MATCH (the owner's feared skew does
+  not exist), but BETWEEN boxes webone runs 3.12.0 — the original release,
+  a year of CPython bugfix/security patches behind macmini/dbone (3.12.12)
+  and haos-host (3.12.13). Same minor everywhere, so low risk; still, lift
+  webone to current 3.12.x and rebuild its two venvs (engram-3.12,
+  cc-memory-3.12) at a calm moment — announce, since its watcher/bridge
+  restart with it.
+
 - **DEPLOY-3** graceful-deploy's 30s drain window is sized under the
   inbox-wait long-poll timeout, so a routine bounce reads as "still alive —
   investigate" while the old process is just draining held long-polls
