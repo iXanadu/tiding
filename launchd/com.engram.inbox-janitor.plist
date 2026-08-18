@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Inbox janitor (build-plan Steps 13/14): hourly climb + sweep.
+         Idempotent by construction; auth read at runtime from the
+         operator's custody file (JANITOR-1 tracks the dedicated-principal
+         question). Install:
+           cp launchd/com.engram.inbox-janitor.plist ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.engram.inbox-janitor.plist -->
+    <key>Label</key>
+    <string>com.engram.inbox-janitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/srv/engram/scripts/inbox-janitor.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/engram-janitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/engram-janitor.log</string>
+</dict>
+</plist>
