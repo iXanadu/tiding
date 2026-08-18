@@ -244,3 +244,86 @@ async def test_project_filter_and_channel_exclusion(client, db_pool):
             "#addrregchannel",
         )
     await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_exempt_role_mail_reads_exempt_not_mail_parked(client, db_pool):
+    """'admin' is deliberately shared; allocation never runs its ladder on it.
+
+    Labeling its open mail "mail-parked" implied the mail was what blocked
+    allocation — on a name allocation does not apply to at all (the noise the
+    outcomes review named on admin/owner rows).
+    """
+    await _open_mail(db_pool, "admin")
+    await _open_mail(db_pool, "admin@webone")
+
+    r = await client.get("/session/addresses")
+    assert r.status_code == 200
+    reg = {e["address"]: e for e in r.json()["entries"]}
+    for addr in ("admin", "admin@webone"):
+        assert reg[addr]["allocation"] == {
+            "would_skip": True, "reason": "exempt-role",
+            "grace_expires_at": None,
+        }, addr
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = 'inbox' AND user_id LIKE 'admin%'",
+        )
+
+
+@pytest.mark.asyncio
+async def test_human_principal_address_reads_person_address(client, db_pool):
+    """A person's name is not in any seat-candidate space — say so.
+
+    The owner's address holding mail is normal correspondence, not a parked
+    allocation; 'mail-parked' on it sent readers hunting a defect that is
+    not there.
+    """
+    person = "regtesthuman"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO principals (name, type) VALUES ($1, 'human') "
+            "ON CONFLICT (name) DO UPDATE SET type = 'human', active = TRUE",
+            person,
+        )
+    await _open_mail(db_pool, person)
+
+    r = await client.get("/session/addresses")
+    reg = {e["address"]: e for e in r.json()["entries"]}
+    assert reg[person]["entry_type"] == "mail-only"
+    assert reg[person]["allocation"]["reason"] == "person-address"
+    assert reg[person]["allocation"]["would_skip"] is True
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = 'inbox' AND user_id = $1",
+            person,
+        )
+        await conn.execute("DELETE FROM principals WHERE name = $1", person)
+
+
+@pytest.mark.asyncio
+async def test_runtime_move_records_the_taken_name_as_preferred(
+        client, db_pool):
+    """A deliberate rename must not erase the row's grant-time ask.
+
+    Measured live 2026-08-18: agentbeast-app-grok's runtime-moved row served
+    preferred_seat null — UNRECORDED — while the abandoned ordinal row kept
+    the ask. The taken name IS the ask; the moved row records it.
+    """
+    await _clear(db_pool)
+    nonce = "move-nonce-1"
+    r = await _claim(client, "mover", session_nonce=nonce)
+    first = r.json()["seat"]
+
+    taken = f"{PROJ}-audit"
+    r = await _claim(client, "mover", session_nonce=nonce,
+                     runtime_seat=True, preferred_seat=taken)
+    assert r.json()["seat"] == taken
+    assert r.json()["renamed_from"] == first
+
+    reg = await _register(client)
+    assert reg[taken]["runtime"] is True
+    assert reg[taken]["preferred_seat"] == taken
+    await _clear(db_pool)

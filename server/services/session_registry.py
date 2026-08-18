@@ -569,8 +569,13 @@ async def seat_claim(
                                     f"different name, or keep this one."
                                 ),
                                 "renamed_from": None}
+                    # The taken name IS the ask — record it, or the move
+                    # erases the row's grant-time preference and the register
+                    # reads a deliberate rename as UNRECORDED (measured live
+                    # 2026-08-18: agentbeast-app-grok's moved row lost it).
                     new_meta = _meta(session_key, session_nonce, provider,
-                                     host, superseded, runtime=True)
+                                     host, superseded, runtime=True,
+                                     preferred=preferred)
                     moved = await _try_insert(conn, preferred, project, new_meta)
                     if not moved:
                         # The name exists. Ours already (a prior re-seat, a
@@ -1295,8 +1300,22 @@ async def address_register(project: str | None = None) -> list[dict]:
             """,
             SEAT_NAMESPACE, DEATH_SCOPE, project,
         )
+        # Person addresses (a human principal's name) are labeled as such
+        # instead of "mail-parked" — allocation never considers them.
+        human_rows = await conn.fetch(
+            "SELECT name FROM principals WHERE type = 'human' AND active",
+        )
 
     mail_by_addr = {r["user_id"]: int(r["n"]) for r in mail_rows}
+    person_names = {(r["name"] or "").strip().lower() for r in human_rows}
+
+    def _fixed_reason(addr: str) -> str | None:
+        bare = addr.split("@", 1)[0]
+        if bare in SEAT_EXEMPT_IDENTITIES:
+            return "exempt-role"
+        if bare in person_names:
+            return "person-address"
+        return None
 
     # Death certs indexed two ways. By session_key is authoritative (the cert
     # names the exact session). By seat name is the SEAT-6 fallback and only
@@ -1325,7 +1344,17 @@ async def address_register(project: str | None = None) -> list[dict]:
 
     def _allocation(age: float | None, mail_n: int,
                     presence_age: float | None,
-                    last_used_at, *, lane: bool = False) -> dict:
+                    last_used_at, *, lane: bool = False,
+                    fixed_reason: str | None = None) -> dict:
+        # Names allocation NEVER touches get their own label instead of
+        # "mail-parked" noise: an exempt role (admin — seat_claim returns
+        # before its ladder even runs) and a person's address (a human
+        # principal's name is not in any candidate space). Rendering those
+        # as mail-parked implied the mail was what blocked allocation, on
+        # rows where allocation does not apply at all.
+        if fixed_reason:
+            return {"would_skip": True, "reason": fixed_reason,
+                    "grace_expires_at": None}
         # Mirrors seat_claim's skip order exactly: lane -> live -> grace ->
         # mail -> fresh presence. A drift between this and the allocator would
         # make the register lie about the one thing it exists to explain.
@@ -1403,7 +1432,8 @@ async def address_register(project: str | None = None) -> list[dict]:
             "allocation": _allocation(age, mail_n, presence_age,
                                       r["last_used_at"],
                                       lane=is_reserved_lane(seat,
-                                                            r["project"])),
+                                                            r["project"]),
+                                      fixed_reason=_fixed_reason(seat)),
         })
 
     # Names with NO seat row that still hold open mail — R8 parks these
@@ -1436,6 +1466,7 @@ async def address_register(project: str | None = None) -> list[dict]:
             "death_certified": False,
             "death": death_by_seat.get(addr),
             "undrained_mail_count": n,
-            "allocation": _allocation(None, n, None, None),
+            "allocation": _allocation(None, n, None, None,
+                                      fixed_reason=_fixed_reason(addr)),
         })
     return out
