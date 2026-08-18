@@ -630,11 +630,28 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   narrows the inbox trust surface. Not urgent: exposure is bounded by what
   the shared tokens already grant.
 
-## Blocked-external
+## Adoption (owner direction 2026-08-18: make a stranger's install one button)
 
-- **DOCKER-1** Verify the full-stack compose path (build, health,
-  store/search roundtrip), then promote it from "experimental" in
-  README/deployment docs. Blocked: NO healthy Docker runtime exists on the
-  fleet (surveyed 2026-07-21 — Linux spokes have no Docker; macmini's
-  OrbStack hangs on daemon start). Needs a runtime repair or a fresh box
-  first; the stack definition itself is unproven, not suspect.
+- **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
+  (his node-aversion is the constraint and compose satisfies it: a handful
+  of digest-pinnable images + the already-pinned HF model revision beats
+  npm's transitive surface). Verify the full-stack compose path (build,
+  health, store/search roundtrip), then promote it from "experimental" in
+  README/deployment and lead Quick Start with it. Blocked on-fleet: no
+  healthy Docker runtime (2026-07-21 survey; OrbStack hangs). UNBLOCK PATH
+  named: a throwaway cloud VM verifies it in one session — the fleet
+  doesn't have to host the verification.
+- **ADOPT-1** Publish the MCP bridge to PyPI so `uvx engram-mcp` /
+  `pipx install engram-mcp` wires an agent to an existing server in one
+  command — Python's npx ergonomics, zero node. Pure-Python package, low
+  effort; the server half stays compose/native (Postgres is load-bearing).
+- **ADOPT-2** A two-terminal demo script (`scripts/demo-huddle.sh` or a
+  doc): two fake "agents" exchange mail and one wakes the other, reachable
+  inside 10 minutes of a fresh install — the aha moment, packaged. The
+  60-second-aha curls in README are the seed; build-a-huddle.md has the
+  rest.
+- ⓘ Naming note for promotion: "engram" is a crowded term in AI-memory
+  tooling — lean on distinctive vocabulary (wake-not-letter, seats,
+  huddles) in posts so search finds THIS engram.
+
+## Blocked-external
