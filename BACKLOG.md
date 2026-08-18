@@ -379,6 +379,17 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   timestamps in the owner's LOCAL time — the UTC-vs-9:30AM confusion that
   raised this was a rendering gap, not clock drift.
 
+- **COMPACT-AWARE-1** ★ Owner-pinned 2026-08-18, explicitly NOT the current
+  sprint. Grok sessions get no timeline warning about context compaction —
+  they don't know when it's approaching or that it just happened — so they
+  cannot proactively checkpoint state to engram before the context is
+  squeezed (measured live: a huddle participant lost a turn to compaction
+  mid-build and had to announce "compaction ate the last turn"). At 500K
+  contexts and this workload's volume, the miss is systematic. Two halves:
+  the harness signal (AB/provider lane — surface pre/post-compaction events
+  to the session) and the engram habit (checkpoint wip/current on the
+  warning — the mechanism exists, the trigger doesn't). Revisit when named.
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
