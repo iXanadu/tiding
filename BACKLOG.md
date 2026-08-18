@@ -388,7 +388,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   contexts and this workload's volume, the miss is systematic. Two halves:
   the harness signal (AB/provider lane — surface pre/post-compaction events
   to the session) and the engram habit (checkpoint wip/current on the
-  warning — the mechanism exists, the trigger doesn't). Revisit when named.
+  warning — the mechanism exists, the trigger doesn't). Owner's design
+  notes (2026-08-18): context usage is already tracked every turn, so the
+  pre-warning is just dialing in the "when"; and a compaction is detectable
+  AFTER the fact by current-measure < previous-measure — not ideal, but a
+  workable fallback signal to announce "you just compacted, reload/flush."
+  Revisit when named.
 
 ## Needs-decision
 
