@@ -6,31 +6,44 @@ durable plan of record.** Source of truth for WHAT: [comms-outcomes.md](comms-ou
 (six locked outcomes, ADDR-REVIEW-1). This document adds ORDER, ROLES, and
 GATES. Sequence, never schedule — no clock estimates, by standing rule.
 
-## Status — swept 2026-08-18 ~03:50Z (first execution night)
+## Status — swept 2026-08-18 ~15:35Z (second sweep, day two)
 
-**CLOSED, all audit-passed / deployed / live-verified:** Steps 1, 2, 3, 4,
-6, 7, 8, 9, 12, 13, 14, 15 — twelve of twenty in one owner-driven night,
-plus the REG-DEATH-1 prerequisite (with a ratified Lock-1 amendment:
-evidence-of-life-after-died_at voids a cert). Step 15's closer was the
-owner's genuine tap (03:45:13Z, human path verified by source), after two
-false starts the loop itself caught: an unpainted surface (the owner's
-screenshot was the audit) and a headed-owner-session line-crossing
-(disclosed, ruled, remediated; HEADED-OWNER-1 now a written rule in both
-ledgers, DEC-XSS-1 found and fixed before the owner ever touched the page).
+**CLOSED, all audit-passed / deployed / live-verified:** Steps 1–4, 6–9,
+**10a–10d (Band D complete — wake-not-letter live and sealed)**, 12–16,
+**17** (app split: cfg 3531cf0 + 16-row move under marker
+`split/step17-app` + seeded pointer; closed on a fresh probe session's own
+bridge — whoami, moved key, and seed all HIT), **18** (#channels rip:
+hub 49b3166 refuses '#' upstream, engram 8451a3c refuses at its door, 39
+legacy rows archived under `rip/step18-channels`, bridge ignores
+ENGRAM_CHANNELS; grok-5 independent close), **19** (dispositions below).
+Also closed en route: DEAD-1 + ARCH-1 (owner-verified on TF 192),
+CATCHUP-401 (participant bearers read transcripts; residual fenced to
+AUTH-SEAT-1), JANITOR-1, DEPLOY-4, REG-DEATH-1.
 
-**OPEN:** Step 5 (wrapup mail-drain — two-stage; closes when the PM
-session's own wrapup drains its estate) · Step 16 (status digest —
-dispatched to agentbeast-claude under the Band-E provision; shape to the
-auditor before build) · Steps 10–11 (Band D — reader-gated: one stale
-webone bridge + the owner's two Desktop bridge processes; re-census before
-any sub-step) · Steps 17–20 (Band F — the owner's split-timing and
-#channels decisions, plus AB/app surface work). DEC-NAV-1's Chat-inline
-half stays PARTIAL post-15. Ops: cron wiring for /admin/inbox/climb +
-/sweep (admin credential + cadence) is announced-before-wired.
+**Step 19 dispositions (each item from the outcomes rip list, resolved
+rather than blindly ripped):**
+- `groups=`/`inbox_identity` cfg — **rip WITHDRAWN**: the auditor's Step 17
+  shape ruling made both keys load-bearing in the app repo's `.engram.cfg`.
+- `-app` key-suffix convention — **dead as a convention**: the real project
+  partition replaces it; no new `-app`-suffixed keys. The moved
+  `startup/next-app` twins keep their historical names by twin ruling.
+- Elevation-ladder design — **no such doc exists in this repo** (verified);
+  the outcomes doc already records it superseded by climb-one-exception,
+  and the climb shipped (Step 13). Any AB-side copy is AB's to mark.
+- R8 park + grace machinery — **deliberately deferred, not ripped**: live
+  code with an open design question (GRANT-1(b)); needs its own arc.
 
-**Night's ledger adds:** REG-DEATH-1 (fixed), DEPLOY-3, HEADED-OWNER-1
-(engram side; AB holds the twin). Eight engram prod bounces + three hub
-bounces, every one announced in-thread first, zero incidents.
+**OPEN:** Step 5 (closes at the PM session's own wrapup mail-drain) ·
+Step 20 (lane-keyed DM view — AB/app lane, no owner input) · DEC-NAV-1
+Chat-inline (app polish). Possible callback: post-flip
+ENGRAM_INBOX_IDENTITY shadow check (app-grok pings engram if env shadows
+cfg identity lines).
+
+**Day's ledger adds:** AUTH-SEAT-1, PROV-CODEX-1, TIME-1 (owner-approved,
+medium, rides next bridge change). PASTE-1 parked AB-side by the owner.
+One incident all day (the ~2.5min send outage, disclosed, DEPLOY-4 now a
+pre-push hook). Lesson shipped shared:
+delivery-primitive-flip-deafens-uncycled-watchers.
 
 ## Ordering doctrine (the owner's criteria, verbatim intent)
 
