@@ -6,6 +6,32 @@ durable plan of record.** Source of truth for WHAT: [comms-outcomes.md](comms-ou
 (six locked outcomes, ADDR-REVIEW-1). This document adds ORDER, ROLES, and
 GATES. Sequence, never schedule — no clock estimates, by standing rule.
 
+## Status — swept 2026-08-18 ~03:50Z (first execution night)
+
+**CLOSED, all audit-passed / deployed / live-verified:** Steps 1, 2, 3, 4,
+6, 7, 8, 9, 12, 13, 14, 15 — twelve of twenty in one owner-driven night,
+plus the REG-DEATH-1 prerequisite (with a ratified Lock-1 amendment:
+evidence-of-life-after-died_at voids a cert). Step 15's closer was the
+owner's genuine tap (03:45:13Z, human path verified by source), after two
+false starts the loop itself caught: an unpainted surface (the owner's
+screenshot was the audit) and a headed-owner-session line-crossing
+(disclosed, ruled, remediated; HEADED-OWNER-1 now a written rule in both
+ledgers, DEC-XSS-1 found and fixed before the owner ever touched the page).
+
+**OPEN:** Step 5 (wrapup mail-drain — two-stage; closes when the PM
+session's own wrapup drains its estate) · Step 16 (status digest —
+dispatched to agentbeast-claude under the Band-E provision; shape to the
+auditor before build) · Steps 10–11 (Band D — reader-gated: one stale
+webone bridge + the owner's two Desktop bridge processes; re-census before
+any sub-step) · Steps 17–20 (Band F — the owner's split-timing and
+#channels decisions, plus AB/app surface work). DEC-NAV-1's Chat-inline
+half stays PARTIAL post-15. Ops: cron wiring for /admin/inbox/climb +
+/sweep (admin credential + cadence) is announced-before-wired.
+
+**Night's ledger adds:** REG-DEATH-1 (fixed), DEPLOY-3, HEADED-OWNER-1
+(engram side; AB holds the twin). Eight engram prod bounces + three hub
+bounces, every one announced in-thread first, zero incidents.
+
 ## Ordering doctrine (the owner's criteria, verbatim intent)
 
 1. **Error-free first.** Nothing may break the running fleet. Concretely:
