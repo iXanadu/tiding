@@ -341,6 +341,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   returns a 403 naming it — verified 2026-08-02, after I wrongly recorded the
   opposite (see below).
 
+- **HEADED-OWNER-1** An agent with headed access to a logged-in owner
+  browser holds every owner-only capability on every surface — the
+  owner-credential problem through the browser door (cookie, not token).
+  Exercised once 2026-08-18 during a surface test: disclosed immediately,
+  disposable object, ruled a line-crossing by PM + room. Needs a WRITTEN
+  rule before any repeat; recommendation on record: never, absent the
+  owner's explicit per-instance word. Pairs with the CLI-suggested-prompt
+  hazard (surfaces that can compose or exercise owner authority deserve
+  suspicion).
+
 ## Needs-decision
 
 - **SEAT-13** Decide whether an observed farewell should shorten a seat's
