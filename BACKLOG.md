@@ -464,24 +464,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the fleet's shared brain.
 
 
-- **ADDR-REVIEW-1** Formal addressing-architecture review (owner asked
-  "does flat addressing complicate the infrastructure and should it be
-  reviewed" 2026-08-17; answer: yes and yes). One document, ruled on
-  section by section: address KINDS/directory beside the flat space
-  (ADDR-2/ADDR-3 direction — name the kinds, never police forms),
-  address lifecycle (the GRANT-1 parking family), the host axis
-  (PRES-2 shipped the data; the conventions remain), group semantics
-  (MAIL-GROUP-1 made law; formalize), and the owner's open rescind
-  question: should bare `admin` be a fleet-wide address at all, and do
-  admin sessions eventually take host-aware seats (impact analysis
-  delivered 2026-08-17, decision deferred pending a week of PRES-2-era
-  observation). Plus: bridge CLIENT MODE — the MCP bridge is session-shaped
-  (folder-derived identity, auto-heartbeat), and non-terminal consumers
-  (measured: the owner's Claude Desktop, which wore `admin` for weeks
-  because a cfg-less cwd means "maintenance shell" to the fallback) need a
-  mode with no folder fallback, env-or-nothing identity, presence opt-in.
-  Quarantine rules apply: this consolidates the ADDR pile rather than
-  reopening items piecemeal.
+- **ADDR-REVIEW-1** ★ REVIEW DELIVERED 2026-08-17 — the owner ran the
+  session himself; six outcomes locked. Design of record:
+  `docs/design/comms-outcomes.md` (channels=projects · projects-are-peers ·
+  zero-AB messaging · address tree with reusable names + session-key
+  identity · depth-is-ephemeral with climb-for-unhandled-asks ·
+  conversations-are-not-letters). Retroactive cleanup executed (18,097
+  rows archived, reversible). What remains here: execute the build orders
+  in that doc (engram §1-9, AB §1-7), confirm the `#channels` rip, and the
+  agentbeast-app split timing — each starts when the owner names it.
+  Still folded in, unruled: bridge CLIENT MODE for non-terminal consumers
+  (the Claude-Desktop-wore-admin incident) and the bare-`admin` rescind
+  question (deferred pending PRES-2-era observation).
 
 - **MEM-3** *(supersede verb SHIPPED + fleet-deployed 2026-08-10, `ec6518a`,
   built the day it bit — a departed agent's stale project notes were
