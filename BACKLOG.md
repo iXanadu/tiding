@@ -539,6 +539,20 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
+- **LIBRARIAN-SHIFT-1** ★ Owner direction 2026-08-18: the librarian role
+  (judgment curation — GrokBot contributions via the mail protocol, MEM-7
+  passes, estate decisions) runs as a DAILY SHIFT, not an always-on brain.
+  AB schedules a fresh engram-project Claude session every 24h (stable seat
+  key — AB's claude spawn path already injects one); each shift runs the
+  existing startup (memory-first orientation + inbox drain as librarian
+  work) → curation pass → wrapup handoff. Rationale: durable mail makes
+  24h judgment latency free; fresh spawns beat compaction-degraded sitting
+  sessions; subscription-billed, zero metered tokens, near-zero new build
+  (one AB schedule entry). CLERK-1 below is the COMPLEMENT held in
+  reserve: always-on API-billed thin triage (ack/classify/flag-urgent),
+  deploy only if daily cadence measurably proves too slow. AB half: the
+  schedule entry. Engram half: none — machinery exists.
+
 - **CLERK-1** Deploy the clerk (code SHIPPED c8f5d73 at `integrations/clerk/`
   — reference always-on API-billed mail handler; 11 gate tests green).
   Remaining is all owner-decision, in order: (a) mint the `clerk` principal
