@@ -174,6 +174,26 @@ def _dying_gasp(reason: str) -> None:
     )
 
 
+def _emit_wake(w: dict) -> None:
+    """One JSON line per wake — an utterance's ping, never a letter (O6).
+    `ref` is where the record lives; nothing landed in the inbox."""
+    print(
+        json.dumps(
+            {
+                "event": "wake",
+                "id": w.get("id"),
+                "ref": w.get("ref"),
+                "from": w.get("from_") or w.get("from"),
+                "from_principal": w.get("from_principal"),
+                "note": w.get("note", ""),
+                "at": w.get("at"),
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
 def _emit(msg: dict) -> None:
     """Print one compact JSON line per new message (Monitor → one wake each)."""
     print(
@@ -648,8 +668,25 @@ async def _run(args) -> int:
 
             for m in fresh:
                 _emit(m)
-            if fresh and not args.follow:
-                return 0  # one-shot: exit on first new mail (Bash-bg = one wake)
+            # Band D 10a: ephemeral wakes ride the same poll timer. Own try —
+            # a pre-10a server has no endpoint (404) and that must cost this
+            # watcher nothing. The server never pops (shared listen_sets have
+            # several live waiters); `seen` dedupes by wake id like mail.
+            wakes = []
+            try:
+                wresp = await client.wake_poll(
+                    listen_set=listen_set, reader_identity=reader_identity)
+                for w in (wresp.get("wakes") or []):
+                    wid = w.get("id")
+                    if not wid or wid in seen:
+                        continue
+                    seen.add(wid)
+                    _emit_wake(w)
+                    wakes.append(w)
+            except Exception:
+                pass  # wake support is additive; mail coverage is unaffected
+            if (fresh or wakes) and not args.follow:
+                return 0  # one-shot: exit on first new mail OR wake
             if deadline is not None and time.monotonic() >= deadline:
                 # WATCH-2: an expired deadline ends coverage while the session
                 # lives — that must never be silent (it was: bare `return 0`).

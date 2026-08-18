@@ -848,6 +848,37 @@ class InboxWaitResponse(BaseModel):
     messages: list["InboxMessage"]
     waited_seconds: float
     guidance: str | None = None
+    # Band D 10a: ephemeral wakes for the listen_set — an utterance's ping,
+    # never a letter (O6). Additive; pre-10a clients ignore it.
+    wakes: list["WakeEvent"] = []
+
+
+class WakeEvent(BaseModel):
+    id: str
+    to: str
+    ref: str | None = None      # what to look at, e.g. "huddle/<id>"
+    from_: str | None = None            # self-asserted label
+    from_principal: str | None = None   # server-stamped from the token
+    note: str = ""
+    at: str | None = None
+
+
+class WakeRequest(BaseModel):
+    """Band D 10a: wake the listeners under these addresses — no letter.
+
+    The row this creates is TTL-ephemeral, never served by the inbox,
+    never parks a name, never counted by digest/climb/sweep. The room
+    transcript (or whatever `ref` points at) is the record; this is only
+    the tap on the shoulder."""
+    to: str | list[str]
+    ref: str = Field(max_length=MAX_ADDR)
+    note: str = Field(default="", max_length=280)
+    from_: str | None = Field(default=None, max_length=MAX_ADDR)
+
+
+class WakeResponse(BaseModel):
+    status: str
+    ids: list[str] = []
 
 
 # --- Presence / liveness roster (MSG-4) ---------------------------------

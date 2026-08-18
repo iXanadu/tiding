@@ -211,6 +211,22 @@ class MemoryClient:
         Shape: ``{"status": "ok", "read": [...], "write": [...]}``."""
         return await self._request("GET", "/namespaces")
 
+    async def wake_poll(
+        self,
+        listen_set: list[str],
+        reader_identity: str | None = None,
+        since: str | None = None,
+    ) -> dict:
+        """Band D 10a: one non-blocking fetch of unexpired wake rows for the
+        listen_set. The server never pops — every live watcher on a shared
+        address sees the wake and dedupes by id, exactly like mail `seen`."""
+        payload: dict = {"listen_set": listen_set, "timeout_seconds": 0}
+        if reader_identity:
+            payload["reader_identity"] = reader_identity
+        if since:
+            payload["since"] = since
+        return await self._request("POST", "/memory/wake/poll", json=payload)
+
     async def session_addresses(self, project: str | None = None) -> dict:
         """ADDR-REG: every name the store holds (optionally one project's
         subtree), each with its mail count, liveness facts, and why the

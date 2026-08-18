@@ -2598,3 +2598,100 @@ async def inbox_counts(
         "superseded": row["superseded"],
         "stale": row["stale"],
     }
+
+
+# --- Band D 10a: the wake primitive (O6 — a wake is not a letter) ---------
+#
+# Ephemeral wake rows: scope='wake', TTL'd via expires_at so the existing
+# cleanup deletes them. NEVER served by memory_inbox (different scope),
+# never park a name (R8 keys on inbox scope), never counted by digests,
+# climb, or sweep. The room transcript remains the only record of what was
+# said; this row only says "wake up and look".
+
+WAKE_SCOPE = "wake"
+WAKE_TTL_SECONDS = 300  # survives a watcher poll gap; dies before it means anything
+
+
+async def wake_send(
+    to: str | list[str],
+    ref: str,
+    note: str = "",
+    from_: str | None = None,
+    from_principal: str | None = None,
+) -> list[str]:
+    """Record ephemeral wake rows for each target address. Returns ids."""
+    targets = [t.strip().lower() for t in
+               (to if isinstance(to, list) else [to]) if t and t.strip()]
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=WAKE_TTL_SECONDS)
+    ids: list[str] = []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for t in targets:
+            wid = f"wake/{uuid.uuid4()}"
+            await conn.execute(
+                """
+                INSERT INTO memories
+                    (namespace, key, value, scope, user_id, tags, tags_search,
+                     embedding, search_text, expires_at, metadata)
+                VALUES ($1, $2, $3, $4, $5, '', '', NULL, '', $6, $7::jsonb)
+                """,
+                INBOX_NAMESPACE, wid, note[:280], WAKE_SCOPE, t, expires,
+                json.dumps({"kind": "wake", "ref": (ref or "")[:256],
+                            "from": from_,
+                            # Server-derived, unspoofable (amendment 4):
+                            # the authenticated principal; `from` stays the
+                            # self-asserted label, same split as mail.
+                            "from_principal": from_principal,
+                            "created_at": now.isoformat()}),
+            )
+            ids.append(wid)
+    return ids
+
+
+async def wake_list_fresh(
+    listen_set: list[str],
+    since: "datetime | None" = None,
+    reader_identity: str | None = None,
+) -> list[dict]:
+    """Unexpired wake rows for the listen_set, newest first.
+
+    Self-echo excluded the same way mail wakes are: your own wake must not
+    wake you. `since` is the caller's cursor (arm time / last event)."""
+    listen = [a.lower() for a in listen_set if a]
+    if not listen:
+        return []
+    own = {(reader_identity or "").strip().lower()}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, value, user_id, metadata, created_at FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND user_id = ANY($3::text[])
+              AND expires_at > NOW()  -- amendment 3: served only inside TTL;
+                  -- physical DELETE is the hourly cleanup's business
+            ORDER BY created_at DESC LIMIT 50
+            """,
+            INBOX_NAMESPACE, WAKE_SCOPE, listen,
+        )
+    out = []
+    for r in rows:
+        md = r["metadata"]
+        if isinstance(md, str):
+            md = json.loads(md)
+        md = md or {}
+        if since and r["created_at"] and r["created_at"] <= since:
+            continue
+        if (md.get("from") or "").strip().lower() in own:
+            continue
+        out.append({
+            "id": r["key"],
+            "to": r["user_id"],
+            "ref": md.get("ref"),
+            "from_": md.get("from"),
+            "from_principal": md.get("from_principal"),
+            "note": r["value"],
+            "at": r["created_at"].isoformat() if r["created_at"] else None,
+        })
+    return out

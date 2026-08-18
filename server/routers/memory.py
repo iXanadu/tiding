@@ -29,6 +29,9 @@ from server.models import (
     InboxSendResponse,
     InboxWaitRequest,
     InboxWaitResponse,
+    WakeEvent,
+    WakeRequest,
+    WakeResponse,
     MemoryFlagDeletionRequest,
     MemoryFlagDeletionResponse,
     MemoryForgetRequest,
@@ -59,6 +62,9 @@ from server.services.inbox_guidance import (
     send_guidance,
 )
 from server.services.memory_service import (
+    WAKE_SCOPE,
+    wake_list_fresh,
+    wake_send,
     INBOX_NAMESPACE,
     INBOX_SCOPE,
     PRESENCE_SCOPE,
@@ -96,7 +102,22 @@ logger = logging.getLogger(__name__)
 # set/forget path must NOT reach them — otherwise a writer could overwrite a
 # message body (wiping read_by / from_principal), delete mail outside its
 # lifecycle, or hand itself an address the registry believes someone else holds.
-_RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE, SEAT_SCOPE}
+# WAKE_SCOPE included (Band D 10a, amendment 5): wake rows are ephemeral
+# WIRE, not memory — excluded from the generic paths by PREDICATE. Read
+# paths reject the scope below; climb/sweep/stale-sweep already select
+# scope='inbox' explicitly and structurally cannot touch it.
+_RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE, SEAT_SCOPE, WAKE_SCOPE}
+_READ_REJECTED_SCOPES = {WAKE_SCOPE}
+
+
+def _reject_wake_read(scope: str | None) -> None:
+    if scope in _READ_REJECTED_SCOPES:
+        raise HTTPException(
+            status_code=400,
+            detail="scope 'wake' is ephemeral wire (O6): never searchable, "
+                   "never listable — observed only via the watcher poll and "
+                   "/memory/inbox/wait.",
+        )
 
 
 def _reject_reserved_scope(scope: str | None) -> None:
@@ -294,6 +315,7 @@ async def set_memory(req: MemorySetRequest, request: Request):
 
 @router.post("/get", response_model=MemoryGetResponse)
 async def get_memory(req: MemoryGetRequest, request: Request):
+    _reject_wake_read(req.scope)
     logger.debug(f"GET ns={req.namespace} key={req.key} scope={req.scope} user_id={req.user_id}")
     check_namespace_access(get_current_principal(request), req.namespace, "read")
     try:
@@ -369,6 +391,7 @@ def _snippet(item, max_lines: int):
 
 @router.post("/search", response_model=MemorySearchResponse)
 async def search_memory(req: MemorySearchRequest, request: Request):
+    _reject_wake_read(req.scope)
     principal = get_current_principal(request)
     explicit = req.explicit_namespaces()
     if explicit is None:
@@ -411,6 +434,7 @@ async def search_memory(req: MemorySearchRequest, request: Request):
 
 @router.post("/keys", response_model=MemoryKeysResponse)
 async def list_keys(req: MemoryKeysRequest, request: Request):
+    _reject_wake_read(req.scope)
     """Deterministic key enumeration under a prefix (MEM-2).
 
     The verb between /memory/get (exact) and /memory/search (semantic):
@@ -1056,6 +1080,47 @@ async def resolve_inbox_thread(req: InboxResolveThreadRequest, request: Request)
 
 # --- Inbox long-poll wait: the any-harness wake primitive -----------------
 
+@router.post("/wake", response_model=WakeResponse)
+async def send_wake(req: WakeRequest, request: Request):
+    """Band D 10a: wake listeners without writing a letter (O6).
+
+    Creates TTL-ephemeral rows the watchers and /inbox/wait surface as wake
+    events. Same membership gate as every protocol verb. The relay's half
+    (posting to the room instead of fanning letters) is 10c and separately
+    gated — until then both paths run side by side, which IS the 10b soak."""
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    try:
+        principal = get_current_principal(request)
+        ids = await wake_send(to=req.to, ref=req.ref, note=req.note,
+                              from_=req.from_,
+                              from_principal=(principal or {}).get("name"))
+        return WakeResponse(status="ok", ids=ids)
+    except Exception:
+        logger.exception("wake_send failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/wake/poll", response_model=InboxWaitResponse)
+async def poll_wakes(req: InboxWaitRequest, request: Request):
+    """One non-blocking wake fetch for polling watchers (the reference
+    watcher polls on its own timer rather than long-polling). Returns only
+    wakes; messages stays empty — mail keeps its existing poll path."""
+    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    try:
+        listen_set = validate_listen_set(req.listen_set)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    try:
+        wakes = await wake_list_fresh(
+            listen_set=listen_set, since=req.since,
+            reader_identity=req.reader_identity)
+        return InboxWaitResponse(status="ok", messages=[], waited_seconds=0.0,
+                                 wakes=[WakeEvent(**w) for w in wakes])
+    except Exception:
+        logger.exception("wake poll failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
 @router.post("/inbox/wait", response_model=InboxWaitResponse)
 async def wait_inbox(req: InboxWaitRequest, request: Request):
     """Block until new mail arrives for the listen_set, or timeout.
@@ -1092,14 +1157,24 @@ async def wait_inbox(req: InboxWaitRequest, request: Request):
                 and (req.include_fyi or (m.intent or "") != "fyi")
             ]
             waited = (datetime.now(timezone.utc) - started).total_seconds()
-            if fresh:
+            # Band D 10a: ephemeral wakes ride the same long-poll — a wake
+            # is a wake for the HTTP-loop harnesses too. Additive field;
+            # pre-10a clients never look at it.
+            wakes = await wake_list_fresh(
+                listen_set=listen_set, since=since,
+                reader_identity=req.reader_identity)
+            if fresh or wakes:
                 fresh.sort(key=lambda m: m.created_at)  # oldest-first reading order
                 return InboxWaitResponse(
                     status="ok", messages=fresh, waited_seconds=round(waited, 1),
+                    wakes=[WakeEvent(**w) for w in wakes],
                     guidance=(
                         "New mail. Ack/reply/resolve what you handle, then wait "
                         "again passing since=<newest created_at you received> as "
                         "your cursor."
+                        if fresh else
+                        "Wake (not a letter): read what `ref` points at — the "
+                        "record lives there, nothing landed in your inbox."
                     ),
                 )
             if waited >= req.timeout_seconds:
