@@ -1,4 +1,40 @@
+import logging
+import os
+
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger("engram.config")
+
+# NAME-1 P2 compat: the project is renamed Tiding. TIDING_* env vars are the
+# new spelling and WIN over ENGRAM_* when both are set; ENGRAM_* keeps working
+# as the fallback. Legacy-only usage is logged ONCE at startup (one summary
+# line, NAMESPACE-ALIAS-HIT pattern) so shim retirement (P4) is evidence-gated
+# on quiet logs, never guessed. `.env` files keep ENGRAM_-prefixed keys until
+# retirement — this shim covers process env only, deliberately.
+_NEW_PREFIX = "TIDING_"
+_OLD_PREFIX = "ENGRAM_"
+
+
+def _apply_env_prefix_compat() -> None:
+    new_named = set()
+    for key in list(os.environ):
+        if key.startswith(_NEW_PREFIX):
+            suffix = key[len(_NEW_PREFIX) :]
+            new_named.add(suffix)
+            os.environ[_OLD_PREFIX + suffix] = os.environ[key]
+    legacy_only = sorted(
+        k for k in os.environ
+        if k.startswith(_OLD_PREFIX) and k[len(_OLD_PREFIX) :] not in new_named
+    )
+    if legacy_only:
+        logger.info(
+            "TIDING-PREFIX-COMPAT: legacy %s* env in use (rename to %s* when "
+            "convenient; the fallback is slated for evidence-gated retirement): %s",
+            _OLD_PREFIX, _NEW_PREFIX, ", ".join(legacy_only),
+        )
+
+
+_apply_env_prefix_compat()
 
 
 class Settings(BaseSettings):

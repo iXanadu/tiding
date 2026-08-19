@@ -2,9 +2,35 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# NAME-1 P2 compat: the project is renamed Tiding. TIDING_* env vars are the
+# new spelling and WIN over ENGRAM_* when both are set; ENGRAM_* keeps working.
+# Applies to the whole launch-env family (TIDING_IDENTITY, TIDING_INBOX_IDENTITY,
+# TIDING_SESSION_KEY, TIDING_PROVIDER, TIDING_CHANNELS, ...) because every
+# reader downstream keys on the ENGRAM_ name. Must run at import, before
+# anything reads the env.
+_NEW_ENV_PREFIX = "TIDING_"
+_OLD_ENV_PREFIX = "ENGRAM_"
+
+
+def _apply_env_prefix_compat() -> None:
+    for key in list(os.environ):
+        if key.startswith(_NEW_ENV_PREFIX):
+            os.environ[_OLD_ENV_PREFIX + key[len(_NEW_ENV_PREFIX) :]] = os.environ[key]
+
+
+_apply_env_prefix_compat()
+
 ENGRAM_CONFIG_DIR = os.path.expanduser("~/.config/engram")
 IDENTITY_FILE = os.path.join(ENGRAM_CONFIG_DIR, "identity")  # legacy single-identity fallback
 IDENTITIES_DIR = os.path.join(ENGRAM_CONFIG_DIR, "identities")
+
+# New-name config home, preferred per-file when the file actually exists there.
+# Per-FILE (not per-dir) so a half-migrated box — ~/.config/tiding created but
+# the identity file still in ~/.config/engram — keeps authenticating instead of
+# silently losing its token (the BRIDGE-2 failure class).
+TIDING_CONFIG_DIR = os.path.expanduser("~/.config/tiding")
+TIDING_IDENTITY_FILE = os.path.join(TIDING_CONFIG_DIR, "identity")
+TIDING_IDENTITIES_DIR = os.path.join(TIDING_CONFIG_DIR, "identities")
 
 
 class IdentitySelectorError(RuntimeError):
@@ -29,15 +55,20 @@ def _resolve_identity_file() -> tuple[str | None, str]:
     """
     selector = os.environ.get("ENGRAM_IDENTITY", "").strip()
     if selector:
+        # tiding path preferred when it exists; engram path is the fallback
+        for base in (TIDING_IDENTITIES_DIR, IDENTITIES_DIR):
+            path = os.path.join(base, selector)
+            if os.path.isfile(path):
+                return path, f"identity '{selector}' ({path})"
         path = os.path.join(IDENTITIES_DIR, selector)
-        if not os.path.isfile(path):
-            raise IdentitySelectorError(
-                f"ENGRAM_IDENTITY={selector!r} but {path} does not exist. "
-                f"Create it (memory_api_token=... , chmod 600) or fix the selector."
-            )
-        return path, f"identity '{selector}' ({path})"
-    if os.path.isfile(IDENTITY_FILE):
-        return IDENTITY_FILE, f"legacy identity file ({IDENTITY_FILE})"
+        raise IdentitySelectorError(
+            f"ENGRAM_IDENTITY={selector!r} but {path} does not exist "
+            f"(nor {os.path.join(TIDING_IDENTITIES_DIR, selector)}). "
+            f"Create it (memory_api_token=... , chmod 600) or fix the selector."
+        )
+    for candidate in (TIDING_IDENTITY_FILE, IDENTITY_FILE):
+        if os.path.isfile(candidate):
+            return candidate, f"legacy identity file ({candidate})"
     return None, "process env / defaults (no identity file)"
 
 

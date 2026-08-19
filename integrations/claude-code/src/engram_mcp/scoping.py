@@ -3,6 +3,11 @@ import re
 import socket
 
 PROJECT_CFG_FILENAME = ".engram.cfg"
+# NAME-1 P2: read the new spelling too, preferred. WRITES stay .engram.cfg
+# until the fleet's deployed bridges can all read .tiding.cfg — a fresh
+# .tiding.cfg written today would be invisible to every pre-P2 bridge
+# (WIRE-1 class: a contract has as many consumers as deployed readers).
+PROJECT_CFG_READ_FILENAMES = (".tiding.cfg", PROJECT_CFG_FILENAME)
 _VALID_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Values that are syntactically valid but are NOT a real project identity — a
@@ -141,9 +146,10 @@ def _find_cfg_path(project_dir: str | None) -> str | None:
         # (prevents children and home-adjacent dirs like ~/Downloads from
         # silently inheriting admin identity via walk-up).
         if current != home or started_at_home:
-            candidate = os.path.join(current, PROJECT_CFG_FILENAME)
-            if os.path.isfile(candidate):
-                return candidate
+            for filename in PROJECT_CFG_READ_FILENAMES:
+                candidate = os.path.join(current, filename)
+                if os.path.isfile(candidate):
+                    return candidate
         # Boundary stops
         if under_projects and current == projects_root:
             return None

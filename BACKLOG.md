@@ -694,6 +694,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   keep future relicensing possible). Remaining in P1: tiding.sh site
   (needs DNS/hosting decisions; design system: Broadsheet), GitHub org
   (`tidinglabs` — owner's click, github.com/tiding is a 2015 user).
+  **P2 compat layer SHIPPED in dev 2026-08-19** (tests green both trees):
+  TIDING_* env accepted, wins over ENGRAM_* (server logs legacy-only vars
+  once at startup for evidence-gated retirement); `.tiding.cfg` read
+  first in the walk-up while writes stay `.engram.cfg` (deployed pre-P2
+  bridges can't read the new name — WIRE-1); `~/.config/tiding/`
+  identity paths preferred PER-FILE with engram fallback (half-migrated
+  box keeps its token — BRIDGE-2 class). MCP server names untouched.
+  Deploys ride normal cadence; P3 fleet day is safe only after every
+  box's bridge carries this.
   Phased plan, outside-in behind logged compat shims
   (full sequence in project memory `decision/name-1-tiding-rename-plan`):
   P0 registry claims → P1 public face (GitHub repo rename auto-redirects;
