@@ -676,9 +676,17 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   **Tiding** — "engram" is saturated (8+ same-niche projects incl. a funded
   LLC at engrammemory.ai; PyPI engram-mcp squatted by a competitor).
   Holdings secured: tiding.sh (front door) + tidinglabs.com (insurance),
-  both in the owner's registrar. PyPI `tiding` + npm `tiding` verified free
-  at decision time — claim placeholders in Phase 0 THIS WEEK before any
-  public mention. Phased plan, outside-in behind logged compat shims
+  both in the owner's registrar. **P0 registry claims DONE 2026-08-19**:
+  npm `tiding`, PyPI `tiding-mcp` + `tiding-server` — all 0.0.1 stubs,
+  no product linkage. ⚠️ Bare PyPI `tiding` is UNREGISTRABLE (refused at
+  upload: similarity rule vs existing `ti-ding`, Dec-2024, innocent) — the
+  decision-time "verified free" was an exact-match sweep that cannot see
+  that rule; record corrected, method lesson in shared memory
+  (`lesson/registry-name-availability-must-be-tested-by-claiming`).
+  Install artifact was always `tiding-mcp`, so no plan change; a
+  pypi/support request for the bare name is optional and unhurried.
+  GitHub org (`tidinglabs` — github.com/tiding is a 2015 user) still
+  optional. Phased plan, outside-in behind logged compat shims
   (full sequence in project memory `decision/name-1-tiding-rename-plan`):
   P0 registry claims → P1 public face (GitHub repo rename auto-redirects;
   README/docs "Tiding, formerly engram"; tiding.sh site) → P2 compat layer
