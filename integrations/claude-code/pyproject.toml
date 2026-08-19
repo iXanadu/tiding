@@ -3,7 +3,7 @@ name = "engram-mcp"
 version = "0.2.0"
 description = "MCP server providing persistent semantic memory for Claude Code via engram"
 requires-python = ">=3.12"
-license = "MIT"
+license = "Apache-2.0"
 dependencies = [
     "mcp[cli]>=1.0.0",
     "httpx>=0.27.0",

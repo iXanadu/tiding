@@ -688,9 +688,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   **P1 public face IN PROGRESS 2026-08-19** (owner handed the wheel):
   GitHub repo RENAMED → `iXanadu/tiding` (old URLs redirect, verified;
   fleet remotes untouched until P3), README rebranded with rollout
-  notice, clone URLs updated. Remaining in P1: tiding.sh site (needs
-  DNS/hosting decisions), license ruling (currently MIT — Apache-2 vs
-  BSL is the owner's call, MIT stands until ruled), GitHub org
+  notice, clone URLs updated. License RULED + shipped 2026-08-19:
+  Apache-2.0 (owner; adoption-first, patent grant + trademark clause;
+  sole-copyright relicense from MIT — outside PRs need DCO sign-off to
+  keep future relicensing possible). Remaining in P1: tiding.sh site
+  (needs DNS/hosting decisions; design system: Broadsheet), GitHub org
   (`tidinglabs` — owner's click, github.com/tiding is a 2015 user).
   Phased plan, outside-in behind logged compat shims
   (full sequence in project memory `decision/name-1-tiding-rename-plan`):

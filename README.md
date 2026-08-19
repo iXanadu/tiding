@@ -751,4 +751,7 @@ engram/
 
 ## License
 
-MIT
+Apache-2.0 (relicensed from MIT at the Tiding rebrand, August 2026 —
+Homedog.com Inc. was the sole copyright holder). Outside contributions
+require a DCO sign-off (`git commit -s`) so the copyright record stays
+clean.
