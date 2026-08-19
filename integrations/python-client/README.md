@@ -1,6 +1,6 @@
 # engram-client
 
-Python SDK for the [engram](https://github.com/iXanadu/engram) semantic memory API. Designed for Django/FastAPI web apps that need persistent AI memory with project and namespace isolation.
+Python SDK for the [engram](https://github.com/iXanadu/tiding) semantic memory API. Designed for Django/FastAPI web apps that need persistent AI memory with project and namespace isolation.
 
 ## Install
 
@@ -11,7 +11,7 @@ pip install -e /path/to/engram/integrations/python-client
 Or from git:
 
 ```bash
-pip install "engram-client @ git+https://github.com/iXanadu/engram.git#subdirectory=integrations/python-client"
+pip install "engram-client @ git+https://github.com/iXanadu/tiding.git#subdirectory=integrations/python-client"
 ```
 
 Only dependency is `httpx`.

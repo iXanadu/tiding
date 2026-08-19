@@ -1,8 +1,13 @@
-# Engram
+# Tiding
 
 **Durable, shared, semantic memory for your AI agents — plus a message bus so they work as a team.**
 
-Engram gives every agent you run — Claude Code, Grok, Codex, a Home Assistant
+> **Tiding is the new name for engram** (renamed August 2026). The rename is
+> rolling out outside-in: GitHub URLs redirect, and configuration prefixes
+> (`ENGRAM_*`), package names, and install paths keep their current names
+> until the compatibility layer ships. Everything below works as written.
+
+Tiding (formerly engram) gives every agent you run — Claude Code, Grok, Codex, a Home Assistant
 voice pipeline, anything that speaks HTTP — one persistent memory it can search
 in plain language, across sessions, projects, machines, and providers. Your
 agents stop forgetting: decisions, project state, hard-won lessons, and
@@ -156,7 +161,7 @@ Set `ENGRAM_WARN_UNAUTHED=true` to log warnings for unauthenticated requests wit
 ### Fastest: three commands, no Docker
 
 ```bash
-git clone https://github.com/iXanadu/engram.git && cd engram
+git clone https://github.com/iXanadu/tiding.git && cd tiding
 ./scripts/bootstrap-db.sh    # installs PostgreSQL 17 + pgvector (brew), creates the DB
 ./scripts/install.sh         # python env, deps, .env, boot service
 curl http://localhost:8920/health
@@ -185,7 +190,7 @@ is the well-trodden combination.
 
 ```bash
 # Clone and enter
-git clone https://github.com/iXanadu/engram.git
+git clone https://github.com/iXanadu/tiding.git
 cd engram
 
 # Python environment

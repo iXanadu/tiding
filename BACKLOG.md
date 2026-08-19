@@ -685,8 +685,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (`lesson/registry-name-availability-must-be-tested-by-claiming`).
   Install artifact was always `tiding-mcp`, so no plan change; a
   pypi/support request for the bare name is optional and unhurried.
-  GitHub org (`tidinglabs` — github.com/tiding is a 2015 user) still
-  optional. Phased plan, outside-in behind logged compat shims
+  **P1 public face IN PROGRESS 2026-08-19** (owner handed the wheel):
+  GitHub repo RENAMED → `iXanadu/tiding` (old URLs redirect, verified;
+  fleet remotes untouched until P3), README rebranded with rollout
+  notice, clone URLs updated. Remaining in P1: tiding.sh site (needs
+  DNS/hosting decisions), license ruling (currently MIT — Apache-2 vs
+  BSL is the owner's call, MIT stands until ruled), GitHub org
+  (`tidinglabs` — owner's click, github.com/tiding is a 2015 user).
+  Phased plan, outside-in behind logged compat shims
   (full sequence in project memory `decision/name-1-tiding-rename-plan`):
   P0 registry claims → P1 public face (GitHub repo rename auto-redirects;
   README/docs "Tiding, formerly engram"; tiding.sh site) → P2 compat layer
