@@ -730,8 +730,19 @@ def _watcher_attach_command() -> str | None:
     return f"tail -F {fifo}" if fifo else None
 
 
-async def _watcher_supervisor(project_dir: str | None) -> None:
+def _watcher_supervisor_thread(project_dir: str | None) -> None:
+    """Runs in a DAEMON THREAD, deliberately not on the event loop.
+
+    The first implementation was an asyncio task — and the murder row of the
+    step-6 gate caught it dead: an MCP stdio bridge's loop only runs while a
+    request is in flight, so on a QUIET session the supervisor got no CPU
+    after the first tool call, never noticed its child's death, and never
+    respawned. Invisible on a chatty session, fatal on a dormant one — which
+    is the exact population watchers exist for. A thread owes nothing to the
+    loop: plain subprocess + sleep, it ticks while the session dreams.
+    """
     import subprocess
+    import time as _t
     key = resolve_session_key() or "unkeyed"
     safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
     fifo = os.path.join(_wake_state_dir(), f"{safe}.fifo")
@@ -741,7 +752,7 @@ async def _watcher_supervisor(project_dir: str | None) -> None:
 
     backoff = 5.0
     while True:
-        started = time.monotonic()
+        started = _t.monotonic()
         try:
             # stderr goes to a real log, never DEVNULL — a watcher that died
             # silently behind DEVNULL cost the fleet a deaf seat tonight and
@@ -764,7 +775,7 @@ async def _watcher_supervisor(project_dir: str | None) -> None:
                 )
             _WATCHER_SUP["proc"] = proc
             while proc.poll() is None:
-                await asyncio.sleep(2.0)
+                _t.sleep(2.0)
             rc = proc.returncode
         except Exception as e:  # spawn itself failed — log and back off
             rc = None
@@ -773,14 +784,14 @@ async def _watcher_supervisor(project_dir: str | None) -> None:
                     logf.write(f"supervisor: spawn failed: {e}\n")
             except OSError:
                 pass
-        lived = time.monotonic() - started
+        lived = _t.monotonic() - started
         if lived > 120:
             backoff = 5.0            # a child that ran a while earns a fresh start
         # DISPLACED (4): a peer holds the watch — retry at claim cadence.
         # PARTIAL (5): config error; retrying as-is cannot succeed — crawl.
         delay = 150.0 if rc == 4 else (300.0 if rc == 5 else backoff)
         backoff = min(backoff * 2, 300.0)
-        await asyncio.sleep(delay)
+        _t.sleep(delay)
 
 
 def _ensure_watcher_supervisor(project_dir: str | None) -> None:
@@ -789,10 +800,11 @@ def _ensure_watcher_supervisor(project_dir: str | None) -> None:
     if os.environ.get("ENGRAM_BRIDGE_WATCHER", "on").lower() in ("off", "0", "false"):
         return
     _WATCHER_SUP["started"] = True
-    try:
-        asyncio.get_running_loop().create_task(_watcher_supervisor(project_dir))
-    except RuntimeError:
-        _WATCHER_SUP["started"] = False  # no loop yet; retry on a later call
+    import threading
+    t = threading.Thread(target=_watcher_supervisor_thread,
+                         args=(project_dir,), daemon=True,
+                         name="engram-watcher-supervisor")
+    t.start()
 
 
 def _kill_watcher_child() -> None:

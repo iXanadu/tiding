@@ -595,3 +595,133 @@ def test_step6_bridge_owned_watcher_prose_skipped_seat_dm_wakes(
         # watch rows carry user_id=global / project='' — outside the R-c
         # marker sweep — so this row is purged explicitly, by key.
         registry.purge_watch(seat)
+
+
+@pytest.mark.parametrize("provider", ["claude"])
+def test_step6b_murdered_watcher_respawns_reclaims_and_still_wakes(
+    provider, world, registry
+):
+    """CLAIM: SIGKILL the bridge-owned watcher — coverage returns by itself
+    and a subsequent ordinal-seat DM still wakes, with no agent turn and no
+    prose.
+
+    Written the night an unknown killer was found SIGKILLing session waiters
+    at every AB restart (three specimens), after the lineage rationale for
+    the bridge design was DISPROVEN (the murdered waiter was already outside
+    the killer's process tree). What survives the disproof is supervision:
+    the design never needed the watcher to be unkillable, it needs death to
+    cost seconds. This row is that claim, measured — whoever the killer
+    turns out to be."""
+    import json as _json
+    import os as _os
+    import signal as _signal
+    import time as _time
+    import httpx as _httpx
+    from acceptance.conftest import _AUTH
+
+    proj = f"acceptprobe-step6b-{provider}"
+    pdir = world.project(proj)
+    key = f"{provider}-accept-step6b"
+    registry.purge_all_watches()
+
+    sim = world.session(project_dir=pdir, provider=provider, session_key=key,
+                        extra_env={"ENGRAM_WATCHER_POLL_INTERVAL": "1.0"})
+    sim.call("memory_search", query="arm", project_dir=pdir)
+    seat = [s for s in registry.seats(proj) if s["session_key"] == key][0]["seat"]
+    fifo = _os.path.join(sim.home, ".local", "state", "engram", "wake",
+                         f"{key}.fifo")
+    deadline = _time.monotonic() + 20
+    while not _os.path.exists(fifo) and _time.monotonic() < deadline:
+        _time.sleep(0.25)
+
+    def _state():
+        return _httpx.get(f"{registry.url}/session/watch/status",
+                          params={"seat": seat}, headers=_AUTH,
+                          timeout=10).json().get("state")
+
+    fd = _os.open(fifo, _os.O_RDONLY | _os.O_NONBLOCK)
+    try:
+        deadline = _time.monotonic() + 25
+        while _state() != "covered" and _time.monotonic() < deadline:
+            _time.sleep(0.5)
+        assert _state() == "covered", "precondition: never covered"
+
+        # ── THE MURDER. By pid from the claim row — never by name match.
+        r = _httpx.get(f"{registry.url}/session/watch/status",
+                       params={"seat": seat}, headers=_AUTH, timeout=10)
+        # status doesn't expose pid; find the child of the sim's bridge
+        import subprocess as _sp
+        out = _sp.run(["pgrep", "-P", str(sim.proc.pid)],
+                      capture_output=True, text=True).stdout.split()
+        victims = []
+        for child in out:
+            cmd = _sp.run(["ps", "-o", "command=", "-p", child],
+                          capture_output=True, text=True).stdout
+            if "inbox_wait" in cmd:
+                victims.append(int(child))
+        assert victims, "no bridge-spawned watcher child found to murder"
+        for v in victims:
+            _os.kill(v, _signal.SIGKILL)
+
+        # ── RESURRECTION: supervisor respawns (5s backoff), new watcher
+        # blocks on the FIFO — our reader is still attached, so the open
+        # returns at once — then claims. The corpse's row looks FRESH until
+        # EXPIRY (150s), so the first claim gets `held` and retries at claim
+        # cadence: recovery is bounded by ~expiry + retry ≈ 155s. That bound
+        # is the RATIFIED design (review R4: a 150s crash window is 20×
+        # better than 50 minutes) — this test's first run demanded 45s and
+        # FAILED, which was the test being wrong about its own spec: death
+        # costs ~2.5 minutes, not "seconds", and the row now says so
+        # honestly instead of flattering the prose.
+        deadline = _time.monotonic() + 210
+        recovered = False
+        while _time.monotonic() < deadline:
+            if _state() == "covered":
+                # covered again — but is it the NEW claimant? A stale row
+                # from the corpse also reads covered until expiry. Send the
+                # DM and let delivery decide; delivery cannot come from a
+                # corpse.
+                recovered = True
+                break
+            _time.sleep(0.5)
+        assert recovered, (
+            f"watch never re-covered within expiry+retry (state={_state()!r}) "
+            "— supervision is not carrying the weight the disproven lineage "
+            "rationale dropped"
+        )
+
+        mid = registry.send(seat, "step6b post-murder DM", "does the wake still fire")
+        buf = b""
+        # The DM lands DURING the corpse's expiry window. The successor
+        # cannot claim before ~expiry+retry (~155s, the ratified bound), and
+        # its P4 catch-up is what emits this message. The wait must span
+        # that bound — a 30s wait here failed twice, each time measuring the
+        # spec instead of a bug.
+        deadline = _time.monotonic() + 210
+        woke = False
+        while _time.monotonic() < deadline:
+            try:
+                chunk = _os.read(fd, 65536)
+                if chunk:
+                    buf += chunk
+                    if mid.encode() in buf:
+                        woke = True
+                        break
+            except BlockingIOError:
+                pass
+            _time.sleep(0.25)
+        wlog = ""
+        try:
+            with open(fifo[:-5] + ".log") as lf:
+                wlog = lf.read()[-2000:]
+        except OSError:
+            wlog = "(no watcher log)"
+        assert woke, (
+            f"ARRIVAL FAIL after murder: DM {mid} never woke the respawned "
+            f"watcher. Seen: {buf[:300]!r}. State now: {_state()!r}. Death is "
+            "bounded at ~expiry+retry (~155s) by the ratified design — past "
+            f"that, coverage is genuinely lost. Watcher log:\n{wlog}"
+        )
+    finally:
+        _os.close(fd)
+        registry.purge_watch(seat)

@@ -20,9 +20,9 @@ def test_supervisor_references_resolve():
     exact defect found here (sys.executable, no import sys) survives import
     and the full suite, then NameErrors on first real spawn."""
     import inspect
-    src = inspect.getsource(server._watcher_supervisor)
+    src = inspect.getsource(server._watcher_supervisor_thread)
     ns = vars(server)
-    for name in ("sys", "os", "asyncio", "time", "resolve_session_key"):
+    for name in ("sys", "os", "resolve_session_key"):
         assert name in ns, f"supervisor uses {name} but module doesn't bind it"
     assert "sys.executable" in src  # the line that was dead code
 

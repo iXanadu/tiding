@@ -543,6 +543,7 @@ class _WatchClaimState:
         # and a holder that beats without advancing it while mail waits is
         # displaceable — the beating-but-mute monopoly cannot form.
         self.fetched_through: str | None = None
+        self.catch_up_after: str | None = None   # P4, set on a stolen grant
 
     async def acquire(self, client, project_dir: str, listen_set: list[str]) -> int | None:
         """Claim, retrying on `held`. Returns an EXIT_ code only for the one
@@ -565,6 +566,10 @@ class _WatchClaimState:
             v = r.get("verdict")
             if v == "granted":
                 self.held = True
+                # P4: a STOLEN grant carries the corpse's delivery watermark.
+                # Mail after it may never have been emitted by anyone — the
+                # successor's first poll must EMIT that gap, not seed it.
+                self.catch_up_after = r.get("catch_up_after")
                 return None
             if v == "partial-refused":
                 print(f"inbox-wait: watch claim PARTIAL-REFUSED: {r.get('reason')}",
@@ -712,6 +717,29 @@ async def _run(args) -> int:
                 backlog = await _poll(client, listen_set, reader_identity, seen)
                 occupant = reader_to_address(reader_identity or "")
                 anchor_project = derive_project_name(args.project_dir or None)
+                # P4 (watch-claim): a successor whose grant was STOLEN from a
+                # corpse EMITS the gap — unread mail newer than what the
+                # corpse provably delivered — instead of seeding it silently.
+                # Found by the murder row of the step-6 gate: a DM sent
+                # during the expiry window landed in the successor's seed
+                # set and woke nobody, ever. Gap mail must never depend on a
+                # side path reaching back.
+                cua = getattr(claim_state, "catch_up_after", None) if claim_state else None
+                if cua:
+                    gap = [m for m in backlog
+                           if (m.get("created_at") or "") > cua]
+                    for m in gap:
+                        _emit(m)
+                        if claim_state is not None and m.get("created_at"):
+                            ft = claim_state.fetched_through
+                            if ft is None or m["created_at"] > ft:
+                                claim_state.fetched_through = m["created_at"]
+                    if gap:
+                        print(f"inbox-wait: P4 catch-up emitted {len(gap)} "
+                              f"gap message(s) newer than {cua}",
+                              file=sys.stderr, flush=True)
+                    backlog = [m for m in backlog
+                               if (m.get("created_at") or "") <= cua]
                 digest_hits = _emit_backlog_digest(
                     backlog, occupant, anchor_project)
                 # Step 6: the subtree estate, own try — informational, never

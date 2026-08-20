@@ -161,6 +161,18 @@ async def watch_claim(
         # A holder that never reports fetched_through at all gets the benefit
         # of the doubt only until mail outwaits the grace against its
         # claimed_at.
+        # Read the incumbent's watermark BEFORE the CAS. A stale read here is
+        # harmless — it only widens the successor's catch-up window; the CAS
+        # below still decides who wins.
+        prior = await conn.fetchrow(
+            "SELECT metadata FROM memories WHERE namespace=$1 AND key=$2 "
+            "AND scope=$3 AND user_id=$4",
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID,
+        )
+        prior_md = prior["metadata"] if prior else None
+        if isinstance(prior_md, str):
+            prior_md = json.loads(prior_md)
+        prior_md = prior_md or {}
         stole = await conn.fetchval(
             """
             UPDATE memories w
@@ -192,6 +204,13 @@ async def watch_claim(
             return {
                 "verdict": "granted", "seat": seat, "stolen": True,
                 "expiry_seconds": WATCH_EXPIRY_SECONDS,
+                # P4: gap mail must never depend on a side path reaching
+                # back. The successor catches up from what the corpse
+                # PROVABLY delivered (its fetched_through), falling back to
+                # when the corpse claimed — mail after that point may never
+                # have been emitted by anyone.
+                "catch_up_after": (prior_md.get("fetched_through")
+                                   or prior_md.get("claimed_at")),
             }
 
         row = await conn.fetchrow(
