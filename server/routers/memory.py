@@ -426,7 +426,34 @@ async def search_memory(req: MemorySearchRequest, request: Request):
                 )
                 if banner_dict:
                     banner = InboxBanner(**banner_dict)
-        return MemorySearchResponse(status="ok", results=results, inbox_banner=banner)
+        # SEC-9. An empty result and a wrong query were indistinguishable, and
+        # it cost three separate incidents on 2026-08-02 — none permission
+        # related. In each the query was well-formed, the caller authorised,
+        # and the answer identical to "nothing matches": a read that omitted
+        # `project`, a first read after a token swap where `user_id` defaulted
+        # to the caller's own principal, and a peer searching a project it had
+        # not written. Zero rows is an ABSENCE the caller cannot distinguish
+        # from a FAILURE unless we say where we looked.
+        partition_warnings: list[str] = []
+        if not results:
+            searched = [
+                f"namespace(s)={', '.join(ns_list) if ns_list else '(none)'}",
+                f"scope={req.scope}",
+                f"user_id={req.user_id}",
+            ]
+            if req.project:
+                searched.append(f"project={req.project}")
+            partition_warnings.append(
+                "0 hits. Searched " + " · ".join(searched) + ". An empty "
+                "result means nothing matched IN THAT PARTITION — it is not "
+                "evidence the knowledge does not exist. If the partition is "
+                "not the one you meant, the query was fine and the scoping "
+                "was not."
+            )
+        return MemorySearchResponse(
+            status="ok", results=results, inbox_banner=banner,
+            partition_warnings=partition_warnings,
+        )
     except Exception as e:
         logger.exception("memory_search failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")

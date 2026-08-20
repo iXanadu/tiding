@@ -146,9 +146,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   dormant or has not started; the handoff pattern depends on it). Proposal:
   when a destination matches no address in the register, return an advisory
   naming the address and the live seats on that project, via the existing
-  `*_warnings` channel. Additive, no behaviour change. Pairs with **SEC-9** —
-  one is silence on read, the other silence on send; in both, an empty result
-  and a wrong query are indistinguishable.
+  `*_warnings` channel. Additive, no behaviour change.
+  `class:absence-vs-failure` — silence on SEND, the twin of the silence-on-read
+  half fixed 2026-08-20; in both, an empty result and a wrong query are
+  indistinguishable.
   ⚠️ The advisory must reach the party that NAMED the address, which the
   obvious implementation misses: the name that caused this entered at huddle
   creation and fanned out, so a warning living only in `memory_send` would
@@ -334,7 +335,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
-- **BRIDGE-2** A dead credential is INVISIBLE to the person whose surface
+- **BRIDGE-2** `class:absence-vs-failure` A dead credential is INVISIBLE
+  to the person whose surface
   holds it. Measured on the operator's own desktop 2026-08-16: an app config
   carried a rotated token for weeks–months (death date unrecoverable, see
   AUDIT-2); the pre-Aug-12 bridge only spoke on tool calls, so the only
@@ -359,22 +361,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   app was the holder everyone forgot). Standing habit under the same
   banner: cloud-resident assistant tokens (third-party VM, credentials
   retained after bot deletion) rotate on a schedule, not on incident.
-
-- **SEC-9** An empty search result cannot be told apart from a wrong query.
-  Three separate incidents on 2026-08-02, none of them permission-related:
-  a personal-memory read that omitted `project` returned `200 — 0 hits`; a
-  client's first read after a token swap returned the same because `user_id`
-  defaulted to its own principal; and a peer searching a project it did not
-  write got zero and concluded the knowledge did not exist (see MEM-5). In
-  every case the query was well-formed, the caller was authorised, and the
-  answer was indistinguishable from "nothing matches".
-  Proposal (additive, no behaviour change): when a search returns zero rows,
-  state the partition actually searched — namespace(s), scope, user_id,
-  project — so an empty answer is diagnosable instead of ambiguous. The
-  `*_warnings` advisory channel already exists and the bridge now surfaces it.
-  ⚠️ NOTE: this is NOT the permission case. An unreadable namespace already
-  returns a 403 naming it — verified 2026-08-02, after I wrongly recorded the
-  opposite (see below).
 
 - **HEADED-OWNER-1** An agent with headed access to a logged-in owner
   browser holds every owner-only capability on every surface — the
@@ -592,14 +578,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   string one client has always sent on scope=user writes — so any client
   that omits project (server-side NULL) finds 0 rows with no hint. Cost a
   second assistant its entire first read of the personal store 2026-08-16
-  (it probed every scope/user_id combination and concluded empty; SEC-9
-  made the miss undiagnosable). Interim: both assistants now instructed to
-  send the literal. Real fix is a decision: migrate the ~24 rows to
-  project=NULL and update the writing client in the same arc (they must
-  move together — migrating alone breaks the incumbent's reads), or bless
-  "default" as the personal-store convention and document it. Pairs with
-  SEC-9 — this is exactly the empty-vs-wrong-partition ambiguity, measured
-  again.
+  (it probed every scope/user_id combination and concluded empty; the
+  zero-hit answer named no partition, so the miss was undiagnosable).
+  ✅ **That half is FIXED 2026-08-20** — a zero-hit search now states the
+  partition it searched, so this specific miss is self-diagnosing today and
+  a repeat costs minutes rather than a whole first read. What REMAINS is the
+  data inconsistency itself, unchanged: interim, both assistants are
+  instructed to send the literal. Real fix is a decision — migrate the ~24
+  rows to project=NULL and update the writing client in the same arc (they
+  must move together; migrating alone breaks the incumbent's reads), or
+  bless "default" as the personal-store convention and document it.
 
 - **MEM-7** Shared lessons are write-mostly — now MEASURED, not argued
   (audit 2026-08-13, `audit/mem-7-lesson-corpus-2026-08-13` in project

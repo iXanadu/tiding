@@ -49,6 +49,45 @@ The failure has two halves, and they need opposite tools:
 
 Mixing them is what turns a 40-line todo list into a 150KB liability.
 
+## Name the CLASS, not just the instance
+
+A defect class that is never named cannot be prioritised, because no single
+entry ever looks big enough to fix. Give recurring shapes a name and tag
+every member with it.
+
+**Worked example — the class that cost this fleet two days in Aug 2026:**
+
+> **`class:absence-vs-failure`** — a surface reports "nothing here"
+> identically whether nothing exists, the question was wrong, the caller
+> lacks access, or the answer arrived somewhere they are not looking. The
+> reader cannot tell these apart, so they pick the cheapest explanation
+> ("it's broken", "nothing is waiting") and act on it.
+>
+> Its mirror image, same root: **success reported for something that did not
+> happen** — a 200 is not evidence a parameter took effect. Verify at the
+> DESTINATION.
+
+Three entries in this repo's own ledger were members and nobody noticed:
+`SEC-9` (an empty search result vs a wrong query), `BRIDGE-2` (a dead
+credential invisible to whoever holds it), and `HUDDLE-DEAF-1` (an empty
+inbox vs an empty room). The ledger even stated the link in prose — *"one is
+silence on read, the other silence on send"* — and it still read as three
+unrelated defects, each individually too small to schedule. Filed as one
+disease, it was obviously the most expensive thing on the board.
+
+Why this belongs in a backlog standard rather than a postmortem: the tagging
+is what makes the fourth instance recognisable ON SIGHT instead of solved
+from scratch a fourth time. A class tag costs one token per entry and is the
+highest-leverage thing in this document.
+
+Rules of thumb:
+- Add a tag when the SECOND instance appears; two is a coincidence you can
+  still cheaply name, three is a pattern you have already paid for twice.
+- Tag with `class:<kebab-name>` inline in the entry. No new section — a class
+  is an attribute of items, not a place to put them.
+- The class definition lives in memory (a `lesson/` key), not here. The
+  ledger carries the tag; the journal carries the reasoning.
+
 ## The ledger: `BACKLOG.md` format
 
 ```markdown

@@ -896,9 +896,11 @@ async def memory_search(
     banner_text = _server_time_line() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
 
     if result.get("status") != "ok" or not result.get("results"):
-        if banner_text:
-            return banner_text + "No memories found."
-        return "No memories found."
+        # SEC-9: this early return used to DROP the server's advisories, so a
+        # zero-hit search rendered as a bare "No memories found." — the exact
+        # ambiguity the server-side partition warning exists to remove. Route
+        # it through the advisory channel like every other result does.
+        return _append_guidance(banner_text + "No memories found.", result)
 
     lines = []
     for mem in result["results"]:

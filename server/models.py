@@ -224,6 +224,10 @@ class MemorySearchResponse(BaseModel):
     status: str
     results: list[MemoryItem]
     inbox_banner: InboxBanner | None = None
+    # SEC-9: on a ZERO-HIT search, name the partition actually searched, so an
+    # empty answer is diagnosable instead of ambiguous. Additive and advisory;
+    # the `*_warnings` suffix is the channel every client already renders.
+    partition_warnings: list[str] = []
 
 
 class MemoryKeysRequest(_NamespacedRequest):
