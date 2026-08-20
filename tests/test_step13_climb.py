@@ -8,6 +8,7 @@ handled=UNKNOWN holds.
 
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -61,7 +62,11 @@ async def _cert(db_pool, seat, session_key, died_ago_seconds):
             PRESENCE_NAMESPACE, f"death/{uuid.uuid4()}", P,
             json.dumps({
                 "session_key": session_key, "seat": seat,
-                "died_at": "2026-08-17T00:00:00+00:00"
+                # Relative, never a constant: a fixed died_at stops meaning
+                # "dead" once a relatively-aged seat outlives it (see
+                # test_step14_sweep for the case that actually rotted).
+                "died_at": (datetime.now(timezone.utc)
+                            - timedelta(seconds=60)).isoformat()
                 if died_ago_seconds is None else None,
                 "cause": "stop", "graceful": True,
                 "certified_by": "test-spawner",

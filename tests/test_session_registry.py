@@ -7,6 +7,7 @@ shared ack-state, unable to wake each other.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1130,10 +1131,18 @@ async def _read_by(db_pool, mid):
     return _j.loads(row["rb"]) if row and row["rb"] else []
 
 
+# Relative so it can never rot the way test_step14_sweep's fixed died_at did
+# (a constant stops meaning "dead" once a relatively-aged seat outlives it), but
+# computed ONCE per run, not per call: with an empty session_key the death
+# endpoint keys idempotency on (seat, died_at), so two _cert calls in one test
+# must present the SAME instant or the second one creates a second record.
+_DIED_AT = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+
+
 def _cert(client, **kw):
     body = {"session_key": "dead-1", "seat": f"{PROJ}-claude",
             "lane": f"{PROJ}-claude", "project": PROJ, "provider": "claude",
-            "host": "macmini", "died_at": "2026-08-14T12:00:00Z",
+            "host": "macmini", "died_at": _DIED_AT,
             "cause": "stop"}
     body.update(kw)
     return client.post("/session/death", json=body)

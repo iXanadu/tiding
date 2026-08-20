@@ -216,20 +216,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **SWEEP-1** `tests/test_step14_sweep.py::test_sweep_matrix` is RED at HEAD
-  (`96e023f`, measured 2026-08-20; pre-existing, not from that day's commits).
-  Fresh mail to a dead incarnation is not swept as `incarnation-dead` — it
-  falls through to the age check and is skipped as `fresh`. Only the aged
-  row sweeps. Mechanism unproven; the two candidates are (a) the address is
-  absent from `address_register` because the test ages its seat row past
-  `SEAT_GRACE_SECONDS`, so `entry` is None and the death is never consulted,
-  or (b) the entry is present but carries no `death`. The test hardcodes
-  `died_at: 2026-08-13`, which is a rot hazard whether or not it is THIS
-  bug — a fixed date drifts from `NOW()` every day the suite runs. Do not
-  "fix" it by refreshing the date until the mechanism is known; that would
-  convert a real signal into a green test. Impact is the 72h sweep backstop,
-  not live delivery: asks still climb, root mail is still never swept.
-
 - **REG-DEATH-1** The register attaches death evidence by session_key, and a
   launcher's slot-derived key SURVIVES respawns — so a predecessor's death
   cert pins to the name's current, live holder. Measured 2026-08-18 on this

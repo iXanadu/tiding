@@ -7,6 +7,7 @@ whatever its age.
 
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -56,6 +57,16 @@ async def test_sweep_matrix(client, db_pool):
     await _clear(db_pool)
     await _register_root(client)
     dead = f"{P}-claude-3"
+    # died_at MUST be derived from the same clock as the seat row's age, and
+    # must fall AFTER it. address_register voids a death that the seat outlived
+    # ("someone lived here after the death", session_registry ~L1561), so a
+    # FIXED died_at silently stops meaning "dead" the moment wall-clock carries
+    # the relative seat age past it. A hardcoded 2026-08-13 did exactly that:
+    # this test was green for weeks and began failing at 2026-08-20T00:00Z, when
+    # NOW() - (SEAT_GRACE + 9000s) first landed later than the constant. The
+    # production voiding logic was right the whole time; only the fixture rotted.
+    died_at = (datetime.now(timezone.utc)
+               - timedelta(seconds=SEAT_GRACE_SECONDS + 3600)).isoformat()
     async with db_pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO memories (namespace,key,value,scope,user_id,project,
@@ -71,7 +82,7 @@ async def test_sweep_matrix(client, db_pool):
                VALUES ($1,$2,'death','death','global',$3,'','',$4::jsonb)""",
             PRESENCE_NAMESPACE, f"death/{uuid.uuid4()}", P,
             json.dumps({"session_key": "sw14dead", "seat": dead,
-                        "died_at": "2026-08-13T00:00:00+00:00",
+                        "died_at": died_at,
                         "cause": "stop", "graceful": True,
                         "certified_by": "t"}))
 
