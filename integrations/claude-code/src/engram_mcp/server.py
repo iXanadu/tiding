@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from engram_mcp.client import MemoryClient
+from engram_mcp.client import MemoryClient, last_server_time_iso
 from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import (
     INBOX_IDENTITY_ENV,
@@ -286,6 +286,14 @@ def _advisories(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _server_time_line() -> str:
+    """TIME-1: authoritative 'now' on every tool result, from the server's own
+    Date header — models quote stale timestamps from context because time does
+    not pass between turns; this makes the current time impossible to miss."""
+    iso = last_server_time_iso()
+    return f"server time: {iso}\n" if iso else ""
+
+
 def _append_guidance(body: str, result: dict) -> str:
     """Append server-provided advisories and usage guidance to a tool result.
 
@@ -300,7 +308,7 @@ def _append_guidance(body: str, result: dict) -> str:
     addressing help is how it gets skimmed past.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
-    alert = (_seat_collision_banner() + _seat_revert_banner()
+    alert = (_server_time_line() + _seat_collision_banner() + _seat_revert_banner()
              + _seat_rename_banner() + _identity_override_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
     advisory = _advisories(result)
@@ -770,7 +778,7 @@ async def memory_store(
         listen_set=listen_set,
         reader_identity=reader_identity,
     )
-    banner_text = _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _server_time_line() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
     proj_suffix = f", project: {project}" if project else ""
     # Prefer the CANONICAL namespace the server says it wrote to (it
     # canonicalizes legacy aliases); fall back to config for older servers.
@@ -885,7 +893,7 @@ async def memory_search(
         snippet_lines=SEARCH_SNIPPET_LINES,
     )
 
-    banner_text = _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _server_time_line() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
 
     if result.get("status") != "ok" or not result.get("results"):
         if banner_text:

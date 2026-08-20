@@ -1,10 +1,20 @@
 import pytest
 import respx
 
+import engram_mcp.client as client_mod
 import engram_mcp.config as config
 import engram_mcp.identity as identity
 from engram_mcp.client import MemoryClient
 from engram_mcp.identity import reset_session_pin
+
+
+@pytest.fixture(autouse=True)
+def _reset_server_time(monkeypatch):
+    """TIME-1's captured server clock is module state set by ANY client call —
+    without a reset, one test's mocked Date header prefixes every later
+    test's banner (found live: test_identity leaked into test_server's
+    exact-match assertions)."""
+    monkeypatch.setattr(client_mod, "_LAST_SERVER_TIME", None)
 
 
 @pytest.fixture(autouse=True)

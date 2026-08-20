@@ -1,10 +1,40 @@
 import asyncio
+import email.utils
 import socket
+from datetime import datetime, timezone
 
 import httpx
 
 from engram_mcp.identity import derive_project_name, remember_project_dir
 from engram_mcp.model import resolve_model
+
+# TIME-1: the server's clock as of the LAST response seen, captured from the
+# HTTP Date header every request already carries — engram's host clock is the
+# fleet's ordering authority, and this costs zero extra requests. The banner
+# renderer reads it so every tool result shows the agent an authoritative
+# "now" (models otherwise quote stale timestamps from context, because time
+# does not pass between turns).
+_LAST_SERVER_TIME: datetime | None = None
+
+
+def _record_server_time(resp: httpx.Response) -> None:
+    global _LAST_SERVER_TIME
+    date_hdr = resp.headers.get("date")
+    if not date_hdr:
+        return
+    try:
+        _LAST_SERVER_TIME = email.utils.parsedate_to_datetime(date_hdr).astimezone(
+            timezone.utc
+        )
+    except (TypeError, ValueError):
+        pass
+
+
+def last_server_time_iso() -> str | None:
+    """UTC ISO stamp of the most recent server response, or None before one."""
+    if _LAST_SERVER_TIME is None:
+        return None
+    return _LAST_SERVER_TIME.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class MemoryClient:
@@ -61,6 +91,7 @@ class MemoryClient:
         for attempt in range(2):
             try:
                 resp = await self._client.request(method, path, **kwargs)
+                _record_server_time(resp)
                 resp.raise_for_status()
                 return resp.json()
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
