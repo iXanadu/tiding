@@ -633,7 +633,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the first run and its aftermath earned: spawn-fails-after-seat-grant (the
   birth-corpse class, found live 2026-08-13), stop-drops-picker-immediately
   (verified 11s on a real session), and A4 for claude shapes requires the
-  probe to arm a watcher. The harness itself is DONE and standing
+  probe to arm a watcher. Two more earned 2026-08-20 (the reader-census
+  incident): (a) any delivery-contract flip needs a READER-side end-to-end
+  assertion per consumer harness class before the flip — producer-side
+  proofs all passed while every reader went dark; (b) before scoping a
+  build, assert what already exists — the fix had been shipped 4 days and
+  nobody asked. Stories: `fix/huddle-reader-census-incident-2026-08-20`. The harness itself is DONE and standing
   (`scripts/accept.sh`, ~30s, green; results journal in project memory at
   `backlog/ACCEPT-1-first-run-results`) — this item is only the list rev,
   plus the still-unrun G2 codex per-thread-key proof (AB's lane).
