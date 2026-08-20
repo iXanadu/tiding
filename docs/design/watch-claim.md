@@ -215,6 +215,15 @@ lands.
 6. arrival matrix: prose skipped, AB killed, store bounced. **If step 6
    fails, the protocol is theater too.**
 
+**Store-bounce leg: MEASURED CLOSED, 2026-08-20 23:54Z.** During the
+9a806f2 prod restart a session-owned waiter (agentbeast-app-grok-2's pid
+84246) printed `poll error (All connection attempts failed); retrying`,
+then reconnected — same pid, no re-arm. Combined with the fleet record
+(AB's waiters and the engram control watcher surviving all six bounces
+that day), the leg the gate could not run in-harness ran itself in
+production, on every waiter class, and passed. Witness: app-grok-2's
+Monitor capture, huddle DfNRCl6x.
+
 Rider on step 6 (reviewer, accepted): a matrix row is a FAIL if it shows
 only project/lane wakes — it MUST include an ordinal-seat DM, the address
 AB cannot name today. Channel-only green is the coincidence already paid
