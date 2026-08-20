@@ -1,0 +1,129 @@
+# Watch-Claim: one seat, one watch, no ritual
+
+Status: DESIGN FOR ADVERSARIAL REVIEW — not built. Owner GO 2026-08-20 ~22:10Z.
+Decision record: project memory `decision/wake-architecture-direction-2026-08-20`.
+
+## The problem, in one measured line
+
+Same seat, same sender, identical ask: **50 minutes** to answer without a
+watcher, **under 2 minutes** with one — and the 50-minute reply arrived only
+because the fix reached back and delivered it. Mail that arrives and then
+waits for something else to happen.
+
+Watcher arming today is an agent-performed startup ritual. 2026-08-20
+produced its complete failure catalog: never armed (WATCH-G1), believed-
+armed-never-ran (a `ps` check matched a NEIGHBOR's watcher), armed-then-died
+(SEAT-13), armed-with-wrong-identity, armed-twice (double wakes). Plus the
+economics: agents spending model turns BABYSITTING watchers overnight
+(~400-750k tokens per wasted turn, full context re-sent each time).
+
+## Invariants (owner constraints — violating any of these fails review)
+
+I1. Manual CLI spawning cannot be prohibited. The sessions spawned manually
+    (engram/agentbeast/maintenance) are spawned precisely when infrastructure
+    is broken. The repair crew must not depend on the thing being repaired.
+I2. AB death breaks huddles only. Bare mail transport survives.
+I3. Engram/Tiding is fully useful WITHOUT AB (adoption/standalone).
+I4. One watcher per seat, enforced structurally — never by convention.
+I5. Idle costs zero model tokens. Supervision is process-level, never a turn.
+I6. The register never claims more than it observed (delivered ≠ seen;
+    watch-held ≠ delivery-working — state both honestly).
+
+## Separation that makes it simple
+
+**SENSING** (poll, claim, beat, restart) — the bridge owns it, universally:
+all four CLIs (claude/codex/cursor-agent/grok) auto-spawn the bridge from MCP
+config. That is the one prose-free hook that exists everywhere.
+
+**DELIVERY** (mail-arrived → agent turn) — per harness:
+  D1. Monitor-type tool attached (claude, grok: proven 49s) — push.
+  D2. AB user-turn injection for AB-hosted sessions — push, zero agent acts.
+  D3. Banner on next tool call — the floor, everywhere, always.
+
+AB exits the ARMING business (its WATCH-G1 armer stands down naturally via
+the claim protocol, below) and keeps only what the spawner alone can do:
+injection where no Monitor is attached, and idle+unread nudging.
+
+## The claim protocol
+
+A watch is a single-holder claim on a SEAT, stored server-side like a seat.
+
+Row: `watch/<seat>` — metadata {nonce, pid, host, armed_by: bridge|ab|agent,
+claimed_at, last_beat}.
+
+- **Claim**: `POST /session/watch/claim {seat, nonce, pid, host, armed_by}`
+  → `granted` | `held {armed_by, last_beat_age}`. Grant iff no row OR the
+  row's last_beat is older than EXPIRY. DB unique key on `watch/<seat>`
+  settles same-instant races; loser sees `held`.
+- **Beat**: the watcher already beats each poll (~45s). The beat now carries
+  its nonce and the response carries a verdict: `holder` | `displaced`.
+  Poll cycle order is **beat → (exit if displaced) → fetch → emit**, which
+  bounds double-emission during a takeover to ≤ one cycle.
+- **Refused/displaced = print why and EXIT.** Never standby (standby is the
+  zombie class with better manners).
+- **EXPIRY**: 3 missed beats (~150s). Server clock only (`NOW()`), no client
+  clocks anywhere.
+- **Release** on graceful exit; crash is covered by expiry. Self-healing
+  costs zero turns (I5).
+
+Free wins: "already armed?" becomes a server query (kills the wrong-subject
+`ps` probe class at the boundary); the deaf-flag is just "seat with no live
+watch" read off the claims table; existing doubles converge at next beat.
+
+## Who spawns, per harness (v1)
+
+- **claude / grok (Monitor exists)**: v1 keeps the agent launching the
+  watcher **under Monitor** — but the launch collapses to ONE mechanical act
+  with zero decisions: a bridge tool returns the exact blessed command
+  (paths, identity, project-dir all resolved bridge-side); the watcher then
+  CLAIMS, so double-arming is impossible and the banner reports unheld
+  watches. v2 (open question for review): bridge spawns the watcher as its
+  child writing to a per-session FIFO; the Monitor command becomes
+  `tail -f <fifo>` — supervision moves fully bridge-side and the watcher
+  dies with the bridge (kills SEAT-13 orphans by process lineage).
+- **AB-hosted grok**: AB's existing waiters adopt the claim. First to claim
+  holds; the other path finds `held` and does nothing. Migration measures
+  itself: when AB's armer hasn't won a claim in a month, delete it.
+- **cursor**: today covered by NOTHING (WATCH-G1 shipped grok only). Same
+  claim rules; which spawn path works is part of the live test.
+- **codex (KNOWN WRINKLE)**: the bridge is daemon-scoped — ONE bridge, many
+  seats. Bridge:session ≠ 1:1. v1: codex bridge arms nothing; pinned
+  follow-up designs per-seat watchers from the shared bridge. Do not let
+  codex block the 80%.
+
+## Failure modes table (attack these)
+
+| # | failure | answer |
+|---|---------|--------|
+| F1 | two watchers race the claim | DB unique key; loser exits with reason |
+| F2 | holder dies silently | expiry (~150s) frees; next arrival claims; no turns spent |
+| F3 | holder stalls (load), then resumes | its next beat says `displaced` → exits; ≤1 cycle double-emit window |
+| F4 | **squatter**: claims + beats but never delivers | worst case. Register would say covered while nothing arrives. Partial mitigation: `armed_by` recorded; delivery observable via structural `delivered_to` after wakes; a seat whose watch beats but whose mail is never delivered within N polls is flaggable. NOT fully closed — reviewer input wanted |
+| F5 | claim API down | watcher runs unclaimed? NO — fail-loud, retry with backoff, banner says unheld. Unclaimed watchers are the pre-protocol world back again |
+| F6 | clock skew | server time only |
+| F7 | seat moves (rename/regrant) | watcher re-reads seat file each poll (existing behavior); claim keys on the CURRENT seat; old claim expires |
+| F8 | channel mail, two seats one project | watch is per SEAT; both watchers wake — correct, both sessions should hear the channel |
+| F9 | AB and bridge both arm at spawn | whoever claims first holds; other exits; no coordination needed |
+
+## Migration and prose retirement (order is load-bearing)
+
+1. Ship claim protocol (server) + claim-aware watcher + blessed-command tool.
+2. Arrival-matrix rows, cold, per harness: fresh session, prose step
+   DELIBERATELY SKIPPED — does a watch get claimed? does a DM wake it?
+   (Owner tests cursor/grok live.)
+3. Only then cut the prose (startup skill 4b, AGENTS.md auto-watch, tonight's
+   broadcast recipe) in one pass, superseding not deleting. Removing prose
+   before step 2 passes re-opens the tagApp hole by documentation (I1).
+
+## Explicit questions for the adversarial reviewer
+
+R1. Break the claim protocol: find a state where two live watchers both
+    believe they hold, or where no watcher holds and the register says one does.
+R2. F4 (squatter/false-covered): is the mitigation real or theater?
+R3. v1-vs-v2 on claude: is agent-launch-under-Monitor + claim good enough,
+    or does the FIFO design pay for itself immediately?
+R4. Expiry at 150s: too tight (load-stall displacement churn) or too loose
+    (3-minute deaf windows after crashes)?
+5. The codex deferral: acceptable, or does deferring it recreate WATCH-G1
+    for codex the way claude-only WATCH-A4 did for grok?
+R6. What does this design silently assume about AB that violates I2/I3?
