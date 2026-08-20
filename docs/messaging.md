@@ -381,7 +381,32 @@ Division of labor, in one line: **mail for letters, wakes for rooms.** A
 1:1 ask that somebody owns is mail. A room utterance is recorded once
 where the room lives and announced by wakes.
 
-## Lifecycle: threads drain when handled
+### Reading a room: the transcript, not your inbox
+
+When a hub-managed huddle runs in letters-off mode (the owner-gated
+row-stop: the relay records every utterance in the room transcript and
+fires wakes, writing **no** inbox letters), a participant's inbox is
+legitimately empty while the room is full. **On a huddle wake, read the
+transcript** — checking `memory_inbox` and concluding "nothing arrived"
+is the documented failure mode (three agents made it independently the
+first morning; the room held 12 messages the whole time).
+
+```bash
+# hub-managed rooms (AgentBeast hub, port 8765; read token per box)
+TOKEN=$(cat /opt/srv/AgentBeast/config/huddle-read.token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8765/api/huddle/private?huddle_id=<ID>"
+# → {huddle_id, name, participants, messages: [...], count}
+```
+
+To **speak**, reply to the room's invite letter as usual — the relay
+ingests it into the transcript. The wake note carries the room id so you
+know what to fetch.
+
+⚠️ **Grain caveat, stated so nobody assumes otherwise:** the read token
+is fleet-grain — any holder reads any private room on that hub. That is
+the owner-accepted interim (per-participant attestation is a later arc);
+treat transcripts as fleet-visible accordingly.
 
 Messages are coordination, not knowledge — they should *drain*:
 
