@@ -60,6 +60,15 @@ WATCH_USER_ID = "global"
 # should not displace everyone), ceiling 180 (a human-noticeable silence).
 WATCH_EXPIRY_SECONDS = 150
 
+# K2 / delivery-liveness: how long mail may sit unfetched by a BEATING
+# holder before that holder is displaceable. Generous on purpose — this
+# branch exists for the mute-monopoly case, not for racing a slow poll.
+MUTE_GRACE_SECONDS = 600
+# And how far back the mute check looks. Bounds the query and stops ancient
+# never-fetched mail (predecessor estates) from making every holder
+# permanently displaceable on day one.
+MUTE_LOOKBACK_SECONDS = 6 * 3600
+
 
 def mint_nonce() -> str:
     """Random, never derived from pid — pid reuse inside the expiry window
@@ -139,19 +148,45 @@ async def watch_claim(
         if inserted:
             return {"verdict": "granted", "seat": seat, "expiry_seconds": WATCH_EXPIRY_SECONDS}
 
-        # Occupied. Steal iff expired — ONE CAS statement, so a concurrent
-        # steal and a stalled holder's late beat cannot both win (P1).
+        # Occupied. Steal iff expired OR delivery-dead — ONE CAS statement,
+        # so a concurrent steal and a stalled holder's late beat cannot both
+        # win (P1).
+        #
+        # The second branch is K2, the review's monopoly kill: a holder that
+        # BEATS but does not FETCH looked exactly like coverage tonight
+        # (huddle-fast, DM-deaf) and under a naive exclusive claim it would
+        # LOCK OUT the working watcher. Here it is displaceable once mail
+        # addressed to its own recorded listen_set has been waiting longer
+        # than MUTE_GRACE while its fetched_through never advanced past it.
+        # A holder that never reports fetched_through at all gets the benefit
+        # of the doubt only until mail outwaits the grace against its
+        # claimed_at.
         stole = await conn.fetchval(
             """
-            UPDATE memories
+            UPDATE memories w
             SET metadata = $5::jsonb, last_used_at = NOW()
-            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
-              AND (metadata->>'last_beat')::timestamptz
+            WHERE w.namespace = $1 AND w.key = $2 AND w.scope = $3
+              AND w.user_id = $4
+              AND (
+                (w.metadata->>'last_beat')::timestamptz
                     < NOW() - make_interval(secs => $6)
+                OR EXISTS (
+                  SELECT 1 FROM memories m
+                  WHERE m.namespace = $1 AND m.scope = 'inbox'
+                    AND m.user_id = ANY(
+                        SELECT jsonb_array_elements_text(w.metadata->'listen_set'))
+                    AND COALESCE((m.metadata->>'archived')::bool, false) = false
+                    AND m.created_at < NOW() - make_interval(secs => $7)
+                    AND m.created_at > GREATEST(
+                        COALESCE((w.metadata->>'fetched_through')::timestamptz,
+                                 (w.metadata->>'claimed_at')::timestamptz),
+                        NOW() - make_interval(secs => $8))
+                )
+              )
             RETURNING 1
             """,
             WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, json.dumps(meta),
-            WATCH_EXPIRY_SECONDS,
+            WATCH_EXPIRY_SECONDS, MUTE_GRACE_SECONDS, MUTE_LOOKBACK_SECONDS,
         )
         if stole:
             return {
@@ -180,7 +215,8 @@ async def watch_claim(
         }
 
 
-async def watch_beat(seat: str, nonce: str) -> dict:
+async def watch_beat(seat: str, nonce: str,
+                     fetched_through: str | None = None) -> dict:
     """One beat. Returns ``holder`` or ``displaced`` — never ambiguity.
 
     The beat is a CAS on the nonce: if this process no longer holds the
@@ -198,14 +234,18 @@ async def watch_beat(seat: str, nonce: str) -> dict:
         beat = await conn.fetchval(
             """
             UPDATE memories
-            SET metadata = jsonb_set(metadata, '{last_beat}',
-                                     to_jsonb(NOW()::text), false),
+            SET metadata = metadata
+                    || jsonb_build_object('last_beat', NOW()::text)
+                    || CASE WHEN $6::text IS NULL THEN '{}'::jsonb
+                            ELSE jsonb_build_object('fetched_through', $6::text)
+                       END,
                 last_used_at = NOW()
             WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
               AND metadata->>'nonce' = $5
             RETURNING 1
             """,
             WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, nonce,
+            fetched_through,
         )
     if beat:
         return {"verdict": "holder", "seat": seat}

@@ -270,6 +270,11 @@ class WatchClaimRequest(_BM):
 class WatchBeatRequest(_BM):
     seat: str = _F(max_length=200)
     nonce: str = _F(min_length=8, max_length=64)
+    # K2 delivery-liveness: the newest mail created_at this watcher has
+    # actually EMITTED. A holder that beats but never advances this while
+    # mail waits becomes displaceable — beating proves existence, this
+    # proves delivery.
+    fetched_through: str | None = _F(default=None, max_length=64)
 
 
 @router.post("/watch/claim")
@@ -290,7 +295,8 @@ async def watch_claim_endpoint(req: WatchClaimRequest, request: Request):
 async def watch_beat_endpoint(req: WatchBeatRequest, request: Request):
     check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "write")
     try:
-        return await _watch_beat(seat=req.seat, nonce=req.nonce)
+        return await _watch_beat(seat=req.seat, nonce=req.nonce,
+                                 fetched_through=req.fetched_through)
     except Exception:
         logger.exception("watch_beat failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")

@@ -107,7 +107,7 @@ async def test_beat_three_verdicts_map_to_three_behaviors():
         def __init__(self, r):
             self.r = r
 
-        async def watch_beat(self, *a):
+        async def watch_beat(self, *a, **kw):
             if isinstance(self.r, Exception):
                 raise self.r
             return self.r

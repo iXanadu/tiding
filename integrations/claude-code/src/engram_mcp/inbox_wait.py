@@ -538,6 +538,11 @@ class _WatchClaimState:
         self.nonce = secrets.token_hex(16)   # random, never pid (ghost class)
         self.held = False
         self.unheld_mode = False             # K3: running without a claim
+        # K2 delivery-liveness: the newest mail created_at this process has
+        # actually EMITTED. Beating proves existence; THIS proves delivery,
+        # and a holder that beats without advancing it while mail waits is
+        # displaceable — the beating-but-mute monopoly cannot form.
+        self.fetched_through: str | None = None
 
     async def acquire(self, client, project_dir: str, listen_set: list[str]) -> int | None:
         """Claim, retrying on `held`. Returns an EXIT_ code only for the one
@@ -583,7 +588,8 @@ class _WatchClaimState:
         if self.unheld_mode:
             return "holder"  # no claim to defend; emission legitimate (K3)
         try:
-            r = await client.watch_beat(self.seat, self.nonce)
+            r = await client.watch_beat(self.seat, self.nonce,
+                                        fetched_through=self.fetched_through)
         except Exception:
             print("inbox-wait: watch beat lost — pausing emission until a "
                   "verdict", file=sys.stderr, flush=True)
@@ -796,6 +802,10 @@ async def _run(args) -> int:
 
             for m in fresh:
                 _emit(m)
+                if claim_state is not None and m.get("created_at"):
+                    ft = claim_state.fetched_through
+                    if ft is None or m["created_at"] > ft:
+                        claim_state.fetched_through = m["created_at"]
             # Band D 10a: ephemeral wakes ride the same poll timer. Own try —
             # a pre-10a server has no endpoint (404) and that must cost this
             # watcher nothing. The server never pops (shared listen_sets have

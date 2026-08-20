@@ -197,3 +197,71 @@ async def test_endpoints_roundtrip(client, db_pool):
     r4 = await client.post("/session/watch/release", json={"seat": seat, "nonce": n})
     assert r4.json()["verdict"] == "released"
     assert (await client.get(f"/session/watch/status?seat={seat}")).json()["state"] == "unheld"
+
+
+# ─── step 5: delivery-liveness displacement (K2, the monopoly kill) ─────────
+
+async def _send_mail(client, to):
+    r = await client.post("/memory/send", json={
+        "to": to, "subject": "k2 probe", "body": "x", "intent": "action"})
+    assert r.status_code == 200
+    return r.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_beating_but_mute_holder_is_displaceable(client, db_pool):
+    """The wild specimen, as a protocol rule: a holder that BEATS but never
+    FETCHES looked exactly like coverage (huddle-fast, DM-deaf), and a naive
+    exclusive claim would have LOCKED OUT the working watcher behind it."""
+    from server.services.watch_claim import MUTE_GRACE_SECONDS
+    seat = _seat()
+    na, nb = mint_nonce(), mint_nonce()
+    assert (await watch_claim(seat, na, "ab", "/tmp/p", _ls(seat)))["verdict"] == "granted"
+    await watch_beat(seat, na)   # alive and beating…
+
+    mid = await _send_mail(client, seat)   # …mail arrives…
+    # …and outwaits the mute grace with fetched_through never advancing
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET created_at = NOW() - make_interval(secs => $2) "
+            "WHERE key = $1", mid, MUTE_GRACE_SECONDS + 60)
+        # holder claimed before the mail did (so the mail postdates claimed_at)
+        await conn.execute(
+            """UPDATE memories SET metadata = jsonb_set(metadata, '{claimed_at}',
+               to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", MUTE_GRACE_SECONDS + 3600)
+
+    rb = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+    assert rb["verdict"] == "granted" and rb.get("stolen"), (
+        "a beating-but-mute holder kept its monopoly — K2 regression: the "
+        "working watcher stays locked out behind a healthy-looking corpse"
+    )
+    assert (await watch_beat(seat, na))["verdict"] == "displaced"
+
+
+@pytest.mark.asyncio
+async def test_a_holder_that_fetches_is_not_displaceable(client, db_pool):
+    """The other edge: advancing fetched_through past the waiting mail is
+    proof of delivery — a working holder must never be stolen from."""
+    from datetime import datetime, timedelta, timezone
+    from server.services.watch_claim import MUTE_GRACE_SECONDS
+    seat = _seat()
+    na = mint_nonce()
+    await watch_claim(seat, na, "bridge", "/tmp/p", _ls(seat))
+
+    mid = await _send_mail(client, seat)
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET created_at = NOW() - make_interval(secs => $2) "
+            "WHERE key = $1", mid, MUTE_GRACE_SECONDS + 60)
+
+    # holder reports it has fetched THROUGH now — delivery is proven
+    now_iso = datetime.now(timezone.utc).isoformat()
+    assert (await watch_beat(seat, na, fetched_through=now_iso))["verdict"] == "holder"
+
+    rb = await watch_claim(seat, mint_nonce(), "bridge", "/tmp/p", _ls(seat))
+    assert rb["verdict"] == "held", (
+        "a DELIVERING holder was stolen from — fetched_through is not being "
+        "honored, so every busy watcher is now displaceable"
+    )

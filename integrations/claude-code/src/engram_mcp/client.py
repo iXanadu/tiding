@@ -510,9 +510,10 @@ class MemoryClient:
             "host": host,
         }, headers=self._provenance_headers(None))
 
-    async def watch_beat(self, seat: str, nonce: str) -> dict:
+    async def watch_beat(self, seat: str, nonce: str,
+                         fetched_through: str | None = None) -> dict:
         return await self._request("POST", "/session/watch/beat", json={
-            "seat": seat, "nonce": nonce,
+            "seat": seat, "nonce": nonce, "fetched_through": fetched_through,
         }, headers=self._provenance_headers(None))
 
     async def watch_release(self, seat: str, nonce: str) -> dict:
