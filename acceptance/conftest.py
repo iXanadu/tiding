@@ -189,3 +189,42 @@ def registry(accept_server):
             return int(out.split()[-1])
 
     return Registry()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNRUNNABLE MUST NOT EXIT 0.
+#
+# Adopted from agentbeast-app-grok-2's audit of AgentBeast's arrival matrix
+# (huddle DfNRCl6x, 2026-08-20), applied here because the criticism lands on
+# THIS suite identically and nobody had said so: "printing OWED WORK and
+# returning 0 is the reader census in a new costume. A missing capability is
+# not a FAIL row; it is also not a green badge."
+#
+# An UNRUNNABLE arrival row means a claim we cannot observe — the exact state
+# that let 10c ship. If the runner exits 0 on it, the gap reads as coverage,
+# which is this suite's own disease turned on itself. Distinct exit code 2:
+# not a regression (that is 1), not clean (that is 0), OWED.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_UNRUNNABLE_MARK = "UNRUNNABLE"
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    owed = [
+        r for r in terminalreporter.stats.get("skipped", [])
+        if _UNRUNNABLE_MARK in str(getattr(r, "longrepr", "") or "")
+    ]
+    if not owed:
+        return
+    terminalreporter.write_sep("=", "OWED WORK — unrunnable arrival claims", red=True)
+    for r in owed:
+        terminalreporter.write_line(f"  · {r.nodeid}")
+    terminalreporter.write_line(
+        "\nThese rows name a claim this harness CANNOT observe. That is not a "
+        "pass and not a failure — it is coverage we do not have. Exiting 2 so "
+        "it cannot be mistaken for green."
+    )
+    if exitstatus == 0:
+        session = config.pluginmanager.get_plugin("session")
+        if session is not None:
+            session.exitstatus = 2

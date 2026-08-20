@@ -338,7 +338,7 @@ def test_a8_the_stranger_never_sees_the_parked_mail(provider, world, registry):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.parametrize("provider", ["claude"])
+@pytest.mark.parametrize("provider", PROVIDERS)
 def test_arrival_channel_mail_after_restart_reaches_a_reused_name(
     provider, world, registry
 ):
@@ -435,7 +435,7 @@ def test_arrival_channel_mail_after_restart_reaches_a_reused_name(
     )
 
 
-@pytest.mark.parametrize("provider", ["claude"])
+@pytest.mark.parametrize("provider", PROVIDERS)
 def test_arrival_wake_after_silence_fires_with_no_inbox_row_to_read(
     provider, world, registry
 ):
