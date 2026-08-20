@@ -214,3 +214,11 @@ lands.
 5. delivery-liveness displacement / D2 never gated by the sensing lock
 6. arrival matrix: prose skipped, AB killed, store bounced. **If step 6
    fails, the protocol is theater too.**
+
+Rider on step 6 (reviewer, accepted): a matrix row is a FAIL if it shows
+only project/lane wakes — it MUST include an ordinal-seat DM, the address
+AB cannot name today. Channel-only green is the coincidence already paid
+for once (the 21:57 "proven"). Step 3 (AB sensing retirement) executes
+PER SEAT, only after that seat's row — including the seat-DM leg — is
+green. AB's D2 injection (huddle/chat turns) is delivery, not sensing,
+and is not part of any retirement.
