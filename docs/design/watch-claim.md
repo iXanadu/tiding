@@ -104,6 +104,8 @@ watch" read off the claims table; existing doubles converge at next beat.
 | F7 | seat moves (rename/regrant) | watcher re-reads seat file each poll (existing behavior); claim keys on the CURRENT seat; old claim expires |
 | F8 | channel mail, two seats one project | watch is per SEAT; both watchers wake — correct, both sessions should hear the channel |
 | F9 | AB and bridge both arm at spawn | whoever claims first holds; other exits; no coordination needed |
+| F10 | **PARTIAL COVERAGE (wild specimen, 2026-08-20 22:14Z)**: a BARE watcher (no seat identity) resolves channel+lane only — seat-addressed DMs never wake it, while every liveness probe passes. Its own estate survey even LISTED the live seat it wasn't listening for | claim must record the LISTEN SET, and the claim is REFUSED as `partial` when a live ordinal seat for the project is absent from it — a partial watch is not a watch. The watcher can detect this itself (it prints the survey); the server can verify it (it grants the seats) |
+| F11 | **CONSUMER PARSES EVENT LINES AS MESSAGES (wild, same night)**: watcher stdout mixes `{"event":...}` lines (backlog-digest, estate-survey) with `{"id":...}` message lines; AB's wake loop woke sessions on the event lines and published it as proof of delivery | make the discriminator a stated CONTRACT: wake-worthy lines carry `id`, advisory lines carry `event`, nothing carries both; ship a reference consumer snippet; the watcher could also gain `--messages-only` for consumers that cannot filter |
 
 ## Migration and prose retirement (order is load-bearing)
 
@@ -127,3 +129,6 @@ R4. Expiry at 150s: too tight (load-stall displacement churn) or too loose
 5. The codex deferral: acceptable, or does deferring it recreate WATCH-G1
     for codex the way claude-only WATCH-A4 did for grok?
 R6. What does this design silently assume about AB that violates I2/I3?
+R7. F10's `partial` refusal: right call, or does refusing a channel-only
+    watch make things WORSE for sessions that genuinely have no seat
+    (admin, watchers on seatless projects)? Where is the line?
