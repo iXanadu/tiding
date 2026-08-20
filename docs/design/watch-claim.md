@@ -132,3 +132,85 @@ R6. What does this design silently assume about AB that violates I2/I3?
 R7. F10's `partial` refusal: right call, or does refusing a channel-only
     watch make things WORSE for sessions that genuinely have no seat
     (admin, watchers on seatless projects)? Where is the line?
+
+---
+
+# v2 — POST-REVIEW REVISION (adversarial cut: agentbeast-app-grok-2, 2026-08-20 22:47Z)
+
+Verdict on v1: **do not build as written.** Three S1 kills accepted in full.
+v1 text above is retained for the record; where v2 conflicts, v2 governs.
+
+## Kills accepted
+
+K1 (was F9/exit-forever): **AB never holds the sensing claim.** An AB-held
+watch dies with AB and the exited losers never return — mail death with AB,
+violating I2, structurally. Sensing lineage is bridge/session-side only.
+D2 injection is DELIVERY, not a watch. And **refused/displaced launchers
+RE-CLAIM on a timer** (process-level, I5-safe) — exit-forever was wrong;
+exit is right only while a successor is actually beating.
+
+K2 (was F4 mitigation): **exclusive claim must not let a mute holder lock
+out a working deliverer.** v1's after-the-fact flag was theater. v2:
+delivery-liveness displacement — a holder that has emitted nothing across N
+polls IN WHICH MAIL ARRIVED for its listen set is displaceable; and the
+sensing lock never gates D2.
+
+K3 (was F5): **I1 wins.** When the claim API is unreachable, a manually
+launched watcher RUNS UNCLAIMED, loudly marked UNHELD on stderr and in its
+own banner, and never shown as covered in the register (I6). The repair
+crew hears each other while the store is sick.
+
+## Protocol corrections
+
+P1: **Beat and steal are one nonce-CAS statement**
+(`... WHERE nonce=$expected OR last_beat < expiry`), copied from
+seat-claim's tested pattern. A beat whose response is lost = holder-unknown
+→ STOP EMITTING until a verdict. Nonce is RANDOM, never pid (pid reuse
+inside expiry reincarnates ghosts).
+P2: claim row carries **project_dir + listen_set**; mismatch on either →
+displace. (Kills the neighbor's-watcher class server-side; subsumes F10.)
+P3: expiry **150s**, floor 90 / ceiling 180. Stampede after a store outage
+is bounded by the one-fetch takeover rule — TESTED against a real 8920
+bounce, not asserted.
+P4: **a new holder's first act is fetch-unread-and-emit** — gap mail during
+an expiry window must never depend on a side path reaching back.
+P5: D3 (banner) is NOT delivery coverage — it serves already-awake sessions
+only. Coverage math counts D1/D2 firing, nothing else.
+
+## Spawn path: v2 only
+
+v1's "blessed command" is a shorter ritual, not a prose-free hook — 0/4
+grok sessions performed the one act tonight; the step-2 arrival matrix
+fails it by construction. Ship the bridge-child + FIFO + `tail -f` design
+directly, with the two lessons priced in: **reconnect re-claims (no
+skip-guard — AB's "surviving process holds its monitor" comment was the
+bug), and the claim is not taken until the tail consumer is attached**
+(else the FIFO is F4 with extra steps).
+
+## Coverage holes, named with dates — not deferred silently
+
+- **codex**: shared bridge claims one watch per seat it serves, minimum,
+  or I4 is false on day one. Named hole, owner-visible, date attached at
+  build time.
+- **cursor**: covered by NOTHING today. A spawn path ships in the same arc,
+  or this is WATCH-G1-for-cursor within the week.
+
+## Scope honesty
+
+Watch-claim does NOT fix the huddle wake noise (letters-off posts never
+touch the inbox waiter; D2 injects independently). That fix is the
+mention-directed + coalesced-wake proposal, separately owned. One sensing
+watch + AB injection can still mean two wakes per huddle post until that
+lands.
+
+## Build order (reviewer's, adopted verbatim)
+
+1. nonce-CAS claim+beat, tests copied from seat-claim incl. expiry-steal
+   vs in-flight beat
+2. v2 spawn (bridge child + FIFO + tail) with reconnect re-claim, no
+   skip-guard
+3. AB does not claim (their armer retires from sensing)
+4. unclaimed-allowed when store unreachable (UNHELD, loud, never covered)
+5. delivery-liveness displacement / D2 never gated by the sensing lock
+6. arrival matrix: prose skipped, AB killed, store bounced. **If step 6
+   fails, the protocol is theater too.**
