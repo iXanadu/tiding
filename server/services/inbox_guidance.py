@@ -98,11 +98,31 @@ def inbox_list_guidance(
 ) -> str:
     digest = _digest_line(counts)
     if msg_count == 0:
+        open_n = (counts or {}).get("open", 0) or 0
         drained = counts and ((counts.get("resolved", 0) or 0) + (counts.get("superseded", 0) or 0))
+        # "Nothing open" is only true when nothing is open. It used to print
+        # whenever ANY mail had drained, so a reader with 12 open messages was
+        # told "12 open" in the digest and "Nothing open" four lines later, in
+        # one response. Contradicting yourself is worse than staying silent.
         tail = (
             "  • Nothing open. Resolved/superseded mail is hidden by default;\n"
             "    pass include_resolved=true to see the full history.\n"
-            if drained else ""
+            if drained and not open_n else ""
+        )
+        # An INHERITED ESTATE. Acks are per-reader and never transfer, so mail a
+        # predecessor read-but-never-resolved stays open, is unacked by nobody,
+        # and is invisible in this view. A successor reads "no unread" and
+        # concludes nothing is waiting while real asks sit on its own addresses.
+        # Measured 2026-08-20: a 27h owner question and a 44h "urgent" peer ask
+        # were both sitting exactly here, at addresses whose sessions restarted.
+        estate = (
+            f"  • \u26a0\ufe0f  {open_n} message(s) are OPEN on your addresses and NOT\n"
+            "    shown here — already acked, but by a PREDECESSOR at one of\n"
+            "    these addresses, not by you. Acks are per-reader and never\n"
+            "    transfer. Zero unread is NOT an empty estate: call\n"
+            "    memory_inbox with unread_only=false and read them before\n"
+            "    concluding nothing is waiting on you.\n"
+            if open_n else ""
         )
         return (
             digest
@@ -117,6 +137,7 @@ def inbox_list_guidance(
             "    you, fetch the transcript at the room id your wake note carries.\n"
             "    Concluding \"nothing arrived\" from THIS view is the documented\n"
             "    failure mode, and it has been made independently more than once.\n"
+            + estate
             + tail
             + f"  • You are listening as '{reader_identity}' on: {listen_set}"
         )

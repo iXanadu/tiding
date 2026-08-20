@@ -1490,3 +1490,48 @@ def test_transcript_hint_only_on_the_empty_branch():
     # A session holding mail is not the one at risk of concluding "room dead",
     # and this text is paid for on every single inbox read.
     assert "empty inbox is NOT an empty room" not in populated
+
+
+# --- ESTATE-1: zero unread is not an empty estate -------------------------
+# Acks are per-reader and never transfer. Mail a predecessor read but never
+# resolved stays OPEN, is unacked by nobody, and vanishes from the default
+# unread-only view. The successor reads "no unread" and concludes nothing is
+# waiting. Measured 2026-08-20: a 27h owner question and a 44h "urgent" peer
+# ask were both sitting exactly there, on addresses whose sessions restarted.
+
+def test_zero_unread_with_open_mail_warns_about_the_estate():
+    from server.services.inbox_guidance import inbox_list_guidance
+
+    text = inbox_list_guidance(
+        "engram-claude-2@macmini", ["engram"],
+        msg_count=0, counts={"open": 12, "resolved": 166},
+    )
+
+    assert "12 message(s) are OPEN" in text
+    assert "PREDECESSOR" in text
+    assert "unread_only=false" in text
+
+
+def test_nothing_open_is_not_claimed_while_mail_is_open():
+    """The guidance must not contradict its own digest in one response."""
+    from server.services.inbox_guidance import inbox_list_guidance
+
+    text = inbox_list_guidance(
+        "engram-claude-2@macmini", ["engram"],
+        msg_count=0, counts={"open": 12, "resolved": 166},
+    )
+
+    assert "12 open" in text          # the digest says so...
+    assert "Nothing open." not in text  # ...so this line must not appear
+
+
+def test_genuinely_empty_estate_says_nothing_open_and_skips_the_warning():
+    from server.services.inbox_guidance import inbox_list_guidance
+
+    text = inbox_list_guidance(
+        "x@macmini", ["engram"],
+        msg_count=0, counts={"open": 0, "resolved": 166},
+    )
+
+    assert "Nothing open." in text
+    assert "are OPEN on your addresses" not in text
