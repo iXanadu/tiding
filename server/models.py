@@ -800,6 +800,13 @@ class InboxListRequest(BaseModel):
     # Step 12: sweep/climb tooling — only open ASK-class letters whose
     # handled verdict is not True (False or unknown). Additive; default off.
     unhandled_only: bool = False
+    # DEFAULT OFF ON PURPOSE. Only a read that actually PUTS THE MESSAGE IN
+    # FRONT OF AN AGENT may record delivery. The WATCHER also calls this
+    # endpoint, every ~45s, with the session's own reader_identity — so a
+    # default-on flag would stamp "delivered" on every message within a minute
+    # of arrival whether or not anybody ever looked at it, which is exactly the
+    # false-delivery the field exists to prevent. Under-record, never over-.
+    mark_delivered: bool = False
 
 
 class InboxListResponse(BaseModel):

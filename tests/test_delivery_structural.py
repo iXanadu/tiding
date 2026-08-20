@@ -48,6 +48,7 @@ async def test_reading_an_inbox_records_delivery_without_any_ack(client, db_pool
 
     r = await client.post("/memory/inbox", json={
         "listen_set": [addr], "reader_identity": f"{addr}@macmini", "limit": 10,
+        "mark_delivered": True,
     })
     assert r.status_code == 200
 
@@ -61,7 +62,7 @@ async def test_delivery_is_idempotent_across_repeated_reads(client, db_pool):
     addr = f"deliv-idem-{uuid.uuid4().hex[:8]}"
     mid = await _send(client, addr)
     body = {"listen_set": [addr], "reader_identity": f"{addr}@macmini",
-            "unread_only": False, "limit": 10}
+            "unread_only": False, "limit": 10, "mark_delivered": True}
 
     for _ in range(3):
         assert (await client.post("/memory/inbox", json=body)).status_code == 200
@@ -82,7 +83,7 @@ async def test_each_reader_is_recorded_separately(client, db_pool):
     for who in ("alpha@macmini", "beta@macmini"):
         r = await client.post("/memory/inbox", json={
             "listen_set": [addr], "reader_identity": who,
-            "unread_only": False, "limit": 10,
+            "unread_only": False, "limit": 10, "mark_delivered": True,
         })
         assert r.status_code == 200
 
@@ -98,6 +99,7 @@ async def test_delivery_does_not_imply_ack(client, db_pool):
     mid = await _send(client, addr)
     await client.post("/memory/inbox", json={
         "listen_set": [addr], "reader_identity": f"{addr}@macmini", "limit": 10,
+        "mark_delivered": True,
     })
 
     async with db_pool.acquire() as conn:
@@ -109,3 +111,29 @@ async def test_delivery_does_not_imply_ack(client, db_pool):
 
     assert await _delivered_to(db_pool, mid), "delivered should be set"
     assert read_by == [], "reading an inbox must NOT silently count as an ack"
+
+
+@pytest.mark.asyncio
+async def test_a_watcher_style_poll_does_NOT_mark_delivery(client, db_pool):
+    """THE GATE — the owner's objection, enshrined: 'does the server REALLY
+    know? If it delivers to a dead mailbox and marks delivered, it isn't.'
+
+    The watcher polls this same endpoint every ~45s with the session's own
+    reader_identity. Without the gate, every message would be stamped
+    'delivered' within a minute of arrival whether any agent ever saw it —
+    false delivery, structurally produced. So marking is OPT-IN: only a call
+    that actually puts messages in front of an agent passes mark_delivered.
+    The default is the watcher's path, and it must stay silent."""
+    addr = f"deliv-gate-{uuid.uuid4().hex[:8]}"
+    mid = await _send(client, addr)
+
+    # a watcher-style poll: same endpoint, no flag
+    r = await client.post("/memory/inbox", json={
+        "listen_set": [addr], "reader_identity": f"{addr}@macmini", "limit": 10,
+    })
+    assert r.status_code == 200
+
+    assert await _delivered_to(db_pool, mid) == [], (
+        "an unflagged (watcher-style) poll marked delivery — this is the "
+        "false-delivered defect the owner called before it shipped"
+    )

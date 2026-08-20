@@ -990,6 +990,7 @@ async def list_inbox(req: InboxListRequest, request: Request):
             include_resolved=req.include_resolved,
             newest_first=req.newest_first,
             unhandled_only=req.unhandled_only,
+            mark_delivered=req.mark_delivered,
         )
         counts = await inbox_counts(
             listen_set=listen_set,

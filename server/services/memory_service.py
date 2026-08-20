@@ -1555,6 +1555,7 @@ async def inbox_list(
     include_resolved: bool = False,
     newest_first: bool = False,
     unhandled_only: bool = False,
+    mark_delivered: bool = False,
 ) -> list[InboxMessage]:
     """List inbox messages addressed to any member of ``listen_set``.
 
@@ -1633,7 +1634,8 @@ async def inbox_list(
         # NOTE THE LIMIT HONESTLY: delivered means the bytes went into a tool
         # result for that reader. Whether the model attended to them is not
         # observable from here and this field must never be read as "seen".
-        await _mark_delivered(conn, messages, reader_identity)
+        if mark_delivered:
+            await _mark_delivered(conn, messages, reader_identity)
     if unhandled_only:
         # Sweep/climb view: open asks whose verdict is not True (False or
         # unknown). Chatter and handled asks drain out.
