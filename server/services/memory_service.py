@@ -1519,6 +1519,34 @@ async def _mark_handled(conn, messages: list[InboxMessage]) -> None:
     # UNKNOWN stands for all of them. Facts, never guesses.
 
 
+async def _mark_delivered(conn, messages, reader_identity: str | None) -> None:
+    """Record that these rows were HANDED TO ``reader_identity``. Structural.
+
+    Written only for readers not already listed, so a session re-reading its
+    inbox does not rewrite rows on every poll. Best-effort: a failure here
+    must never break the read that was actually asked for — an inbox that
+    500s because bookkeeping failed is worse than a missing datum.
+    """
+    if not reader_identity or not messages:
+        return
+    ids = [m.id for m in messages]
+    try:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'::jsonb), '{delivered_to}',
+                    COALESCE(metadata->'delivered_to', '[]'::jsonb) || to_jsonb($2::text),
+                    true)
+            WHERE key = ANY($1::text[])
+              AND NOT COALESCE(metadata->'delivered_to', '[]'::jsonb) ? $2::text
+            """,
+            ids, reader_identity,
+        )
+    except Exception:  # pragma: no cover - bookkeeping never breaks a read
+        logger.warning("delivery mark failed for %d row(s)", len(ids), exc_info=True)
+
+
 async def inbox_list(
     listen_set: list[str],
     reader_identity: str | None = None,
@@ -1595,6 +1623,17 @@ async def inbox_list(
         # Step 12: annotate ask-class letters with the structural verdict —
         # inside the same connection scope, one batched query per rung.
         await _mark_handled(conn, messages)
+        # DELIVERY IS STRUCTURAL. `read_by` is a voluntary ack, so it measures
+        # whether an agent remembers to be polite — cursor acked 6/6 inbound
+        # over 18h while grok acked essentially none, and BOTH were reading
+        # and answering. Keying anything on ack produced a false fleet-wide
+        # alarm on 2026-08-20. The server, by contrast, KNOWS when it handed a
+        # message to a reader: that is this moment, it needs no cooperation,
+        # and it cannot be forgotten.
+        # NOTE THE LIMIT HONESTLY: delivered means the bytes went into a tool
+        # result for that reader. Whether the model attended to them is not
+        # observable from here and this field must never be read as "seen".
+        await _mark_delivered(conn, messages, reader_identity)
     if unhandled_only:
         # Sweep/climb view: open asks whose verdict is not True (False or
         # unknown). Chatter and handled asks drain out.
