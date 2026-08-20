@@ -1,0 +1,270 @@
+"""Watch-claim: one seat, one watch, enforced at the store (v2 design).
+
+Design of record: docs/design/watch-claim.md v2 (adversarially reviewed
+2026-08-20 by agentbeast-app-grok-2 — verdict on v1 was "do not build as
+written", and this module implements the corrected protocol).
+
+The problem, measured before this existed: the same seat, the same sender,
+the identical ask — 50 minutes to answer without a watcher, under 2 minutes
+with one. Watcher arming was an agent-performed startup ritual, and one day
+(2026-08-20) produced its complete failure catalog: never armed,
+believed-armed-never-ran (a ps check matched a NEIGHBOR's watcher),
+armed-then-died, armed-twice (double wakes), and armed-but-listening-on-the-
+wrong-addresses (a seat-addressed DM could never wake it while every
+liveness probe passed).
+
+What this module enforces:
+- A watch on a seat is a single-holder claim, granted by the store.
+- The claim lives by beats and dies by silence (EXPIRY); recovery costs no
+  model turns — a dead holder's slot is simply taken by the next arrival.
+- Beat and steal are ONE compare-and-swap statement on a RANDOM nonce.
+  The dual-holder race the reviewer found in v1 (a stalled holder's
+  in-flight beat refreshing a row a successor just stole) cannot happen:
+  a beat that does not match the current nonce updates nothing and returns
+  `displaced`. A pid is never a nonce — pid reuse inside the expiry window
+  would reincarnate a ghost.
+- The claim records the holder's PROJECT_DIR and LISTEN_SET, and a claim
+  whose listen set omits the seat it names is refused as `partial` — a
+  partial watch is not a watch. This is F10, found in the wild: a bare
+  watcher held "coverage" for a seat it was not listening for, printed an
+  estate survey LISTING that seat, and said nothing.
+
+What this module deliberately does NOT do:
+- It never gates DELIVERY. AB's user-turn injection (D2) is delivery, not
+  sensing, and proceeds regardless of who holds the watch. A mute holder
+  must not lock out a working deliverer (review kill K2); delivery-liveness
+  displacement is step 5 of the build order, layered on top.
+- It never blocks a watcher from RUNNING. When this API is unreachable, a
+  manually launched watcher runs UNCLAIMED and loudly UNHELD (review kill
+  K3 — the repair crew hears each other while the store is sick). The
+  register simply never shows an unheld seat as covered.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import secrets
+from datetime import datetime, timezone
+
+from server.db import get_pool
+from server.services.memory_service import INBOX_NAMESPACE
+
+logger = logging.getLogger(__name__)
+
+WATCH_NAMESPACE = INBOX_NAMESPACE
+WATCH_SCOPE = "watch"
+WATCH_USER_ID = "global"
+
+# 3 missed ~45s beats. Reviewer-ratified bounds: floor 90 (a hung server
+# should not displace everyone), ceiling 180 (a human-noticeable silence).
+WATCH_EXPIRY_SECONDS = 150
+
+
+def mint_nonce() -> str:
+    """Random, never derived from pid — pid reuse inside the expiry window
+    reincarnates a dead holder's identity (same ghost class as seat nonces)."""
+    return secrets.token_hex(16)
+
+
+def _row_meta(seat: str, nonce: str, armed_by: str, project_dir: str,
+              listen_set: list[str], host: str | None) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "kind": "watch",
+        "seat": seat,
+        "nonce": nonce,
+        "armed_by": armed_by,          # bridge | ab | agent — provenance, never authority
+        "project_dir": project_dir,    # F10/P2: the tree this watcher actually polls for
+        "listen_set": listen_set,      # F10/P2: what it actually wakes on
+        "host": host,
+        "claimed_at": now,
+        "last_beat": now,
+    }
+
+
+async def watch_claim(
+    seat: str,
+    nonce: str,
+    armed_by: str,
+    project_dir: str,
+    listen_set: list[str],
+    host: str | None = None,
+) -> dict:
+    """Claim the watch for ``seat``. Returns a verdict dict, never raises
+    for protocol outcomes.
+
+    Verdicts:
+      granted            — you hold the watch; start polling.
+      held               — a live holder exists; RE-CLAIM ON A TIMER, do not
+                           exit forever (v1's exit-forever meant mail died
+                           with whichever process claimed first — kill K1).
+      partial-refused    — your listen_set does not contain the seat you are
+                           claiming for. You would hold coverage for an
+                           address you cannot hear (F10). Fix the listen set;
+                           do not retry as-is.
+    """
+    seat = (seat or "").strip().lower()
+    if not seat:
+        return {"verdict": "partial-refused", "reason": "empty seat"}
+    normalized = [a.strip().lower() for a in (listen_set or []) if a and a.strip()]
+    bare = [a.split("@", 1)[0] for a in normalized]
+    if seat not in normalized and seat not in bare:
+        return {
+            "verdict": "partial-refused",
+            "reason": (
+                f"listen_set does not include the seat '{seat}' — a partial "
+                "watch is not a watch (F10: a seat-addressed DM would never "
+                "wake this watcher while the register showed it covered)"
+            ),
+            "listen_set": normalized,
+        }
+
+    meta = _row_meta(seat, nonce, armed_by, project_dir, normalized, host)
+    key = f"watch/{seat}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Try the free-slot insert first; the 5-tuple unique key settles
+        # same-instant races (one INSERT wins, the loser falls through).
+        inserted = await conn.fetchval(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id,
+                                  project, tags, tags_search, metadata)
+            VALUES ($1, $2, 'watch', $3, $4, '', '', '', $5::jsonb)
+            ON CONFLICT (namespace, key, scope, user_id, project) DO NOTHING
+            RETURNING 1
+            """,
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, json.dumps(meta),
+        )
+        if inserted:
+            return {"verdict": "granted", "seat": seat, "expiry_seconds": WATCH_EXPIRY_SECONDS}
+
+        # Occupied. Steal iff expired — ONE CAS statement, so a concurrent
+        # steal and a stalled holder's late beat cannot both win (P1).
+        stole = await conn.fetchval(
+            """
+            UPDATE memories
+            SET metadata = $5::jsonb, last_used_at = NOW()
+            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+              AND (metadata->>'last_beat')::timestamptz
+                    < NOW() - make_interval(secs => $6)
+            RETURNING 1
+            """,
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, json.dumps(meta),
+            WATCH_EXPIRY_SECONDS,
+        )
+        if stole:
+            return {
+                "verdict": "granted", "seat": seat, "stolen": True,
+                "expiry_seconds": WATCH_EXPIRY_SECONDS,
+            }
+
+        row = await conn.fetchrow(
+            "SELECT metadata FROM memories WHERE namespace=$1 AND key=$2 "
+            "AND scope=$3 AND user_id=$4",
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID,
+        )
+        held = row["metadata"] if row else None
+        if isinstance(held, str):
+            held = json.loads(held)
+        held = held or {}
+        return {
+            "verdict": "held",
+            "seat": seat,
+            "holder_armed_by": held.get("armed_by"),
+            "holder_since": held.get("claimed_at"),
+            "holder_last_beat": held.get("last_beat"),
+            # The caller's contract: retry on a timer. Stated in the response
+            # so no client has to remember it from prose.
+            "retry_after_seconds": WATCH_EXPIRY_SECONDS,
+        }
+
+
+async def watch_beat(seat: str, nonce: str) -> dict:
+    """One beat. Returns ``holder`` or ``displaced`` — never ambiguity.
+
+    The beat is a CAS on the nonce: if this process no longer holds the
+    watch, the UPDATE matches nothing and the verdict says so. The caller's
+    contract (stated here because callers read docstrings, not designs):
+    on `displaced` — exit, then re-claim on a timer if you still want the
+    watch. On a LOST RESPONSE (timeout, 5xx) — treat as holder-unknown and
+    STOP EMITTING until a beat succeeds; emitting while unsure is how two
+    watchers deliver the same mail twice.
+    """
+    seat = (seat or "").strip().lower()
+    key = f"watch/{seat}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        beat = await conn.fetchval(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{last_beat}',
+                                     to_jsonb(NOW()::text), false),
+                last_used_at = NOW()
+            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+              AND metadata->>'nonce' = $5
+            RETURNING 1
+            """,
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, nonce,
+        )
+    if beat:
+        return {"verdict": "holder", "seat": seat}
+    return {"verdict": "displaced", "seat": seat}
+
+
+async def watch_release(seat: str, nonce: str) -> dict:
+    """Graceful exit: free the slot iff we still hold it (same CAS rule —
+    releasing a watch someone else now holds would free THEIR claim)."""
+    seat = (seat or "").strip().lower()
+    key = f"watch/{seat}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        released = await conn.fetchval(
+            """
+            DELETE FROM memories
+            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+              AND metadata->>'nonce' = $5
+            RETURNING 1
+            """,
+            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, nonce,
+        )
+    return {"verdict": "released" if released else "not-holder", "seat": seat}
+
+
+async def watch_status(seat: str) -> dict:
+    """What the register can honestly say about a seat's watch.
+
+    Three-valued on purpose, mirroring _watcher_state's discipline:
+      covered   — live holder, beating inside the window
+      expired   — a holder exists but has gone silent past EXPIRY
+      unheld    — no claim at all. NEVER rendered as "dead"; a session may
+                  be running UNHELD legitimately (store was unreachable at
+                  arm time — kill K3), it is just not COVERED.
+    """
+    seat = (seat or "").strip().lower()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT metadata,
+                   (metadata->>'last_beat')::timestamptz
+                       >= NOW() - make_interval(secs => $5) AS fresh
+            FROM memories
+            WHERE namespace=$1 AND key=$2 AND scope=$3 AND user_id=$4
+            """,
+            WATCH_NAMESPACE, f"watch/{seat}", WATCH_SCOPE, WATCH_USER_ID,
+            WATCH_EXPIRY_SECONDS,
+        )
+    if not row:
+        return {"state": "unheld", "seat": seat}
+    md = row["metadata"]
+    if isinstance(md, str):
+        md = json.loads(md)
+    return {
+        "state": "covered" if row["fresh"] else "expired",
+        "seat": seat,
+        "armed_by": md.get("armed_by"),
+        "listen_set": md.get("listen_set"),
+        "project_dir": md.get("project_dir"),
+        "last_beat": md.get("last_beat"),
+    }

@@ -240,3 +240,77 @@ async def list_seats(req: SeatListRequest, request: Request):
         logger.exception("seat_list failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
     return SeatListResponse(status="ok", seats=[SeatEntry(**s) for s in seats])
+
+
+# ─── Watch-claim: one seat, one watch (docs/design/watch-claim.md v2) ────────
+# Sensing only. These endpoints never gate delivery (a mute holder must not
+# lock out a working deliverer — review kill K2), and a watcher that cannot
+# reach them runs UNCLAIMED and loudly UNHELD (kill K3) — the repair crew
+# hears each other while the store is sick.
+
+from pydantic import BaseModel as _BM, Field as _F  # local: models.py additions ride next pass
+
+from server.services.watch_claim import (  # noqa: E402
+    watch_beat as _watch_beat,
+    watch_claim as _watch_claim,
+    watch_release as _watch_release,
+    watch_status as _watch_status,
+)
+
+
+class WatchClaimRequest(_BM):
+    seat: str = _F(max_length=200)
+    nonce: str = _F(min_length=8, max_length=64)
+    armed_by: str = _F(default="agent", max_length=20)
+    project_dir: str = _F(default="", max_length=4096)
+    listen_set: list[str] = _F(default_factory=list, max_length=32)
+    host: str | None = _F(default=None, max_length=200)
+
+
+class WatchBeatRequest(_BM):
+    seat: str = _F(max_length=200)
+    nonce: str = _F(min_length=8, max_length=64)
+
+
+@router.post("/watch/claim")
+async def watch_claim_endpoint(req: WatchClaimRequest, request: Request):
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "write")
+    try:
+        return await _watch_claim(
+            seat=req.seat, nonce=req.nonce, armed_by=req.armed_by,
+            project_dir=req.project_dir, listen_set=req.listen_set,
+            host=req.host,
+        )
+    except Exception:
+        logger.exception("watch_claim failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/watch/beat")
+async def watch_beat_endpoint(req: WatchBeatRequest, request: Request):
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "write")
+    try:
+        return await _watch_beat(seat=req.seat, nonce=req.nonce)
+    except Exception:
+        logger.exception("watch_beat failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.post("/watch/release")
+async def watch_release_endpoint(req: WatchBeatRequest, request: Request):
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "write")
+    try:
+        return await _watch_release(seat=req.seat, nonce=req.nonce)
+    except Exception:
+        logger.exception("watch_release failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+@router.get("/watch/status")
+async def watch_status_endpoint(seat: str, request: Request):
+    check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
+    try:
+        return await _watch_status(seat=seat)
+    except Exception:
+        logger.exception("watch_status failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")

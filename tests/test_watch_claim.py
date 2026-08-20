@@ -1,0 +1,199 @@
+"""Watch-claim step 1: nonce-CAS claim + beat (design v2, reviewed).
+
+Every test here guards a specific review finding or wild specimen from
+2026-08-20. The dual-holder test is the reviewer's S2 race verbatim; the
+partial-refusal test is F10's wild specimen (a watcher holding coverage for
+a seat it was not listening on, while every liveness probe passed).
+"""
+
+import asyncio
+import uuid
+
+import pytest
+
+from server.services.watch_claim import (
+    WATCH_EXPIRY_SECONDS,
+    mint_nonce,
+    watch_beat,
+    watch_claim,
+    watch_release,
+    watch_status,
+)
+
+
+def _seat():
+    return f"wcx-{uuid.uuid4().hex[:8]}-claude-2"
+
+
+def _ls(seat):
+    # a realistic listen set: seat, lane, project channel
+    lane = seat.rsplit("-", 1)[0]
+    proj = lane.rsplit("-", 1)[0]
+    return [seat, lane, proj]
+
+
+@pytest.mark.asyncio
+async def test_claim_grant_and_second_arrival_held(db_pool):
+    seat = _seat()
+    n1, n2 = mint_nonce(), mint_nonce()
+
+    r1 = await watch_claim(seat, n1, "bridge", "/tmp/p", _ls(seat))
+    assert r1["verdict"] == "granted"
+
+    r2 = await watch_claim(seat, n2, "ab", "/tmp/p", _ls(seat))
+    assert r2["verdict"] == "held"
+    # K1: the loser is TOLD to retry on a timer — the contract rides the
+    # response, not prose. v1's exit-forever meant mail died with the holder.
+    assert r2["retry_after_seconds"] > 0
+    assert r2["holder_armed_by"] == "bridge"
+
+
+@pytest.mark.asyncio
+async def test_partial_listen_set_is_refused_not_granted(db_pool):
+    """F10, the wild specimen: AB's bare watcher held 'coverage' for
+    agentbeast-app-grok-2 while listening only on channel+lane. A
+    seat-addressed DM could never wake it; every liveness probe passed."""
+    seat = _seat()
+    lane = seat.rsplit("-", 1)[0]
+    proj = lane.rsplit("-", 1)[0]
+
+    r = await watch_claim(seat, mint_nonce(), "ab", "/tmp/p",
+                          [lane, proj])           # channel+lane, NO seat
+    assert r["verdict"] == "partial-refused"
+    assert "partial watch is not a watch" in r["reason"]
+
+    # and nothing was written — the register must not show it covered
+    assert (await watch_status(seat))["state"] == "unheld"
+
+
+@pytest.mark.asyncio
+async def test_beat_is_cas_stalled_holder_cannot_refresh_a_stolen_row(db_pool):
+    """The reviewer's S2 dual-holder race, verbatim:
+      1. A holds; its beat stalls past EXPIRY.
+      2. B steals via the expiry branch.
+      3. A's in-flight beat lands late.
+    v1's naive `UPDATE last_beat WHERE seat=` would refresh the row B just
+    took, leaving BOTH believing they hold — double delivery. The CAS makes
+    A's late beat match nothing and come back `displaced`."""
+    seat = _seat()
+    na, nb = mint_nonce(), mint_nonce()
+
+    assert (await watch_claim(seat, na, "bridge", "/tmp/p", _ls(seat)))["verdict"] == "granted"
+
+    # age A's beat past expiry (simulate the stall by rewriting last_beat)
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE memories
+               SET metadata = jsonb_set(metadata, '{last_beat}',
+                   to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", WATCH_EXPIRY_SECONDS + 30,
+        )
+
+    rb = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+    assert rb["verdict"] == "granted" and rb.get("stolen"), "expiry steal failed"
+
+    # A's late beat arrives — it must NOT refresh B's row
+    ra = await watch_beat(seat, na)
+    assert ra["verdict"] == "displaced", (
+        "the stalled holder refreshed a stolen row — dual holder, the exact "
+        "race the review found in v1"
+    )
+    # and B still beats fine
+    assert (await watch_beat(seat, nb))["verdict"] == "holder"
+
+
+@pytest.mark.asyncio
+async def test_live_holder_cannot_be_stolen(db_pool):
+    seat = _seat()
+    na = mint_nonce()
+    await watch_claim(seat, na, "bridge", "/tmp/p", _ls(seat))
+    await watch_beat(seat, na)  # fresh
+
+    rb = await watch_claim(seat, mint_nonce(), "ab", "/tmp/p", _ls(seat))
+    assert rb["verdict"] == "held", "a beating holder was stolen from"
+
+
+@pytest.mark.asyncio
+async def test_same_instant_race_has_exactly_one_winner(db_pool):
+    """The unique-key branch: N concurrent first claims, one grant."""
+    seat = _seat()
+    results = await asyncio.gather(*[
+        watch_claim(seat, mint_nonce(), "bridge", "/tmp/p", _ls(seat))
+        for _ in range(6)
+    ])
+    verdicts = [r["verdict"] for r in results]
+    assert verdicts.count("granted") == 1, verdicts
+    assert verdicts.count("held") == 5, verdicts
+
+
+@pytest.mark.asyncio
+async def test_release_is_cas_too(db_pool):
+    """Releasing a watch someone else now holds would free THEIR claim —
+    the same ghost class, on the way out."""
+    seat = _seat()
+    na, nb = mint_nonce(), mint_nonce()
+    await watch_claim(seat, na, "bridge", "/tmp/p", _ls(seat))
+
+    # steal after expiry
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE memories SET metadata = jsonb_set(metadata, '{last_beat}',
+               to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", WATCH_EXPIRY_SECONDS + 30)
+    await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+
+    ra = await watch_release(seat, na)
+    assert ra["verdict"] == "not-holder", "a displaced process released the successor's claim"
+    assert (await watch_status(seat))["state"] == "covered"
+
+    rb = await watch_release(seat, nb)
+    assert rb["verdict"] == "released"
+    assert (await watch_status(seat))["state"] == "unheld"
+
+
+@pytest.mark.asyncio
+async def test_status_is_three_valued_and_unheld_is_not_dead(db_pool):
+    """K3/I6: unheld is a state, not a verdict. A session may be running
+    UNHELD legitimately (store unreachable at arm time); the register just
+    never shows it as covered."""
+    seat = _seat()
+    assert (await watch_status(seat))["state"] == "unheld"
+
+    n = mint_nonce()
+    await watch_claim(seat, n, "agent", "/tmp/p", _ls(seat))
+    assert (await watch_status(seat))["state"] == "covered"
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE memories SET metadata = jsonb_set(metadata, '{last_beat}',
+               to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", WATCH_EXPIRY_SECONDS + 30)
+    st = await watch_status(seat)
+    assert st["state"] == "expired"
+    assert st["armed_by"] == "agent"
+
+
+# ─── endpoint layer ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_endpoints_roundtrip(client, db_pool):
+    seat = _seat()
+    n = mint_nonce()
+    r = await client.post("/session/watch/claim", json={
+        "seat": seat, "nonce": n, "armed_by": "bridge",
+        "project_dir": "/tmp/p", "listen_set": _ls(seat),
+    })
+    assert r.status_code == 200 and r.json()["verdict"] == "granted"
+
+    r2 = await client.post("/session/watch/beat", json={"seat": seat, "nonce": n})
+    assert r2.json()["verdict"] == "holder"
+
+    r3 = await client.get(f"/session/watch/status?seat={seat}")
+    assert r3.json()["state"] == "covered"
+
+    r4 = await client.post("/session/watch/release", json={"seat": seat, "nonce": n})
+    assert r4.json()["verdict"] == "released"
+    assert (await client.get(f"/session/watch/status?seat={seat}")).json()["state"] == "unheld"
