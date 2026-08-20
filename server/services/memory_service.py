@@ -2727,12 +2727,25 @@ async def unanswered_asks(min_age_hours: float = 4.0, limit: int = 100) -> list[
     from here. The spawner (AgentBeast) knows, because it performs the turns.
     Facts here, verdict there — the 2026-07-27 ownership split.
 
-    WHY `read_by = []` AND NOT `status = open`, measured 2026-08-20 on live
-    data: 93% of action-class mail is still 'open' because resolution barely
-    happens, so open is nearly meaningless and an escalation keyed on it would
-    fire constantly and be tuned out. Never-read is ~8.5% and every row is a
-    genuine "this reached nobody" — 221 such asks to agent addresses in one
-    week, the oldest sitting 361 hours at addresses with nobody home.
+    THE PREDICATE IS "NEVER ACKED **AND** NEVER REPLIED TO", and getting here
+    cost a retracted finding worth recording.
+
+    First attempt used `read_by = []` alone and produced 197 "unread" asks at
+    agent addresses. WRONG, and the owner called it from lived experience:
+    agents read mail and answer it without ever calling ack. Measured — of 159
+    never-acked asks at one grok address, 159 had a REPLY IN THREAD. One
+    hundred percent. Same everywhere else (11/11, 4/4). So `read_by` does not
+    measure delivery; it measures ACK DISCIPLINE, which is near-zero
+    fleet-wide and harmless, because the reply IS the acknowledgement.
+
+    A reply proves someone saw it, whatever the ack state says. Requiring both
+    conditions drops the fleet-wide population from 197 to 15 — and all 15 are
+    addressed to the OWNER, none to an agent. Agent-to-agent messaging is not
+    the problem.
+
+    `status = open` is deliberately NOT the trigger either: 93% of action-class
+    mail is still open because resolution barely happens, so an alarm keyed on
+    it fires on nearly everything and is tuned out within a day.
 
     Deliberately NOT filtered to tree-shaped addresses. Channels are the mode
     we tell everyone to prefer, and they are exempt from BOTH the sweep (root
@@ -2753,6 +2766,14 @@ async def unanswered_asks(min_age_hours: float = 4.0, limit: int = 100) -> list[
               AND COALESCE(metadata->>'status', $3) = $3
               AND metadata->>'intent' = ANY($4::text[])
               AND jsonb_array_length(COALESCE(metadata->'read_by', '[]'::jsonb)) = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM memories r
+                  WHERE r.namespace = memories.namespace
+                    AND r.scope = memories.scope
+                    AND r.metadata->>'thread_id' = memories.metadata->>'thread_id'
+                    AND r.metadata->>'thread_id' IS NOT NULL
+                    AND r.created_at > memories.created_at
+              )
               AND EXTRACT(EPOCH FROM (NOW() - created_at)) >= $5
             ORDER BY created_at
             LIMIT $6
@@ -2775,6 +2796,8 @@ async def unanswered_asks(min_age_hours: float = 4.0, limit: int = 100) -> list[
             "created_at": r["created_at"].isoformat(),
             # Stated as a FACT, never a verdict. None = no watcher has ever
             # beaten for this address, which is not the same as "dead".
-            "never_read": True,
+            # BOTH held: nobody acked it AND nobody replied in its
+            # thread. Either alone is not evidence of anything.
+            "unacked_and_unanswered": True,
         })
     return out

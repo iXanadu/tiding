@@ -109,3 +109,41 @@ async def test_endpoint_returns_facts_not_verdicts(client, db_pool):
         assert field in row
     # No liveness claim may appear here — that verdict is the spawner's.
     assert "alive" not in row and "dead" not in row
+
+
+# --- THE CORRECTION THAT COST A RETRACTED FINDING -------------------------
+# First version keyed on read_by=[] alone and reported 197 "unread" asks at
+# agent addresses. The owner rejected it from lived experience, and the
+# measurement agreed with him: of 159 never-acked asks at one grok address,
+# 159 had a REPLY IN THREAD. Agents answer mail without ever calling ack.
+# read_by measures ACK DISCIPLINE, not delivery. A reply proves it landed.
+
+@pytest.mark.asyncio
+async def test_a_replied_to_ask_is_not_unanswered_even_if_never_acked(client, db_pool):
+    addr = f"addr2-replied-{uuid.uuid4().hex[:8]}"
+    r = await client.post("/memory/send", json={
+        "to": addr, "subject": "ADDR2 answered ask", "body": "please act",
+        "intent": "action", "thread_id": f"t-{uuid.uuid4().hex[:8]}",
+    })
+    assert r.status_code == 200
+    ask = r.json()["id"]
+    thread = (await client.post("/memory/inbox", json={
+        "listen_set": [addr], "reader_identity": f"{addr}@macmini",
+        "unread_only": False, "limit": 5,
+    })).json()["messages"][0]["thread_id"]
+
+    assert ask in {x["id"] for x in await unanswered_asks(min_age_hours=0, limit=300)}
+
+    # somebody answers in-thread, WITHOUT ever acking the original
+    r2 = await client.post("/memory/send", json={
+        "to": "someone-else", "subject": "re: ADDR2", "body": "on it",
+        "intent": "fyi", "thread_id": thread,
+    })
+    assert r2.status_code == 200
+
+    rows = await unanswered_asks(min_age_hours=0, limit=300)
+    assert ask not in {x["id"] for x in rows}, (
+        "an ask that was ANSWERED still reported as unanswered. This is the "
+        "retracted finding: 159/159 never-acked asks at one address had "
+        "replies, and calling them unread produced a false fleet-wide alarm"
+    )
