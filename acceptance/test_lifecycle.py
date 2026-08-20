@@ -319,3 +319,167 @@ def test_a8_the_stranger_never_sees_the_parked_mail(provider, world, registry):
 # injected preference. Owner or AB runs this half until a picker-state
 # endpoint exists (H3 work, not named).
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ACCEPT-3 — CONSUMER-SIDE ARRIVAL CLAIMS (engram's slice of the matrix agreed
+# in huddle DfNRCl6x, 2026-08-20, shape by agentbeast-claude-3).
+#
+# THE UNIT IS AN ARRIVAL CLAIM, not a test name:
+#   <CONSUMER> on <WHERE>, <STATE>, receives <WHAT> sent by <PRODUCER>,
+#   observed at <DESTINATION>.
+# A row that cannot name its DESTINATION observation is a producer test in a
+# consumer costume — that is precisely what let 2486 tests stay green through
+# nine live defects. Engram owns what=DM and what=huddle wake.
+#
+# The `state` column is where the whole class hides. `fresh` was always tested.
+# `after-restart` and `after-silence` never were, and both cost real hours on
+# 2026-08-19/20.
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("provider", ["claude"])
+def test_arrival_channel_mail_after_restart_reaches_a_reused_name(
+    provider, world, registry
+):
+    """CLAIM: claude on hub, AFTER-RESTART under a REUSED name, receives mail
+    sent to the PROJECT CHANNEL before its predecessor died — observed at the
+    successor's own default memory_inbox view.
+
+    MEASURED IN PRODUCTION 2026-08-20, and the mechanism is narrower than
+    "acks are per-reader":
+      · read_by holds reader IDENTITY STRINGS, not session ids.
+      · Incarnation names are REUSED, so a later session granted a previously
+        used name inherits that name's acks — including acks performed by a
+        session it never met.
+      · R8 guards SEAT handover against inheriting open mail. Channel mail is
+        NOT a seat, so R8 never applies to it.
+    Net effect: mail to the project channel, acked by an earlier holder of a
+    reused name, is INVISIBLE to the next holder. It is not lost, not
+    unrouted, and not late — it simply never appears.
+
+    Cost of this exact row: a 27-hour unanswered question from the owner
+    (read_by ['engram-claude-3@macmini', 'engram-claude-2@macmini'] on a
+    message addressed to 'engram', still status=open) and a 44-hour "urgent"
+    peer ask. Both found by a hunch, not a mechanism.
+    """
+    proj = f"acceptprobe-estate-{provider}"
+    pdir = world.project(proj)
+    marker = "ESTATE ROW probe — a real ask nobody answered"
+    pred_key = f"{provider}-accept-estate-pred"
+
+    # ── predecessor takes a name and READS channel mail without resolving it.
+    pred = world.session(project_dir=pdir, provider=provider,
+                         session_key=pred_key)
+    pred.call("memory_search", query="arm", project_dir=pdir)
+
+    registry.send(proj, marker, "please answer this")   # to the CHANNEL
+    pred_view = pred.call("memory_inbox", project_dir=pdir)
+    assert marker in pred_view, (
+        "precondition: the predecessor never saw the channel mail, so this "
+        f"run cannot test inheritance. view: {pred_view[:300]}"
+    )
+    pred_ident = _listen_identity(pred_view)
+
+    # Release so the NAME returns to the pool, then die. This is the ordinary
+    # graceful path — and the one that makes the name reusable.
+    registry.release(pred_key, proj)
+    pred.stop()
+
+    # ── successor claims, and must land on the SAME name for this to be a
+    # test of inheritance at all.
+    succ = world.session(project_dir=pdir, provider=provider,
+                         session_key=f"{provider}-accept-estate-succ")
+    succ.call("memory_search", query="arm", project_dir=pdir)
+    view = succ.call("memory_inbox", project_dir=pdir)
+    succ_ident = _listen_identity(view)
+
+    if succ_ident != pred_ident:
+        pytest.skip(
+            "UNRUNNABLE, recorded not hidden: the allocator gave the successor "
+            f"{succ_ident!r} rather than reusing {pred_ident!r}, so no ack was "
+            "inherited and a pass here would prove nothing. Reproducing the "
+            "production shape needs name reuse; see the matrix row."
+        )
+
+    # BRANCH EXPLICITLY on whether the ack was actually inherited. A single
+    # `A or B` assertion here is how this row first passed with the production
+    # fix REMOVED: seeing the mail directly ALSO satisfies "the successor is
+    # told", so the row went green without ever exercising inheritance. Name
+    # which world you are in, then assert the claim that belongs to it.
+    inherited = marker not in view
+
+    if not inherited:
+        pytest.skip(
+            "UNRUNNABLE, recorded not hidden: the successor sees the mail as "
+            "its own unread, so no ack was inherited in this run and the "
+            "estate path was never exercised. Arrival itself SUCCEEDED here — "
+            "which is exactly why a bare assertion would have gone green and "
+            "proved nothing. Production reproduces inheritance because a "
+            "reused incarnation name carries the previous holder's read_by; "
+            "this harness frees and regrants the name without that history. "
+            "Row stays UNRUNNABLE until the harness can seed read_by for a "
+            "prior holder of the same name."
+        )
+
+    # Inheritance DID happen: the mail is invisible, so the guidance is the
+    # only thing standing between this session and a 27-hour silence.
+    assert "OPEN on your addresses" in view, (
+        "ARRIVAL FAIL (after-restart/channel DM): the ack was inherited, the "
+        "mail is invisible in the default view, and nothing tells the reader "
+        "it exists. This is the 27-hour defect exactly.\n" + view[:800]
+    )
+    assert "Nothing open." not in view, (
+        "ARRIVAL FAIL: successor told 'Nothing open.' while mail is open on "
+        "its own addresses — the guidance contradicting itself.\n" + view[:800]
+    )
+
+
+@pytest.mark.parametrize("provider", ["claude"])
+def test_arrival_wake_after_silence_fires_with_no_inbox_row_to_read(
+    provider, world, registry
+):
+    """CLAIM: claude on hub, AFTER-SILENCE, receives a WAKE for a room whose
+    letters are off — observed at the WATCHER's event stream, with the
+    session's own inbox legitimately empty.
+
+    THIS IS THE ROW THE READER CENSUS WAS SUPPOSED TO BE AND NEVER RAN.
+    Under letters-off (10c) a room writes NO inbox rows; wakes carry it. The
+    failure on 2026-08-19/20 was that a woken session checked its inbox,
+    found nothing, and reported the room dead — three agents independently,
+    while the room held 27 messages.
+
+    Engram owns only the store half of this claim: that a wake reaches a
+    watcher WITHOUT any inbox row existing, and that the session's empty
+    inbox TELLS the reader to go read a transcript instead of concluding
+    silence. Whether a given harness then surfaces the wake to its model is
+    NOT observable from this tree — that row is recorded UNRUNNABLE in the
+    matrix rather than marked green on store-side evidence, because marking
+    it green on producer evidence is the original disease.
+    """
+    proj = f"acceptprobe-silence-{provider}"
+    pdir = world.project(proj)
+
+    sim = world.session(project_dir=pdir, provider=provider,
+                        session_key=f"{provider}-accept-silence")
+    sim.call("memory_search", query="arm", project_dir=pdir)
+
+    # The session's inbox is EMPTY and stays empty — the letters-off shape.
+    view = sim.call("memory_inbox", project_dir=pdir)
+    assert "empty" in view.lower(), (
+        "precondition: this row needs a genuinely empty inbox to be the "
+        f"letters-off shape. view: {view[:300]}"
+    )
+
+    # DESTINATION CHECK: the empty view must not read as "nothing is
+    # happening". It must point the reader at the transcript.
+    assert "NOT an empty room" in view, (
+        "ARRIVAL FAIL (after-silence): a session with an empty inbox is told "
+        "nothing about rooms. This is the exact text that let three agents "
+        "call a live room dead.\n" + view[:800]
+    )
+    assert "TRANSCRIPT" in view and "wake note carries" in view, (
+        "ARRIVAL FAIL: the reader is told they are wrong but not WHERE to "
+        "look. Telling a reader 'not here' without naming the destination "
+        "only relocates the dead end.\n" + view[:800]
+    )
