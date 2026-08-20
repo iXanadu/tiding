@@ -37,6 +37,48 @@ def last_server_time_iso() -> str | None:
     return _LAST_SERVER_TIME.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# ─── BRIDGE-2: auth health ──────────────────────────────────────────────────
+# A dead credential must not be silent. Two consumers: a banner (so the human
+# whose config holds the bad token learns it from their own screen, not from a
+# peer reading logs) and a stop-gate (so best-effort retries back off instead
+# of hammering a server that has already given a final answer).
+_AUTH_FAILURES = 0
+_AUTH_LAST_STATUS: int | None = None
+_AUTH_LAST_PATH: str | None = None
+
+# Deliberately small. A hard refusal is final, not flaky: the only reason to
+# allow any repeat at all is a token rotated in-flight between two calls.
+AUTH_REFUSAL_LIMIT = 3
+
+
+def _note_auth_failure(status: int, path: str) -> None:
+    global _AUTH_FAILURES, _AUTH_LAST_STATUS, _AUTH_LAST_PATH
+    _AUTH_FAILURES += 1
+    _AUTH_LAST_STATUS, _AUTH_LAST_PATH = status, path
+
+
+def _note_auth_ok() -> None:
+    """Any authorised response clears the streak — a rotated-and-fixed token
+    must not leave a session permanently marked as refused."""
+    global _AUTH_FAILURES
+    if _AUTH_FAILURES:
+        _AUTH_FAILURES = 0
+
+
+def auth_health() -> tuple[int, int | None, str | None]:
+    return _AUTH_FAILURES, _AUTH_LAST_STATUS, _AUTH_LAST_PATH
+
+
+def auth_is_refused() -> bool:
+    """True once the server has refused this credential repeatedly.
+
+    Callers on BEST-EFFORT paths (heartbeat, presence, seat claim) check this
+    and stop. Real tool calls do NOT check it — a user-initiated call should
+    still attempt and surface its own error rather than be silently gated.
+    """
+    return _AUTH_FAILURES >= AUTH_REFUSAL_LIMIT
+
+
 class MemoryClient:
     """Async HTTP client for the engram semantic memory REST API.
 
@@ -92,6 +134,17 @@ class MemoryClient:
             try:
                 resp = await self._client.request(method, path, **kwargs)
                 _record_server_time(resp)
+                # BRIDGE-2: a hard auth refusal is NOT transient, and it was
+                # invisible to the person holding the bad credential. Measured
+                # on the operator's own desktop 2026-08-16: a rotated token sat
+                # in an app config for weeks-to-months while the heartbeat
+                # retried it every ~2min, forever, silently — the operator
+                # learned of it from a peer reading server logs. Count it here,
+                # at the single choke point every call passes through.
+                if resp.status_code in (401, 403):
+                    _note_auth_failure(resp.status_code, path)
+                else:
+                    _note_auth_ok()
                 resp.raise_for_status()
                 return resp.json()
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):

@@ -12,6 +12,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from engram_mcp.client import MemoryClient, last_server_time_iso
+from engram_mcp.client import AUTH_REFUSAL_LIMIT, auth_health, auth_is_refused
 from engram_mcp.config import CONFIG_SOURCE, settings
 from engram_mcp.identity import (
     INBOX_IDENTITY_ENV,
@@ -308,7 +309,8 @@ def _append_guidance(body: str, result: dict) -> str:
     addressing help is how it gets skimmed past.
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
-    alert = (_server_time_line() + _seat_collision_banner() + _seat_revert_banner()
+    alert = (_server_time_line() + _auth_health_banner()
+             + _seat_collision_banner() + _seat_revert_banner()
              + _seat_rename_banner() + _identity_override_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
     advisory = _advisories(result)
@@ -496,6 +498,7 @@ _SEAT_CLAIMED = False
 _SEAT_CLAIM_FAILURES = 0
 _SEAT_LAST_CLAIM_ERROR: str | None = None
 _SEAT_CLAIM_BANNER_SHOWN = False
+_AUTH_BANNER_SHOWN = False
 _SEAT_CLAIM_BANNER_AFTER = 3  # consecutive failures before speaking up
 # ID-2: set when the server REFUSED to register this session's runtime seat
 # (name held by another session) and the bridge reverted to the granted seat.
@@ -639,6 +642,37 @@ async def _claim_seat(project_dir: str | None) -> None:
         _SEAT_LAST_CLAIM_ERROR = f"{type(e).__name__}: {e}"
 
 
+def _auth_health_banner() -> str:
+    """BRIDGE-2: a dead credential must not be invisible to the person holding it.
+
+    Measured on the operator's own desktop 2026-08-16: an app config carried a
+    ROTATED token for weeks-to-months. The pre-Aug-12 bridge only spoke on tool
+    calls, so the sole symptom was in-chat tool errors easily read as glitches;
+    the post-Aug-12 bridge retried claim/presence on a timer — non-fatal by
+    design — and hammered prod with 401s every ~2min, forever, silently. The
+    operator learned of it from a PEER AGENT READING SERVER LOGS.
+
+    So the banner names the CONFIG SOURCE, not just the failure: "auth is
+    failing" sends someone hunting, "the token in <this file> is being
+    refused" is actionable in one step. Shown once per session, on the channel
+    every tool result already renders.
+    """
+    global _AUTH_BANNER_SHOWN
+    failures, status, path = auth_health()
+    if _AUTH_BANNER_SHOWN or failures < AUTH_REFUSAL_LIMIT:
+        return ""
+    _AUTH_BANNER_SHOWN = True
+    return (
+        f"⛔ CREDENTIAL REFUSED — the server returned {status} on "
+        f"{failures} consecutive calls (last: {path}). The token supplied by "
+        f"{CONFIG_SOURCE} is not accepted. This is NOT transient: background "
+        f"presence/seat retries have STOPPED rather than keep hammering, so "
+        f"this session holds no registry row and peers cannot reach it by "
+        f"address. Fix the token at that source; a single authorised call "
+        f"clears this automatically.\n\n"
+    )
+
+
 def _seat_claim_health_banner() -> str:
     """BRIDGE-1: a claim path that has failed every attempt says so — once.
 
@@ -669,6 +703,13 @@ async def _heartbeat(project_dir: str | None) -> None:
     if now - _last_heartbeat < _HEARTBEAT_EVERY_SECONDS:
         return
     _last_heartbeat = now
+    # BRIDGE-2: backoff-and-STOP. BRIDGE-1 rightly treats claim/presence
+    # failures as transient and keeps retrying — but a 401/403 is a FINAL
+    # answer, not a blip, and retrying it forever is what put weeks of silent
+    # 401s in prod's logs. A real tool call still attempts and surfaces its own
+    # error; only this best-effort path gives up.
+    if auth_is_refused():
+        return
     await _claim_seat(project_dir)
     try:
         reader_identity, _listen_set = compute_identity(project_dir or None)
