@@ -1735,12 +1735,21 @@ async def memory_send(
         to: Recipient address. Accepts a project name ('projgamma'), a
             precise identity, a cross-project channel ('#courseware'), or a
             comma-separated list ('alpha, beta') for ad-hoc fan-out.
-            A list creates a PRIVATE MULTI-PARTY THREAD: the recipients plus
-            you become its fixed participants, and every reply fans out to
+            A list creates a PRIVATE MULTI-PARTY THREAD: the recipients
+            plus you become its participants, and every reply fans out to
             all of them. Use this to convene a huddle of hand-picked agents
             that are ALREADY RUNNING — unlike a '#channel', it needs no
             subscription, so membership is not limited to what was decided at
             launch. Get live addresses from memory_roster; do not guess.
+            MEMBERSHIP IS NOT FROZEN AT CREATION. `participants` is stored
+            PER MESSAGE, so re-sending with an existing thread_id and a WIDER
+            recipient list adds those recipients from that message forward
+            (not retroactively — replies to earlier messages still reach the
+            original set). That is how you add someone to a running thread.
+            ⚠️ It is also a side door: if a consumer keeps its own room
+            membership table, widening this way happens WITHOUT its knowledge
+            and the two records silently disagree. Do not use it to widen a
+            room that something else manages.
         body: Message body
         subject: Short subject line
         thread_id: Optional thread id to group a back-and-forth
@@ -1871,9 +1880,11 @@ async def memory_reply(
     PRIVATE MULTI-PARTY THREADS: if the parent was a fan-out send (its
     'participants' list is non-empty), the reply goes to EVERY participant
     except you — so a hand-picked group hears each other without anyone
-    relaying. Membership was fixed when the thread was created, so you do not
-    need to know who else is in it. These replies keep the waking default:
-    the group is small and was convened deliberately.
+    relaying — so you do not need to know who else is in it. Membership is
+    read from the PARENT MESSAGE, not frozen at thread creation: if a later
+    send widened the thread, replying to the newer message reaches the wider
+    set and replying to an older one reaches the original set. These replies
+    keep the waking default: the group is small and was convened deliberately.
 
     CROSS-PROJECT: if the parent came from a DIFFERENT project, the reply
     goes to that project's CHANNEL (its bare project name) — the answer
