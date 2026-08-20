@@ -111,6 +111,12 @@ def inbox_list_guidance(
             "    unread mail — you do not need to poll memory_inbox on a timer.\n"
             "  • Call memory_inbox when the banner appears, at session startup,\n"
             "    or when the user asks you to check messages.\n"
+            "  • An empty inbox is NOT an empty room. Huddles run letters-off:\n"
+            "    a room records every utterance in its TRANSCRIPT and announces\n"
+            "    them by WAKES, writing no inbox rows at all. If something woke\n"
+            "    you, fetch the transcript at the room id your wake note carries.\n"
+            "    Concluding \"nothing arrived\" from THIS view is the documented\n"
+            "    failure mode, and it has been made independently more than once.\n"
             + tail
             + f"  • You are listening as '{reader_identity}' on: {listen_set}"
         )

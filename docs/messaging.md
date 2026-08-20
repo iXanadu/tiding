@@ -414,6 +414,14 @@ is fleet-grain — any holder reads any private room on that hub. That is
 the owner-accepted interim (per-participant attestation is a later arc);
 treat transcripts as fleet-visible accordingly.
 
+It is broad but **not loud**: a read token cannot post. `POST
+/api/huddle/speak` with one is refused **403** (measured from a spoke,
+2026-08-20). Say both halves together — a reader told the token is
+fleet-wide will reasonably wonder whether it can also speak as them, and
+it cannot. Tokens are minted per box and revocable individually by
+`token_id`, so one compromised box can be cut off without deafening the
+rest.
+
 Messages are coordination, not knowledge — they should *drain*:
 
 - `ack` — read it, per-reader (others still see it unread).

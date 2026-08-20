@@ -1461,3 +1461,32 @@ async def test_legacy_message_without_provenance_headers(client, db_pool):
     m = resp.json()["messages"][0]
     assert m["model"] is None and m["model_source"] is None
     await _cleanup_inbox(db_pool)
+
+
+# --- HUDDLE-DEAF-1: an empty inbox is not an empty room -------------------
+# The letters-off contract (relay records utterances in the room transcript
+# and fires wakes, writing no inbox rows) makes a participant's inbox
+# legitimately empty while the room is full. Sessions repeatedly read that
+# emptiness as "the room is dead" and reported a transport defect that did
+# not exist. The guidance on the EMPTY branch is where that wrong conclusion
+# gets drawn, so it is the only place the correction is worth any tokens.
+
+def test_empty_inbox_guidance_points_at_the_transcript():
+    from server.services.inbox_guidance import inbox_list_guidance
+
+    text = inbox_list_guidance("engram-claude-2@macmini", ["engram"], msg_count=0)
+
+    assert "empty inbox is NOT an empty room" in text
+    assert "TRANSCRIPT" in text
+    # The reader must be told where to look, not merely that they are wrong.
+    assert "room id your wake note carries" in text
+
+
+def test_transcript_hint_only_on_the_empty_branch():
+    from server.services.inbox_guidance import inbox_list_guidance
+
+    populated = inbox_list_guidance("engram-claude-2@macmini", ["engram"], msg_count=3)
+
+    # A session holding mail is not the one at risk of concluding "room dead",
+    # and this text is paid for on every single inbox read.
+    assert "empty inbox is NOT an empty room" not in populated
