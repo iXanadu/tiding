@@ -497,6 +497,29 @@ class MemoryClient:
             headers=self._provenance_headers(project_dir),
         )
 
+    # ─── Watch-claim (docs/design/watch-claim.md v2) ────────────────────────
+    # Sensing only: these say who HOLDS the watch for a seat, never whether
+    # delivery works, and never gate anything a deliverer does.
+
+    async def watch_claim(self, seat: str, nonce: str, armed_by: str,
+                          project_dir: str, listen_set: list[str],
+                          host: str | None = None) -> dict:
+        return await self._request("POST", "/session/watch/claim", json={
+            "seat": seat, "nonce": nonce, "armed_by": armed_by,
+            "project_dir": project_dir, "listen_set": listen_set,
+            "host": host,
+        }, headers=self._provenance_headers(None))
+
+    async def watch_beat(self, seat: str, nonce: str) -> dict:
+        return await self._request("POST", "/session/watch/beat", json={
+            "seat": seat, "nonce": nonce,
+        }, headers=self._provenance_headers(None))
+
+    async def watch_release(self, seat: str, nonce: str) -> dict:
+        return await self._request("POST", "/session/watch/release", json={
+            "seat": seat, "nonce": nonce,
+        }, headers=self._provenance_headers(None))
+
     async def inbox_list(
         self,
         listen_set: list[str],

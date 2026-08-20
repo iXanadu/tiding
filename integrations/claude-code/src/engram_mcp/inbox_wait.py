@@ -25,6 +25,7 @@ act on it.)
 
 import argparse
 import asyncio
+import os
 import json
 import shlex
 import signal
@@ -56,6 +57,12 @@ EXIT_AUTH_FAILED = 2
 # session wakes on the refusal instead of silently listening at the wrong
 # address for its whole life.
 EXIT_IDENTITY_CONFLICT = 3
+# Watch-claim (v2): DISPLACED means another live watcher holds this seat's
+# watch — a supervisor should respawn-and-reclaim on a timer, never hot-loop.
+# PARTIAL means our own listen set omits the seat we would claim for: a
+# CONFIG error, not a race — retrying as-is can never succeed (F10).
+EXIT_DISPLACED = 4
+EXIT_PARTIAL_CLAIM = 5
 
 
 def _identity_conflict(reader_identity: str, project: str,
@@ -512,6 +519,102 @@ async def _farewell(client, reader_identity: str, project_dir: str | None) -> No
         pass
 
 
+class _WatchClaimState:
+    """The watcher's side of one-seat-one-watch (docs/design/watch-claim.md v2).
+
+    The contract this implements, in the reviewer's words: refused launchers
+    RE-CLAIM ON A TIMER (exit-forever meant mail died with whichever process
+    claimed first); a beat whose response is LOST means holder-unknown — stop
+    emitting until a verdict, because emitting while unsure is how two
+    watchers deliver the same mail twice; and when the claim API itself is
+    unreachable, the watcher RUNS UNCLAIMED and loudly UNHELD — the repair
+    crew hears each other while the store is sick (K3), the register just
+    never shows the seat as covered.
+    """
+
+    def __init__(self, seat: str):
+        import secrets
+        self.seat = seat
+        self.nonce = secrets.token_hex(16)   # random, never pid (ghost class)
+        self.held = False
+        self.unheld_mode = False             # K3: running without a claim
+
+    async def acquire(self, client, project_dir: str, listen_set: list[str]) -> int | None:
+        """Claim, retrying on `held`. Returns an EXIT_ code only for the one
+        unretryable outcome (partial); None once we hold OR run unheld."""
+        import asyncio as _a
+        while True:
+            try:
+                r = await client.watch_claim(
+                    seat=self.seat, nonce=self.nonce, armed_by="bridge",
+                    project_dir=project_dir or "", listen_set=listen_set,
+                )
+            except Exception as e:
+                self.unheld_mode = True
+                print(
+                    "inbox-wait: ⚠ UNHELD — watch-claim API unreachable "
+                    f"({e.__class__.__name__}); running WITHOUT a claim. Mail "
+                    "still wakes this session, but the register will not show "
+                    "the seat as covered.", file=sys.stderr, flush=True)
+                return None
+            v = r.get("verdict")
+            if v == "granted":
+                self.held = True
+                return None
+            if v == "partial-refused":
+                print(f"inbox-wait: watch claim PARTIAL-REFUSED: {r.get('reason')}",
+                      file=sys.stderr, flush=True)
+                return EXIT_PARTIAL_CLAIM
+            retry = float(r.get("retry_after_seconds") or 150)
+            print(f"inbox-wait: watch held by {r.get('holder_armed_by')!r} — "
+                  f"re-claiming in {retry:.0f}s", file=sys.stderr, flush=True)
+            await _a.sleep(retry)
+
+    async def beat(self, client) -> str:
+        """One watch beat: 'holder' | 'displaced' | 'unknown'.
+
+        Three outcomes, three behaviors — conflating any two recreates a
+        tonight-bug: displaced -> EXIT (a successor holds; emitting doubles
+        delivery); unknown (lost response) -> PAUSE emission this cycle only
+        (a server blip must not kill a long-lived watcher, but emitting
+        while holder-unknown is how two watchers deliver the same mail
+        twice); holder -> proceed.
+        """
+        if self.unheld_mode:
+            return "holder"  # no claim to defend; emission legitimate (K3)
+        try:
+            r = await client.watch_beat(self.seat, self.nonce)
+        except Exception:
+            print("inbox-wait: watch beat lost — pausing emission until a "
+                  "verdict", file=sys.stderr, flush=True)
+            return "unknown"
+        if r.get("verdict") == "holder":
+            return "holder"
+        print("inbox-wait: DISPLACED — another watcher holds this seat; "
+              "exiting for supervisor respawn", file=sys.stderr, flush=True)
+        return "displaced"
+
+
+def _open_fifo_for_write(path: str):
+    """Open the wake FIFO, BLOCKING until a reader attaches.
+
+    Load-bearing ordering (review rider): the claim is not taken until the
+    tail is attached, because this open() cannot return before a reader
+    exists. A FIFO nobody tails therefore never claims — it cannot become
+    F4-with-extra-steps. And if the reader later detaches, writes block, the
+    poll loop stalls, beats stop, and the claim EXPIRES — coverage honestly
+    releases itself with no code asked to notice.
+    """
+    import os as _os
+    if not _os.path.exists(path):
+        _os.mkfifo(path, 0o600)
+    print(f"inbox-wait: waiting for a wake consumer on {path} "
+          "(claim follows attach)", file=sys.stderr, flush=True)
+    f = open(path, "w", buffering=1)
+    print("inbox-wait: consumer attached", file=sys.stderr, flush=True)
+    return f
+
+
 async def _run(args) -> int:
     # This process's cwd is whatever shell launched it, not the session's
     # project root, so `--project-dir` is the only authoritative anchor the
@@ -543,6 +646,24 @@ async def _run(args) -> int:
 
     _warn_plaintext_url(settings.memory_api_url)
     client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
+
+    # v2 spawn path (watch-claim design). ORDER IS LOAD-BEARING: the FIFO
+    # attach comes FIRST, because open-for-write blocks until a reader
+    # exists — so with --claim, coverage is never claimed for a wake stream
+    # nobody consumes (the F4-with-extra-steps case from review).
+    if getattr(args, "fifo", ""):
+        fifo_f = _open_fifo_for_write(args.fifo)
+        os.dup2(fifo_f.fileno(), 1)  # all emit prints now land in the FIFO;
+        #                              stderr stays a real log (never DEVNULL —
+        #                              AB's maintenance watcher died silently
+        #                              behind exactly that)
+    claim_state = None
+    if getattr(args, "claim", False):
+        claim_state = _WatchClaimState(reader_identity.split("@", 1)[0])
+        code = await claim_state.acquire(
+            client, args.project_dir or "", listen_set)
+        if code is not None:
+            return code
 
     # Resolved ONCE, at arm time, while the session is definitely alive — a
     # later lookup could resolve a recycled pid or find nothing and read that
@@ -644,6 +765,13 @@ async def _run(args) -> int:
                             file=sys.stderr, flush=True,
                         )
                         reader_identity, listen_set = new_identity, new_listen
+            if claim_state is not None:
+                wv = await claim_state.beat(client)
+                if wv == "displaced":
+                    return EXIT_DISPLACED
+                if wv == "unknown":
+                    await asyncio.sleep(args.poll_interval)
+                    continue
             await _beat(client, reader_identity, args.project_dir or None)
             try:
                 fresh = await _poll(client, listen_set, reader_identity, seen)
@@ -756,6 +884,14 @@ def main() -> None:
     p.add_argument("--follow", action="store_true", help="keep running, emit a line per message (Monitor mode)")
     p.add_argument("--timeout", type=float, default=0.0, help="max seconds to wait in one-shot mode (0=forever)")
     p.add_argument("--include-existing", action="store_true", help="also wake on already-unread backlog")
+    p.add_argument("--claim", action="store_true", help=(
+        "hold the one-seat-one-watch claim (watch-claim v2): claim before "
+        "polling, beat each poll, exit DISPLACED for supervisor respawn; "
+        "runs UNHELD (loud) if the claim API is unreachable"))
+    p.add_argument("--fifo", default="", help=(
+        "write wake lines to this FIFO instead of stdout; open BLOCKS until "
+        "a consumer attaches, and with --claim the claim follows the attach "
+        "— a FIFO nobody tails never claims coverage"))
     args = p.parse_args()
     if args.timeout <= 0:
         args.timeout = None

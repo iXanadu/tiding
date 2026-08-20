@@ -1,0 +1,120 @@
+"""watch-claim v2 step 2: the bridge-owned watcher spawn path.
+
+These tests exercise the code that 360 green tests just proved they DON'T:
+a missing `import sys` sat in the supervisor unnoticed because nothing ran
+it. Import checks prove parsing; only execution proves execution.
+"""
+
+import asyncio
+import os
+import stat
+
+import pytest
+
+import engram_mcp.server as server
+from engram_mcp.inbox_wait import _WatchClaimState, _open_fifo_for_write
+
+
+def test_supervisor_references_resolve():
+    """Every name the supervisor touches must exist at module scope — the
+    exact defect found here (sys.executable, no import sys) survives import
+    and the full suite, then NameErrors on first real spawn."""
+    import inspect
+    src = inspect.getsource(server._watcher_supervisor)
+    ns = vars(server)
+    for name in ("sys", "os", "asyncio", "time", "resolve_session_key"):
+        assert name in ns, f"supervisor uses {name} but module doesn't bind it"
+    assert "sys.executable" in src  # the line that was dead code
+
+
+def test_fifo_open_blocks_until_reader_attaches(tmp_path):
+    """The load-bearing ordering: claim follows attach, because the open
+    cannot return before a reader exists. If this ever stops blocking, a
+    FIFO nobody tails could claim coverage — F4 with extra steps."""
+    import threading, time as _t
+    fifo = str(tmp_path / "wake.fifo")
+    opened = threading.Event()
+
+    def writer():
+        f = _open_fifo_for_write(fifo)
+        opened.set()
+        f.close()
+
+    t = threading.Thread(target=writer, daemon=True)
+    t.start()
+    _t.sleep(0.5)
+    assert not opened.is_set(), (
+        "open-for-write returned with NO reader attached — the claim-after-"
+        "attach guarantee just silently vanished"
+    )
+    # attach a reader; the writer must now unblock
+    fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    assert opened.wait(timeout=5), "writer never unblocked after attach"
+    os.close(fd)
+    assert stat.S_ISFIFO(os.stat(fifo).st_mode)
+
+
+@pytest.mark.asyncio
+async def test_claim_state_retries_on_held_and_stops_on_partial():
+    """K1: held → retry on a timer (never exit-forever). F10: partial →
+    unretryable exit code."""
+    calls = []
+
+    class FakeClient:
+        def __init__(self, verdicts):
+            self.verdicts = list(verdicts)
+
+        async def watch_claim(self, **kw):
+            calls.append(kw)
+            v = self.verdicts.pop(0)
+            if v == "held":
+                return {"verdict": "held", "retry_after_seconds": 0.01,
+                        "holder_armed_by": "ab"}
+            if v == "partial":
+                return {"verdict": "partial-refused", "reason": "no seat in set"}
+            return {"verdict": "granted"}
+
+    st = _WatchClaimState("proj-claude-2")
+    rc = await st.acquire(FakeClient(["held", "held", "granted"]), "/tmp", ["proj-claude-2"])
+    assert rc is None and st.held and len(calls) == 3, "held did not retry to grant"
+
+    st2 = _WatchClaimState("proj-claude-2")
+    rc2 = await st2.acquire(FakeClient(["partial"]), "/tmp", ["proj"])
+    from engram_mcp.inbox_wait import EXIT_PARTIAL_CLAIM
+    assert rc2 == EXIT_PARTIAL_CLAIM and not st2.held
+
+
+@pytest.mark.asyncio
+async def test_claim_api_unreachable_runs_unheld_not_dead():
+    """K3: the repair crew's case. Claim API down → run UNHELD, and beats
+    report holder (emission is legitimate) without ever touching the API."""
+    class DeadClient:
+        async def watch_claim(self, **kw):
+            raise ConnectionError("store is sick")
+
+        async def watch_beat(self, *a):
+            raise AssertionError("unheld mode must not beat a dead API")
+
+    st = _WatchClaimState("proj-claude-2")
+    rc = await st.acquire(DeadClient(), "/tmp", ["proj-claude-2"])
+    assert rc is None and st.unheld_mode and not st.held
+    assert await st.beat(DeadClient()) == "holder"
+
+
+@pytest.mark.asyncio
+async def test_beat_three_verdicts_map_to_three_behaviors():
+    class C:
+        def __init__(self, r):
+            self.r = r
+
+        async def watch_beat(self, *a):
+            if isinstance(self.r, Exception):
+                raise self.r
+            return self.r
+
+    st = _WatchClaimState("s")
+    st.held = True
+    assert await st.beat(C({"verdict": "holder"})) == "holder"
+    assert await st.beat(C({"verdict": "displaced"})) == "displaced"
+    # lost response is UNKNOWN — pause, not death, not emission
+    assert await st.beat(C(ConnectionError("blip"))) == "unknown"

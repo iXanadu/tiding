@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 import subprocess
 import time
 import uuid
@@ -697,12 +698,119 @@ def _seat_claim_health_banner() -> str:
     )
 
 
+# ─── Bridge-owned watcher (watch-claim v2, step 2) ──────────────────────────
+# The bridge is the one prose-free hook every harness shares (all four CLIs
+# auto-spawn it from MCP config), so IT arms and supervises the wake watcher —
+# the agent's startup ritual, whose complete failure catalog 2026-08-20
+# produced (never armed / believed-armed-never-ran / armed-then-died /
+# armed-twice / armed-listening-wrong), stops being load-bearing.
+#
+# The child writes wakes to a FIFO. open-for-write blocks until a consumer
+# attaches, and the claim follows the attach — so a wake stream nobody
+# consumes never claims coverage, and the agent's ONE remaining act (where a
+# Monitor tool exists) is attaching `tail -F <fifo>`. Supervision is
+# process-level: restarts cost zero model turns, and the child dies with the
+# bridge, which dies with the session — the SEAT-13 zombie class ends by
+# process lineage, not by protocol.
+
+_WATCHER_SUP: dict = {"started": False, "proc": None, "fifo": None, "log": None}
+
+
+def _wake_state_dir() -> str:
+    d = os.path.join(os.path.expanduser("~"), ".local", "state", "engram", "wake")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _watcher_attach_command() -> str | None:
+    """The exact Monitor command for this session's wake stream, or None
+    while no supervised watcher exists. tail -F (not -f): it survives the
+    watcher restarting and recreating its end of the FIFO."""
+    fifo = _WATCHER_SUP.get("fifo")
+    return f"tail -F {fifo}" if fifo else None
+
+
+async def _watcher_supervisor(project_dir: str | None) -> None:
+    import subprocess
+    key = resolve_session_key() or "unkeyed"
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
+    fifo = os.path.join(_wake_state_dir(), f"{safe}.fifo")
+    log_path = os.path.join(_wake_state_dir(), f"{safe}.log")
+    _WATCHER_SUP["fifo"] = fifo
+    _WATCHER_SUP["log"] = log_path
+
+    backoff = 5.0
+    while True:
+        started = time.monotonic()
+        try:
+            # stderr goes to a real log, never DEVNULL — a watcher that died
+            # silently behind DEVNULL cost the fleet a deaf seat tonight and
+            # nobody could say why.
+            with open(log_path, "a") as logf:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "engram_mcp.inbox_wait",
+                     "--follow", "--claim",
+                     "--project-dir", (project_dir or os.getcwd()),
+                     "--fifo", fifo],
+                    stdout=subprocess.DEVNULL,  # wakes ride the FIFO, not stdout
+                    stderr=logf,
+                    start_new_session=False,     # die with the bridge's group
+                )
+            _WATCHER_SUP["proc"] = proc
+            while proc.poll() is None:
+                await asyncio.sleep(2.0)
+            rc = proc.returncode
+        except Exception as e:  # spawn itself failed — log and back off
+            rc = None
+            try:
+                with open(log_path, "a") as logf:
+                    logf.write(f"supervisor: spawn failed: {e}\n")
+            except OSError:
+                pass
+        lived = time.monotonic() - started
+        if lived > 120:
+            backoff = 5.0            # a child that ran a while earns a fresh start
+        # DISPLACED (4): a peer holds the watch — retry at claim cadence.
+        # PARTIAL (5): config error; retrying as-is cannot succeed — crawl.
+        delay = 150.0 if rc == 4 else (300.0 if rc == 5 else backoff)
+        backoff = min(backoff * 2, 300.0)
+        await asyncio.sleep(delay)
+
+
+def _ensure_watcher_supervisor(project_dir: str | None) -> None:
+    if _WATCHER_SUP["started"]:
+        return
+    if os.environ.get("ENGRAM_BRIDGE_WATCHER", "on").lower() in ("off", "0", "false"):
+        return
+    _WATCHER_SUP["started"] = True
+    try:
+        asyncio.get_running_loop().create_task(_watcher_supervisor(project_dir))
+    except RuntimeError:
+        _WATCHER_SUP["started"] = False  # no loop yet; retry on a later call
+
+
+def _kill_watcher_child() -> None:
+    proc = _WATCHER_SUP.get("proc")
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+
+
+import atexit as _atexit
+_atexit.register(_kill_watcher_child)
+
+
 async def _heartbeat(project_dir: str | None) -> None:
     global _last_heartbeat
     now = time.monotonic()
     if now - _last_heartbeat < _HEARTBEAT_EVERY_SECONDS:
         return
     _last_heartbeat = now
+    # watch-claim v2: the bridge, not the agent, owns the watcher. Lazily
+    # started here because the event loop is guaranteed live on a tool call.
+    _ensure_watcher_supervisor(project_dir)
     # BRIDGE-2: backoff-and-STOP. BRIDGE-1 rightly treats claim/presence
     # failures as transient and keeps retrying — but a 401/403 is a FINAL
     # answer, not a blip, and retrying it forever is what put weeks of silent
@@ -1462,6 +1570,17 @@ async def memory_status() -> str:
             )
         else:
             lines.append("  seat claim: not yet attempted")
+        # watch-claim v2: the wake stream's attach point. The one act left to
+        # the agent (where a Monitor tool exists) is running this command; a
+        # session that never attaches stays honestly UNHELD in the register.
+        attach = _watcher_attach_command()
+        if attach:
+            lines.append(
+                f"  wake stream: attach with Monitor -> {attach}  "
+                f"(log: {_WATCHER_SUP.get('log')})"
+            )
+        else:
+            lines.append("  wake stream: bridge watcher not yet started")
         return "\n".join(lines)
     except Exception as e:
         return f"Memory service unreachable: {e}\nServer version: {VERSION}"
