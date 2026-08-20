@@ -169,6 +169,38 @@ def registry(accept_server):
 
             return [tuple(r) for r in asyncio.run(_q())]
 
+        def purge_all_watches(self) -> None:
+            """Scratch-DB reset for watch rows: previous runs' claims (fresh
+            beats, wrong-seat strings — both found by the step-6 gate) must
+            not leak into this run's verdicts."""
+            import asyncio
+
+            async def _q():
+                conn = await asyncpg.connect(accept_server["dsn"])
+                try:
+                    await conn.execute(
+                        "DELETE FROM memories WHERE key LIKE 'watch/%'")
+                finally:
+                    await conn.close()
+
+            asyncio.run(_q())
+
+        def purge_watch(self, seat: str) -> None:
+            """watch/<seat> rows sit outside the marker sweep (user_id=global,
+            empty project) — delete by exact key so the scratch DB stays
+            zero-residue in spirit, not just by the sweep's measure."""
+            import asyncio
+
+            async def _q():
+                conn = await asyncpg.connect(accept_server["dsn"])
+                try:
+                    await conn.execute(
+                        "DELETE FROM memories WHERE key = $1", f"watch/{seat}")
+                finally:
+                    await conn.close()
+
+            asyncio.run(_q())
+
         def purge(self, marker: str) -> int:
             import asyncio
 

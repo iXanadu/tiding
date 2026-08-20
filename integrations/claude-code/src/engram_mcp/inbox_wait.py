@@ -665,6 +665,15 @@ async def _run(args) -> int:
         #                              behind exactly that)
     claim_state = None
     if getattr(args, "claim", False):
+        # Re-resolve NOW, not at process start: this watcher is typically
+        # spawned by the bridge in the same breath as the bridge's own seat
+        # claim, and the FIFO block above may have held us long enough for
+        # the seat to land. An identity read too early claims a STALE string
+        # — the step-6 gate caught exactly that on its first run: the watch
+        # held by a previous incarnation's wrong-seat claim while the real
+        # seat read unheld.
+        if not args.address:
+            reader_identity, listen_set = compute_identity(args.project_dir or None)
         claim_state = _WatchClaimState(reader_identity.split("@", 1)[0])
         code = await claim_state.acquire(
             client, args.project_dir or "", listen_set)
@@ -771,6 +780,21 @@ async def _run(args) -> int:
                             file=sys.stderr, flush=True,
                         )
                         reader_identity, listen_set = new_identity, new_listen
+                        if claim_state is not None:
+                            # the watch follows the seat: release the old
+                            # claim (best-effort; expiry covers a lost
+                            # release) and acquire under the new name
+                            try:
+                                await client.watch_release(
+                                    claim_state.seat, claim_state.nonce)
+                            except Exception:
+                                pass
+                            claim_state = _WatchClaimState(
+                                reader_identity.split("@", 1)[0])
+                            code = await claim_state.acquire(
+                                client, args.project_dir or "", listen_set)
+                            if code is not None:
+                                return code
             if claim_state is not None:
                 wv = await claim_state.beat(client)
                 if wv == "displaced":

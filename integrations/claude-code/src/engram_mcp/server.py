@@ -747,11 +747,17 @@ async def _watcher_supervisor(project_dir: str | None) -> None:
             # silently behind DEVNULL cost the fleet a deaf seat tonight and
             # nobody could say why.
             with open(log_path, "a") as logf:
+                cmd = [sys.executable, "-m", "engram_mcp.inbox_wait",
+                       "--follow", "--claim",
+                       "--project-dir", (project_dir or os.getcwd()),
+                       "--fifo", fifo]
+                # test/ops hook, not a knob agents set: the acceptance
+                # harness cannot wait 45s per poll to prove a wake arrives
+                poll_override = os.environ.get("ENGRAM_WATCHER_POLL_INTERVAL")
+                if poll_override:
+                    cmd += ["--poll-interval", poll_override]
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "engram_mcp.inbox_wait",
-                     "--follow", "--claim",
-                     "--project-dir", (project_dir or os.getcwd()),
-                     "--fifo", fifo],
+                    cmd,
                     stdout=subprocess.DEVNULL,  # wakes ride the FIFO, not stdout
                     stderr=logf,
                     start_new_session=False,     # die with the bridge's group

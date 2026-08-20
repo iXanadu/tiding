@@ -483,3 +483,115 @@ def test_arrival_wake_after_silence_fires_with_no_inbox_row_to_read(
         "look. Telling a reader 'not here' without naming the destination "
         "only relocates the dead end.\n" + view[:800]
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP 6 — THE GATE (watch-claim v2 build order, reviewer's words: "if step 6
+# fails, the protocol is theater too").
+#
+# CLAIM: a FRESH session, PROSE STEP DELIBERATELY SKIPPED, gets a bridge-owned
+# watcher that (a) claims coverage only after a wake consumer attaches, and
+# (b) delivers an ORDINAL-SEAT DM as a wake line — the rider's leg, because
+# channel-only green is the coincidence already paid for once.
+#
+# AB absent by construction (none in this harness). The store-bounce leg of
+# the gate is NOT covered here and is stated as owed rather than implied:
+# the claim-API-unreachable behavior (UNHELD, loud) is unit-tested in the
+# bridge suite; a real mid-run server bounce with re-claim is the remaining
+# leg and runs against a disposable fleet box, not this scratch server.
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("provider", ["claude"])
+def test_step6_bridge_owned_watcher_prose_skipped_seat_dm_wakes(
+    provider, world, registry
+):
+    import json as _json
+    import os as _os
+    import time as _time
+
+    proj = f"acceptprobe-step6-{provider}"
+    pdir = world.project(proj)
+    key = f"{provider}-accept-step6"
+    registry.purge_all_watches()
+
+    sim = world.session(project_dir=pdir, provider=provider, session_key=key,
+                        extra_env={"ENGRAM_WATCHER_POLL_INTERVAL": "1.0"})
+    # ONE ordinary tool call — the thing every real session does anyway.
+    # NO watcher arming, NO blessed command, NO prose step.
+    sim.call("memory_search", query="arm", project_dir=pdir)
+    seat = [s for s in registry.seats(proj) if s["session_key"] == key][0]["seat"]
+
+    fifo = _os.path.join(sim.home, ".local", "state", "engram", "wake",
+                         f"{key}.fifo")
+    deadline = _time.monotonic() + 20
+    while not _os.path.exists(fifo) and _time.monotonic() < deadline:
+        _time.sleep(0.25)
+    assert _os.path.exists(fifo), (
+        "the bridge never created a wake FIFO — the supervisor did not start; "
+        "prose-free arming is not happening"
+    )
+
+    # CLAIM-FOLLOWS-ATTACH: before any consumer exists, the seat must be
+    # UNHELD — a wake stream nobody consumes must not read as coverage.
+    import httpx as _httpx
+    from acceptance.conftest import _AUTH
+    def _watch_state():
+        r = _httpx.get(f"{registry.url}/session/watch/status",
+                       params={"seat": seat}, headers=_AUTH, timeout=10)
+        return r.json().get("state")
+    _time.sleep(2.0)
+    assert _watch_state() == "unheld", (
+        f"watch became {_watch_state()!r} with NO consumer attached — "
+        "F4-with-extra-steps: coverage claimed for a stream nobody reads"
+    )
+
+    # The harness now plays Monitor: attach a reader.
+    fd = _os.open(fifo, _os.O_RDONLY | _os.O_NONBLOCK)
+    try:
+        deadline = _time.monotonic() + 25
+        while _watch_state() != "covered" and _time.monotonic() < deadline:
+            _time.sleep(0.5)
+        log_path = fifo[:-5] + ".log"
+        _log = ""
+        try:
+            with open(log_path) as lf:
+                _log = lf.read()[-1500:]
+        except OSError:
+            _log = "(no log file)"
+        assert _watch_state() == "covered", (
+            "consumer attached but the watch never claimed — the "
+            f"attach→claim handoff is broken. Watcher log tail:\n{_log}"
+        )
+
+        # THE RIDER'S LEG: a DM to the ORDINAL SEAT must arrive as a wake
+        # line in the FIFO. Channel-only green died at 21:57 tonight.
+        mid = registry.send(seat, "step6 seat DM", "does the wake fire")
+        buf = b""
+        deadline = _time.monotonic() + 30
+        woke = False
+        while _time.monotonic() < deadline:
+            try:
+                chunk = _os.read(fd, 65536)
+                if chunk:
+                    buf += chunk
+                    if mid.encode() in buf:
+                        woke = True
+                        break
+            except BlockingIOError:
+                pass
+            _time.sleep(0.25)
+        assert woke, (
+            f"ARRIVAL FAIL: seat-addressed DM {mid} never appeared on the "
+            f"wake stream within 30s. Lines seen: {buf[:400]!r}. This is the "
+            "50-minute bug — the gate says the protocol is theater"
+        )
+        # and the line is a well-formed message line, not an event line (F11)
+        line = next(l for l in buf.decode().splitlines() if mid in l)
+        parsed = _json.loads(line)
+        assert parsed.get("id") == mid and "event" not in parsed
+    finally:
+        _os.close(fd)
+        # watch rows carry user_id=global / project='' — outside the R-c
+        # marker sweep — so this row is purged explicitly, by key.
+        registry.purge_watch(seat)

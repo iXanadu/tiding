@@ -112,6 +112,7 @@ class SessionSim:
         session_key: str,
         inbox_identity: str | None = None,
         home: str | None = None,
+        extra_env: dict | None = None,
     ):
         self.project_dir = project_dir
         self.provider = provider
@@ -141,6 +142,8 @@ class SessionSim:
         }
         if inbox_identity:
             env["ENGRAM_INBOX_IDENTITY"] = inbox_identity
+        if extra_env:
+            env.update(extra_env)
         self.env = env
         self.proc: subprocess.Popen | None = None
 
