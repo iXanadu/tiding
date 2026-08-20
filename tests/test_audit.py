@@ -1,3 +1,4 @@
+import uuid
 """AUDIT-1: the write trail actually gets written.
 
 The audit_log table shipped with the principals work and sat at zero rows —
@@ -123,3 +124,62 @@ async def test_audit_failure_never_fails_the_write(client, db_pool, monkeypatch)
     )
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM memories WHERE namespace = $1", NS)
+
+
+# --- AUDIT-2: token rotations must leave a mark -----------------------------
+# "When did this token die" was the first question asked during the 2026-08-16
+# rotated-credential incident, and the store could not answer it: principals
+# had no updated_at and the CRUD endpoints wrote no audit rows. The only bound
+# available was a comment in a keys file.
+
+@pytest.mark.asyncio
+async def test_token_regeneration_is_recorded_and_never_leaks_the_token(client, db_pool):
+    rotor = f"audit2-rotor-{uuid.uuid4().hex[:8]}"
+    r = await client.post("/admin/principals", json={
+        "name": rotor, "type": "agent",
+        "read_namespaces": ["fleet"], "write_namespaces": ["fleet"],
+    })
+    assert r.status_code == 200
+    created_at = r.json()["principal"]["created_at"]
+
+    r2 = await client.post(f"/admin/principals/{rotor}/token")
+    assert r2.status_code == 200
+    raw = r2.json()["raw_token"]
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT action, detail::text AS d FROM audit_log "
+            "WHERE action = 'principal.token_regenerate'"
+        )
+    assert rows, "a token rotation left NO audit row — the AUDIT-2 defect"
+    blob = " ".join(r["d"] for r in rows)
+    assert rotor in blob
+    # An audit row that leaks the credential is worse than no audit row.
+    assert raw not in blob, "the raw token was written into the audit trail"
+
+    # And the principal itself must now carry a rotation timestamp.
+    r3 = await client.get(f"/admin/principals/{rotor}")
+    assert r3.status_code == 200
+    body = r3.json()
+    assert body.get("updated_at"), "no updated_at after a rotation"
+    assert body["updated_at"] >= created_at
+
+
+@pytest.mark.asyncio
+async def test_deactivation_is_recorded(client, db_pool):
+    doomed = f"audit2-doomed-{uuid.uuid4().hex[:8]}"
+    r0 = await client.post("/admin/principals", json={
+        "name": doomed, "type": "agent",
+        "read_namespaces": ["fleet"], "write_namespaces": ["fleet"],
+    })
+    r = await client.delete(f"/admin/principals/{doomed}")
+    assert r.status_code == 200
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT detail::text AS d FROM audit_log "
+            "WHERE action = 'principal.deactivate'"
+        )
+    assert any(doomed in r["d"] for r in rows), (
+        "deactivating a principal left no audit row"
+    )

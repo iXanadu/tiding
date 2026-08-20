@@ -219,6 +219,20 @@ BEGIN
     CREATE INDEX IF NOT EXISTS idx_principals_token_lookup
         ON principals (token_lookup) WHERE token_lookup IS NOT NULL;
 
+    -- AUDIT-2: principals had created_at and nothing else, so "when did this
+    -- token die" — the first question asked during the 2026-08-16 rotated-
+    -- credential incident — was unanswerable from the store. Existing rows
+    -- get created_at as their honest floor: we know they have not been
+    -- touched since we started recording, and we must not invent a date we
+    -- never observed.
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'principals' AND column_name = 'updated_at'
+    ) THEN
+        ALTER TABLE principals ADD COLUMN updated_at TIMESTAMPTZ;
+        UPDATE principals SET updated_at = created_at WHERE updated_at IS NULL;
+    END IF;
+
     -- Add the new 5-tuple unique constraint (NULLS NOT DISTINCT so NULL
     -- projects collide with each other — required for back-compat with
     -- scope=machine/shared/user/inbox rows where project IS NULL).

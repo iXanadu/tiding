@@ -335,17 +335,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the roster can distinguish them; or serve them under a separate field.
   Whichever, "touched once" must stop rendering as "is here".
 
-- **AUDIT-2** Token rotations are unrecorded. principals has no updated_at
-  and the principal-CRUD endpoints write no audit rows, so "when did this
-  token die" — the first question asked during the 2026-08-16 rotated-token
-  incident (a dead credential retried silently for weeks; fixed 2026-08-20) — was
-  unanswerable from the store (bounded only by an engram.keys header
-  comment). Add updated_at + audit entries on principal create/patch/
-  token-regenerate/deactivate; and the operator's keys ledger should carry
-  a HOLDERS line per token so a rotation walks every client (the desktop
-  app was the holder everyone forgot). Standing habit under the same
-  banner: cloud-resident assistant tokens (third-party VM, credentials
-  retained after bot deletion) rotate on a schedule, not on incident.
+- **AUDIT-2** *(STORE HALF DONE 2026-08-20 — `principals.updated_at` plus
+  audit rows on update / token-regenerate / deactivate, so "when did this
+  token die" is now answerable from the store. Rotation rows record WHICH
+  fields moved and never their values.)* What REMAINS is operator tooling,
+  outside this repo: the keys ledger needs a **HOLDERS line per token** so a
+  rotation walks every client — the desktop app was the holder everyone
+  forgot, and that omission is what made the 2026-08-16 credential sit dead
+  for weeks. Standing habit under the same banner: cloud-resident assistant
+  tokens (third-party VM, credentials retained after bot deletion) rotate on
+  a schedule, not on incident.
 
 - **HEADED-OWNER-1** An agent with headed access to a logged-in owner
   browser holds every owner-only capability on every surface — the

@@ -71,6 +71,9 @@ def _principal_dict(row) -> dict:
         "write_namespaces": list(row["write_namespaces"]),
         "active": row["active"],
         "created_at": row["created_at"],
+        # AUDIT-2: surfaced, not just stored. A forensic column no endpoint
+        # returns answers nobody's question.
+        "updated_at": row["updated_at"] if "updated_at" in row else None,
     }
 
 
@@ -253,6 +256,9 @@ async def update_principal(
     if not sets:
         return await get_principal(name), None
 
+    # AUDIT-2: stamped here, not at the call sites, so no future mutation can
+    # forget it. "When did this token die" must be answerable from the store.
+    sets.append("updated_at = NOW()")
     params.append(name)
     sql = f"UPDATE principals SET {', '.join(sets)} WHERE name = ${idx} RETURNING *"
     async with pool.acquire() as conn:
@@ -266,7 +272,8 @@ async def deactivate_principal(name: str) -> bool:
     pool = await get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE principals SET active = FALSE WHERE name = $1 AND active = TRUE", name
+            "UPDATE principals SET active = FALSE, updated_at = NOW() "
+            "WHERE name = $1 AND active = TRUE", name
         )
     return result == "UPDATE 1"
 

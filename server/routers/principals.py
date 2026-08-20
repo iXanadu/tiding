@@ -16,6 +16,7 @@ from server.models import (
     TokenResponse,
 )
 from server.services import principal_service as ps
+from server.services.audit_service import audit
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,23 @@ async def update_principal(
     )
     if not updated:
         raise HTTPException(status_code=404, detail=f"Principal '{name}' not found.")
+    # AUDIT-2. Record WHICH fields moved, never their values — an audit row
+    # that leaks a token is worse than no audit row.
+    await audit(
+        action="principal.update",
+        principal=_caller,
+        detail={
+            "target": name,
+            "fields": sorted(
+                f for f, v in (
+                    ("is_admin", req.is_admin), ("password", req.password),
+                    ("token", req.token), ("read_namespaces", req.read_namespaces),
+                    ("write_namespaces", req.write_namespaces), ("active", req.active),
+                ) if v is not None
+            ),
+        },
+        target_principal_id=updated.get("id"),
+    )
     return PrincipalResponse(**updated)
 
 
@@ -102,6 +120,11 @@ async def deactivate_principal(
     result = await ps.deactivate_principal(name)
     if not result:
         raise HTTPException(status_code=404, detail=f"Principal '{name}' not found or already inactive.")
+    await audit(
+        action="principal.deactivate",
+        principal=_caller,
+        detail={"target": name},
+    )
     return {"status": "ok", "name": name, "active": False}
 
 
@@ -114,6 +137,15 @@ async def regenerate_token(
     updated, _ = await ps.update_principal(name=name, token=raw)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Principal '{name}' not found.")
+    # THE row that was missing. A rotation is the event whose date nobody
+    # could answer during the 2026-08-16 incident. The raw token is NEVER
+    # recorded — only that a rotation happened, by whom, and when.
+    await audit(
+        action="principal.token_regenerate",
+        principal=_caller,
+        detail={"target": name},
+        target_principal_id=updated.get("id"),
+    )
     return TokenResponse(status="ok", principal_name=name, raw_token=raw)
 
 

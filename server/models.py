@@ -563,6 +563,9 @@ class PrincipalResponse(BaseModel):
     write_namespaces: list[str]
     active: bool
     created_at: datetime
+    # AUDIT-2: when this principal was last mutated (token rotation, namespace
+    # change, deactivation). Nullable only for rows predating the column.
+    updated_at: datetime | None = None
 
 
 class PrincipalListResponse(BaseModel):
