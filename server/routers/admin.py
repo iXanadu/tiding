@@ -395,6 +395,36 @@ async def sweep_endpoint(_caller=Depends(admin_or_open)):
         raise HTTPException(status_code=500, detail="internal error — see server logs")
 
 
+@router.get("/inbox/unanswered")
+async def unanswered_endpoint(
+    min_age_hours: float = Query(4.0, ge=0, le=8760),
+    limit: int = Query(100, ge=1, le=1000),
+    _caller=Depends(admin_or_open),
+):
+    """ADDR-2 / the store's half: ASK-class mail NOBODY HAS EVER READ.
+
+    Built for AgentBeast to poll. The split is deliberate and is the 2026-07-27
+    ratified one: engram says WHAT HAS NOT BEEN READ (a fact it owns), AB says
+    WHETHER ANYONE IS HOME (a verdict only the spawner can make, because it
+    performs the turns — a heartbeat outlives an exit and never observes one).
+    Neither half is actionable alone. Together they are: an idle agent plus an
+    unread ask is a nudge; a dead address plus an unread ask is an escalation.
+
+    Returns facts only. No gating, no rerouting, no refusal to deliver — mail
+    to an address with nobody home is still valid mail, and a store that
+    second-guesses delivery on a signal that lies in both directions would
+    drop real work.
+    """
+    from server.services.memory_service import unanswered_asks
+    try:
+        rows = await unanswered_asks(min_age_hours=min_age_hours, limit=limit)
+        return {"status": "ok", "count": len(rows),
+                "min_age_hours": min_age_hours, "unanswered": rows}
+    except Exception:
+        logger.exception("unanswered_asks failed")
+        raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
 @router.post("/cleanup", response_model=CleanupResponse)
 async def cleanup_endpoint(
     batch_size: int = Query(None, ge=1, le=10000),

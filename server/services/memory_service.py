@@ -2716,3 +2716,65 @@ async def wake_list_fresh(
             "at": r["created_at"].isoformat() if r["created_at"] else None,
         })
     return out
+
+
+async def unanswered_asks(min_age_hours: float = 4.0, limit: int = 100) -> list[dict]:
+    """ASK-class mail that NOBODY HAS EVER READ, oldest first.
+
+    THE STORE'S HALF OF A TWO-PARTY ANSWER. engram can say what has not been
+    read; it CANNOT say whether anyone is home — a heartbeat outlives an exit
+    and never observes one, so a busy session and a dead one look identical
+    from here. The spawner (AgentBeast) knows, because it performs the turns.
+    Facts here, verdict there — the 2026-07-27 ownership split.
+
+    WHY `read_by = []` AND NOT `status = open`, measured 2026-08-20 on live
+    data: 93% of action-class mail is still 'open' because resolution barely
+    happens, so open is nearly meaningless and an escalation keyed on it would
+    fire constantly and be tuned out. Never-read is ~8.5% and every row is a
+    genuine "this reached nobody" — 221 such asks to agent addresses in one
+    week, the oldest sitting 361 hours at addresses with nobody home.
+
+    Deliberately NOT filtered to tree-shaped addresses. Channels are the mode
+    we tell everyone to prefer, and they are exempt from BOTH the sweep (root
+    is skipped) and the climb (a root has no ancestor to climb to) — so the
+    safest address to send to is the one with the weakest follow-up in the
+    system. That gap is the whole reason this function exists.
+    """
+    pool = await get_pool()
+    cutoff_seconds = max(0.0, float(min_age_hours)) * 3600.0
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, user_id, metadata, created_at,
+                   EXTRACT(EPOCH FROM (NOW() - created_at)) AS age_s
+            FROM memories
+            WHERE namespace = $1 AND scope = $2
+              AND COALESCE((metadata->>'archived')::bool, false) = false
+              AND COALESCE(metadata->>'status', $3) = $3
+              AND metadata->>'intent' = ANY($4::text[])
+              AND jsonb_array_length(COALESCE(metadata->'read_by', '[]'::jsonb)) = 0
+              AND EXTRACT(EPOCH FROM (NOW() - created_at)) >= $5
+            ORDER BY created_at
+            LIMIT $6
+            """,
+            INBOX_NAMESPACE, INBOX_SCOPE, INBOX_OPEN,
+            list(ASK_INTENTS), cutoff_seconds, int(limit),
+        )
+    out = []
+    for r in rows:
+        md = r["metadata"] or {}
+        if isinstance(md, str):
+            md = json.loads(md)
+        out.append({
+            "id": r["key"],
+            "address": r["user_id"],
+            "subject": md.get("subject") or "",
+            "intent": md.get("intent"),
+            "from": md.get("from"),
+            "age_hours": round(float(r["age_s"]) / 3600.0, 1),
+            "created_at": r["created_at"].isoformat(),
+            # Stated as a FACT, never a verdict. None = no watcher has ever
+            # beaten for this address, which is not the same as "dead".
+            "never_read": True,
+        })
+    return out
