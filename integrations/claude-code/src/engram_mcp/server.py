@@ -642,6 +642,14 @@ async def _claim_seat(project_dir: str | None) -> None:
             runtime_seat=runtime,
         )
         granted = (resp.get("seat") or "").strip().lower()
+        # EXIT-NOTICE-1: remember what to say goodbye AS. Refreshed on every
+        # claim, so a runtime re-seat is followed without any re-arm.
+        if granted:
+            _EXIT_NOTICE.update({
+                "session_key": session_key, "seat": granted,
+                "lane": implicit_lane, "project": project,
+                "provider": resolve_provider(), "host": hostname(),
+            })
         _SEAT_CLAIMED = True
         _SEAT_CLAIM_FAILURES = 0
         _SEAT_LAST_CLAIM_ERROR = None
@@ -882,6 +890,62 @@ def _kill_watcher_child() -> None:
 
 import atexit as _atexit
 _atexit.register(_kill_watcher_child)
+
+
+# ─── EXIT-NOTICE-1: a hand-started session files its OWN death notice ───────
+# AgentBeast certifies the death of every session it stops (LANE-4), and since
+# e8461f5 the roster renders that as EXITED. A session nobody spawned had no
+# one to speak for it: on /exit it just went quiet, and the list said
+# "running" for 48h. Measured 2026-08-21: the harness closes this bridge's
+# stdin on /exit, the MCP loop returns, and Python runs atexit hooks 0.1s
+# later — so the bridge CAN speak for itself on every clean exit (/exit,
+# Ctrl-C, normal end). A hard kill (kill -9, window close) gives no hook and
+# stays the labelled gap (BACKLOG FAREWELL-2).
+#
+# Synchronous on purpose: the asyncio loop is gone by atexit. One POST, 3s,
+# every failure swallowed — a goodbye must never turn a clean exit into a
+# hang or a traceback.
+_EXIT_NOTICE: dict = {}
+
+
+def _post_exit_notice_sync(url: str, token: str, payload: dict) -> bool:
+    """Split out so tests can stub the wire. Returns True when posted."""
+    try:
+        import httpx
+        r = httpx.post(
+            f"{url.rstrip('/')}/session/death", json=payload,
+            headers={"Authorization": f"Bearer {token}"} if token else {},
+            timeout=3.0,
+        )
+        return 200 <= r.status_code < 300
+    except Exception:
+        return False
+
+
+def _exit_notice() -> None:
+    """atexit: certify this session's own exit — only if it ever held a seat."""
+    if not _EXIT_NOTICE.get("seat") or not _EXIT_NOTICE.get("session_key"):
+        return  # never seated → nothing to certify (and never invent a seat)
+    if not settings.memory_api_token:
+        return
+    payload = {
+        "session_key": _EXIT_NOTICE["session_key"],
+        "seat": _EXIT_NOTICE["seat"],
+        "lane": _EXIT_NOTICE.get("lane"),
+        "project": _EXIT_NOTICE.get("project"),
+        "provider": _EXIT_NOTICE.get("provider"),
+        "host": _EXIT_NOTICE.get("host"),
+        "died_at": datetime.now(timezone.utc).isoformat(),
+        "cause": "session-exit",
+        "graceful": True,
+    }
+    try:
+        _post_exit_notice_sync(settings.memory_api_url, settings.memory_api_token, payload)
+    except Exception:
+        pass
+
+
+_atexit.register(_exit_notice)
 
 
 # ─── Wake-stream coverage: tell a LIVE session when its stream is gone ──────
