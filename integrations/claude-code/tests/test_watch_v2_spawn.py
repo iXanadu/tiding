@@ -118,3 +118,63 @@ async def test_beat_three_verdicts_map_to_three_behaviors():
     assert await st.beat(C({"verdict": "displaced"})) == "displaced"
     # lost response is UNKNOWN — pause, not death, not emission
     assert await st.beat(C(ConnectionError("blip"))) == "unknown"
+
+
+def _stream_probe(cmd: str, fifo: str, timeout: float = 3.0) -> str:
+    """Run `cmd` (the hinted consumer) against `fifo` while a writer HOLDS the
+    FIFO open, write two lines, and return what the consumer emitted within
+    `timeout`. A consumer that only prints at writer-EOF returns ''."""
+    import subprocess
+    import time
+    proc = subprocess.Popen(
+        ["sh", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        w = open(fifo, "w", buffering=1)       # blocks until the consumer attaches
+        try:
+            w.write("wake-1\n"); w.write("wake-2\n")
+            got = b""
+            deadline = time.monotonic() + timeout
+            os.set_blocking(proc.stdout.fileno(), False)
+            while time.monotonic() < deadline and b"wake-2" not in got:
+                try:
+                    chunk = os.read(proc.stdout.fileno(), 4096)
+                    if chunk:
+                        got += chunk
+                        continue
+                except BlockingIOError:
+                    pass
+                time.sleep(0.05)
+            return got.decode()
+        finally:
+            w.close()                           # writer EOF — AFTER the read window
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def test_watcher_attach_command_streams_live(tmp_path, monkeypatch):
+    """The command memory_status hands the agent must emit each wake AS IT
+    LANDS while the watcher (the writer) is alive. `tail -F` does not: on a
+    FIFO it reads to EOF before printing, EOF never comes while the watcher
+    lives, so the seat read `covered` and the session was deaf
+    (owner-found, 2026-08-21). This runs the hinted command for real."""
+    fifo = str(tmp_path / "wake.fifo")
+    os.mkfifo(fifo, 0o600)
+    monkeypatch.setitem(server._WATCHER_SUP, "fifo", fifo)
+    cmd = server._watcher_attach_command()
+    assert cmd and fifo in cmd
+    got = _stream_probe(cmd, fifo)
+    assert "wake-1" in got and "wake-2" in got, (
+        f"hinted consumer {cmd!r} emitted {got!r} while the writer was alive — "
+        "a covered seat whose wakes never reach the session")
+
+
+def test_tail_on_a_fifo_is_deaf_until_writer_eof(tmp_path):
+    """The negative control: this is WHY the hint is not tail. If a platform
+    ever makes tail stream a live FIFO, this goes red and the comment in
+    _watcher_attach_command can be revisited — until then it documents the
+    measured failure."""
+    fifo = str(tmp_path / "wake.fifo")
+    os.mkfifo(fifo, 0o600)
+    got = _stream_probe(f"tail -F {fifo}", fifo, timeout=1.5)
+    assert got == "", f"tail -F streamed a live FIFO here: {got!r}"

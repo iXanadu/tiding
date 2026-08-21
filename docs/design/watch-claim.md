@@ -78,8 +78,9 @@ watch" read off the claims table; existing doubles converge at next beat.
   (paths, identity, project-dir all resolved bridge-side); the watcher then
   CLAIMS, so double-arming is impossible and the banner reports unheld
   watches. v2 (open question for review): bridge spawns the watcher as its
-  child writing to a per-session FIFO; the Monitor command becomes
-  `tail -f <fifo>` — supervision moves fully bridge-side and the watcher
+  child writing to a per-session FIFO; the Monitor command becomes a
+  streaming reader of the FIFO (a `cat` loop — NOT `tail`, see §Consumer
+  below) — supervision moves fully bridge-side and the watcher
   dies with the bridge (kills SEAT-13 orphans by process lineage).
 - **AB-hosted grok**: AB's existing waiters adopt the claim. First to claim
   holds; the other path finds `held` and does nothing. Migration measures
@@ -181,7 +182,7 @@ only. Coverage math counts D1/D2 firing, nothing else.
 
 v1's "blessed command" is a shorter ritual, not a prose-free hook — 0/4
 grok sessions performed the one act tonight; the step-2 arrival matrix
-fails it by construction. Ship the bridge-child + FIFO + `tail -f` design
+fails it by construction. Ship the bridge-child + FIFO + streaming-consumer design
 directly, with the two lessons priced in: **reconnect re-claims (no
 skip-guard — AB's "surviving process holds its monitor" comment was the
 bug), and the claim is not taken until the tail consumer is attached**
@@ -231,3 +232,27 @@ for once (the 21:57 "proven"). Step 3 (AB sensing retirement) executes
 PER SEAT, only after that seat's row — including the seat-DM leg — is
 green. AB's D2 injection (huddle/chat turns) is delivery, not sensing,
 and is not part of any retirement.
+
+## Consumer: a cat-loop, never tail (measured 2026-08-21)
+
+The shipped hint said `tail -F <fifo>`. It is wrong on every platform we
+run. `tail` on a non-regular file reads to EOF before printing (it has to,
+to find "the last N lines"), and a FIFO whose writer is alive never hits
+EOF — so every wake sat in tail's buffer while the store read the seat as
+`covered` (the claim follows the attach, and tail *had* attached: fd open,
+bytes consumed, nothing emitted). The owner found it by DMing the engram
+session and getting silence; the acceptance gate had read the FIFO with a
+Python `O_NONBLOCK` reader and never exercised the command the hint hands
+to agents — a two-clause claim with one clause measured, again.
+
+Measured on macOS (`tail -F`, `tail -f`, `tail -n +1 -f`: all silent until
+writer close; `cat`: live, but exits on writer close; `while true; do cat
+FIFO; done`: live AND survives the watcher restarting). The hint now emits:
+
+    while true; do cat <fifo> 2>/dev/null; sleep 1; done
+
+The loop is what `-F` was for (reopen after the writer's end recreates);
+the `sleep` keeps a missing FIFO from spinning. `memory_status` prints the
+exact command. Covered by `test_watcher_attach_command_streams_live` in the
+bridge suite, which runs the hinted command for real against a held-open
+writer — the test that would have gone red on `tail`.

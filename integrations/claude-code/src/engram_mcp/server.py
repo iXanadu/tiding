@@ -708,7 +708,8 @@ def _seat_claim_health_banner() -> str:
 # The child writes wakes to a FIFO. open-for-write blocks until a consumer
 # attaches, and the claim follows the attach — so a wake stream nobody
 # consumes never claims coverage, and the agent's ONE remaining act (where a
-# Monitor tool exists) is attaching `tail -F <fifo>`. Supervision is
+# Monitor tool exists) is attaching a streaming reader to the FIFO (see
+# _watcher_attach_command for WHY it is a cat-loop and not tail). Supervision is
 # process-level: restarts cost zero model turns, and the child dies with the
 # bridge, which dies with the session — the SEAT-13 zombie class ends by
 # process lineage, not by protocol.
@@ -724,10 +725,21 @@ def _wake_state_dir() -> str:
 
 def _watcher_attach_command() -> str | None:
     """The exact Monitor command for this session's wake stream, or None
-    while no supervised watcher exists. tail -F (not -f): it survives the
-    watcher restarting and recreating its end of the FIFO."""
+    while no supervised watcher exists.
+
+    A cat-loop, NOT `tail -F`. Measured 2026-08-21 on macOS (and GNU tail
+    behaves the same on a pipe): tail on a FIFO reads to EOF before it prints
+    anything, and EOF never comes while the watcher holds the write end —
+    so every wake sat in tail's buffer, the store read the seat as `covered`
+    (the claim follows the attach, and tail HAD attached), and the session was
+    deaf. The owner found it by DMing and getting silence. `cat` streams each
+    line as it lands; the `while` loop is what `-F` was for — it survives the
+    watcher restarting (cat sees EOF, exits, reopens and blocks until the
+    respawned writer attaches). The sleep keeps a missing FIFO from spinning."""
     fifo = _WATCHER_SUP.get("fifo")
-    return f"tail -F {fifo}" if fifo else None
+    if not fifo:
+        return None
+    return f"while true; do cat {fifo} 2>/dev/null; sleep 1; done"
 
 
 def _watcher_supervisor_thread(project_dir: str | None) -> None:
