@@ -69,7 +69,7 @@ async def test_farewell_renders_as_observed_exit_not_silence(monkeypatch):
     # it OUTRANKS the beat state: not "gone quiet" on that line
     assert "watcher gone quiet" not in line
     # and the seat is called out in its own footer, as an exit, not as silence
-    assert "☠ EXITED (observed): proj-claude-5" in out
+    assert "☠ EXITED: proj-claude-5" in out
     assert "Do not hand work to these chairs" in out
     # the live seat is untouched
     assert "proj-claude-6" in out and "watcher beat recently" in out
@@ -84,7 +84,7 @@ async def test_farewelled_seat_never_lands_in_no_watcher_beat_advisory(monkeypat
         _entry("proj-claude-7", watcher_alive=False, is_stale=False,
                farewell_at="2026-08-21T16:00:00Z"),
     ])
-    assert "☠ EXITED (observed): proj-claude-7" in out
+    assert "☠ EXITED: proj-claude-7" in out
     assert "ADDRESSABLE, NO WATCHER BEAT" not in out
 
 
@@ -94,3 +94,34 @@ def test_short_ts_trims_iso_and_passes_odd_shapes_through():
     # never hide the fact because of its shape
     assert srv._short_ts("yesterday-ish") == "yesterday-ish"
     assert srv._short_ts(1755790000) == "1755790000"
+
+
+@pytest.mark.asyncio
+async def test_certified_death_outranks_everything_and_names_the_certifier(monkeypatch):
+    # Dead-shows-dead (2026-08-21): a LANE-4 certificate from the spawner is
+    # the strongest exit fact — it performed the kill. It outranks a beat
+    # state AND an observed farewell on the same row, prints who certified
+    # and when, and lands the seat in the EXITED footer, never the
+    # "no watcher beat" advisory.
+    out = await _render(monkeypatch, [
+        _entry("proj-grok-2", watcher_alive=False, is_stale=True,
+               farewell_at="2026-08-21T17:14:50Z",
+               death={"died_at": "2026-08-21T17:15:20.963246+00:00",
+                      "cause": "stopped", "graceful": True,
+                      "certified_by": "agentbeast"}),
+        _entry("proj-claude-9", watcher_alive=True),
+    ])
+    line = next(l for l in out.splitlines() if l.strip().startswith("proj-grok-2"))
+    assert "EXITED — certified dead by agentbeast at 2026-08-21T17:15:20Z" in line
+    assert "OBSERVED" not in line and "gone quiet" not in line
+    assert "☠ EXITED: proj-grok-2" in out
+    assert "ADDRESSABLE, NO WATCHER BEAT" not in out
+    assert "proj-claude-9" in out and "watcher beat recently" in out
+
+
+@pytest.mark.asyncio
+async def test_death_without_certifier_still_renders(monkeypatch):
+    out = await _render(monkeypatch, [
+        _entry("proj-codex-1", death={"died_at": "2026-08-21T10:00:00Z"}),
+    ])
+    assert "EXITED — certified dead by spawner at 2026-08-21T10:00:00Z" in out

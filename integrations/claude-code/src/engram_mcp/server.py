@@ -2058,7 +2058,17 @@ async def memory_roster(
         # observed exit rules out.
         wa = e.get("watcher_alive")
         fa = e.get("farewell_at")
-        if fa:
+        death = e.get("death") or None
+        if death:
+            # LANE-4 certificate: the spawner performed the kill and said so.
+            # Outranks an observed farewell (same fact, stronger witness) and
+            # every beat state. Dead-shows-dead, 2026-08-21: AB had certified
+            # every stop for a day while this list said "running".
+            who = death.get("certified_by") or "spawner"
+            ear = (f" · EXITED — certified dead by {who} at "
+                   f"{_short_ts(death.get('died_at'))}")
+            exited.append(e["identity"])
+        elif fa:
             ear = f" · watcher OBSERVED the session exit at {_short_ts(fa)}"
             exited.append(e["identity"])
         elif wa is True:
@@ -2089,8 +2099,9 @@ async def memory_roster(
         )
     if exited:
         head += (
-            f"\n\n☠ EXITED (observed): {', '.join(exited)} — a watcher saw the "
-            f"session end; this is not silence. Mail to the address still "
+            f"\n\n☠ EXITED: {', '.join(exited)} — the session's end was "
+            f"OBSERVED (by its watcher) or CERTIFIED (by whatever spawned and "
+            f"stopped it); this is not silence. Mail to the address still "
             f"queues, but nothing reads it until a new session takes the seat. "
             f"Do not hand work to these chairs."
         )

@@ -1669,6 +1669,11 @@ PRESENCE_SCOPE = "presence"
 # THIS module — the reverse direction would be circular).
 SEAT_SCOPE = "seat"
 SEAT_USER_ID = "global"
+# LANE-4 death certificates (testimony from the thing that performed the
+# kill). Defined HERE, one layer below session_registry, so both the register
+# and the roster read one constant without an import cycle (session_registry
+# imports from this module, never the reverse).
+DEATH_SCOPE = "death"
 PRESENCE_STALE_AFTER_SECONDS = 600  # 10 min without a heartbeat → stale
 
 # SEAT-4 retention horizon: a presence row silent this long is dropped from
@@ -2118,6 +2123,68 @@ def _watcher_state(md: dict, now: datetime) -> tuple[bool | None, datetime | Non
     return (now - seen).total_seconds() < WATCHER_STALE_AFTER_SECONDS, seen
 
 
+async def _death_by_seat(conn, project: str | None) -> dict[str, dict]:
+    """Latest LANE-4 death certificate per seat name, for a project (or all).
+
+    Indexed by the SEAT the cert names — the roster is keyed by identity, so
+    that is the only join it has. A reused name's OLD holder's cert is made
+    harmless not here but by the life-after rule in `_death_for`: any beat at
+    that name after died_at voids it (same rule the address register applies,
+    REG-DEATH-1). Latest died_at wins when a name has several certs.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT metadata FROM memories
+        WHERE namespace = $1 AND scope = $2 AND user_id = $3
+          AND ($4::text IS NULL OR project = $4)
+        """,
+        PRESENCE_NAMESPACE, DEATH_SCOPE, SEAT_USER_ID,
+        project.lower() if project else None,
+    )
+    out: dict[str, dict] = {}
+    for r in rows:
+        md = r["metadata"] or {}
+        if isinstance(md, str):
+            md = json.loads(md)
+        seat = (md.get("seat") or "").strip().lower()
+        if not seat:
+            continue
+        prior = out.get(seat)
+        if not prior or (md.get("died_at") or "") > (prior.get("died_at") or ""):
+            out[seat] = {
+                "died_at": md.get("died_at"),
+                "cause": md.get("cause"),
+                "graceful": md.get("graceful"),
+                "certified_by": md.get("certified_by"),
+            }
+    return out
+
+
+def _death_for(ident: str, death_by_seat: dict[str, dict],
+               *evidence_of_life) -> dict | None:
+    """The certificate for this identity, unless something LIVED after it.
+
+    Life-after-death voids the cert (not bare liveness — a beat BEFORE
+    died_at is the session that then died). Each arg in evidence_of_life is
+    a datetime or None: the presence row's last beat, the watcher's last
+    beat. An unparseable died_at keeps the cert (facts kept, never dropped
+    for shape).
+    """
+    death = death_by_seat.get(ident)
+    if not death:
+        return None
+    try:
+        died = datetime.fromisoformat(str(death.get("died_at")))
+        if died.tzinfo is None:
+            died = died.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return death
+    for t in evidence_of_life:
+        if t is not None and t > died:
+            return None
+    return death
+
+
 async def roster_list(
     project: str | None = None,
     channel: str | None = None,
@@ -2155,6 +2222,12 @@ async def roster_list(
             PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
             project.lower() if project else None,
         )
+        # Dead-shows-dead (2026-08-21): the spawner's certificate is the ONE
+        # death signal this roster's own docstring says to trust ("whatever
+        # spawned the session observes a termination rather than inferring
+        # one") — and until now the roster never read it. AB had been posting
+        # certs for every stop; the list still said "running".
+        death_by_seat = await _death_by_seat(conn, project)
     superseded_by_ident = {
         r["key"].removeprefix("seat/"): _superseded_from_seat(r["metadata"])
         for r in seat_rows
@@ -2230,6 +2303,12 @@ async def roster_list(
             # session's process exit at T". Absent means no such observation
             # was ever made, which is NOT a claim that the session is alive.
             "farewell_at": md.get("farewell_at"),
+            # LANE-4 testimony: the spawner certified this session dead at
+            # died_at (who/why/graceful carried). None = no certificate, or a
+            # certificate VOIDED by a beat after its died_at (a reused name).
+            # Never a verdict from silence — a cert is an observation by the
+            # process that performed the kill.
+            "death": _death_for(ident, death_by_seat, last_seen, watcher_seen),
         })
     return entries
 
@@ -2280,6 +2359,27 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
             """,
             PRESENCE_NAMESPACE, PRESENCE_SCOPE, keys, addresses,
         )
+        death_rows = await conn.fetch(
+            """
+            SELECT metadata FROM memories
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND lower(metadata->>'seat') = ANY($4::text[])
+            """,
+            PRESENCE_NAMESPACE, DEATH_SCOPE, SEAT_USER_ID, addresses,
+        )
+    death_by_seat: dict[str, dict] = {}
+    for r in death_rows:
+        dmd = r["metadata"] or {}
+        if isinstance(dmd, str):
+            dmd = json.loads(dmd)
+        seat = (dmd.get("seat") or "").strip().lower()
+        prior = death_by_seat.get(seat)
+        if seat and (not prior or (dmd.get("died_at") or "") > (prior.get("died_at") or "")):
+            death_by_seat[seat] = {
+                "died_at": dmd.get("died_at"), "cause": dmd.get("cause"),
+                "graceful": dmd.get("graceful"),
+                "certified_by": dmd.get("certified_by"),
+            }
     now = datetime.now(timezone.utc)
     # Freshest listener per address wins. `state=done` rows are retired
     # sessions and never speak for a group address (a seat address is still
@@ -2304,7 +2404,7 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for addr, (last_seen, md, ident) in best.items():
         age = (now - last_seen).total_seconds()
-        watcher_alive, _ = _watcher_state(md, now)
+        watcher_alive, watcher_seen = _watcher_state(md, now)
         # Facts only, same discipline as the roster. The caller composing a
         # warning gets watcher_alive and age and decides what they mean — the
         # store attests, it does not judge. (`state` was dropped here too on
@@ -2322,6 +2422,8 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
             # warns about nothing. A watcher that saw the process go reports it
             # on its next poll.
             "farewell_at": md.get("farewell_at"),
+            # Same certificate the roster serves, at the moment of the send.
+            "death": _death_for(ident, death_by_seat, last_seen, watcher_seen),
         }
     return out
 

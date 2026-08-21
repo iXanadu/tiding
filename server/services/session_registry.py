@@ -40,6 +40,7 @@ from datetime import datetime, timedelta, timezone
 from server.db import get_pool
 from server.services.memory_service import (
     ASK_INTENTS,
+    DEATH_SCOPE,
     INBOX_NAMESPACE,
     INBOX_OPEN,
     INBOX_RESOLVED,
@@ -971,7 +972,7 @@ async def seat_claim(
     )
 
 
-DEATH_SCOPE = "death"
+# DEATH_SCOPE now lives in memory_service (the roster reads it too).
 LANE_CURSOR_SCOPE = "lane_cursor"
 
 

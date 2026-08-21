@@ -934,7 +934,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 # decides what silence means, because the store cannot
                 # (MSG-8: a busy agent and a dead one are both silent).
                 if (info["is_stale"] or info["watcher_alive"] is False
-                        or info.get("farewell_at")):
+                        or info.get("farewell_at") or info.get("death")):
                     hrs = info["age_seconds"] / 3600.0
                     age = f"{hrs:.1f}h" if hrs >= 1 else f"{int(info['age_seconds'])}s"
                     facts = f"last heartbeat {age} ago"
@@ -951,6 +951,17 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                     # blocking work item sent to an empty chair.
                     if info.get("farewell_at"):
                         facts += ", watcher OBSERVED the session exit"
+                    # LANE-4: the spawner said so. Strongest fact here — it
+                    # performed the kill — and the one that a stale-window
+                    # cannot dilute.
+                    death = info.get("death")
+                    if death:
+                        facts += (
+                            f", spawner CERTIFIED the session dead at "
+                            f"{str(death.get('died_at'))[:19]}"
+                            + (f" (by {death.get('certified_by')})"
+                               if death.get("certified_by") else "")
+                        )
                     warnings.append(
                         f"{addr}: {facts} — delivered and stored, but do not "
                         "expect a reply. Check memory_roster before dividing "

@@ -1018,6 +1018,11 @@ class RosterEntry(BaseModel):
     # observation exists — never that the session is alive. Voided by any
     # later evidence of life, so a wrong one self-heals.
     farewell_at: datetime | None = None
+    # LANE-4: the spawner's death certificate for this identity — died_at,
+    # cause, graceful, certified_by — or None. Testimony from the process that
+    # performed the kill, which is the one death signal that needs no window
+    # to elapse. Voided by any beat at this name after died_at (reused name).
+    death: dict | None = None
     # MSG-5: is anyone actually LISTENING at this address? True = a watcher
     # beat recently; False = one used to beat and has gone quiet; None = no
     # watcher has ever beaten here, so there is no basis. None is never
