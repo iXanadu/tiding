@@ -484,6 +484,23 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
+- **FAREWELL-2** FAREWELL-1 (ed5709b) records a farewell only on two paths: the
+  watcher catches SIGTERM/SIGINT, or its poll loop observes the session's pid
+  gone. The owner's stop path delivers neither (terminal kill → SIGHUP → the
+  bridge's child group dies with it). Measured 2026-08-21 on the first real
+  owner-initiated stop, two seats across two projects: `farewell_at=None` on
+  both, no gasp line and no farewell line in either watcher log. Working as
+  designed; the design does not cover how these sessions actually die — the
+  code's own comment names SIGKILL as uncatchable. `class:absence-vs-failure`
+  (a labelled absence, not a regression). The roster now renders an observed
+  exit ONLY when one was observed (b0216e2), so the gap is honest, not hidden.
+  Decide: (a) leave as-is, labelled; (b) make the observer survive its
+  session's killer (own process group + orphan-detect — more machinery on a
+  property engram's own docs call unobservable); (c) server-side: infer an
+  exit from a lapsed watcher beat — which is the retire-vs-hide question the
+  owner already has open. Root=watcher design · Found=live restart proof ·
+  Related: SEAT-13. Story: `finding/farewell-1-cannot-fire-on-sigkill-2026-08-21`.
+
 - **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
   bridge-owned watcher's claim expires ~150s after its beats stop and
   one-watch-per-seat is store-enforced; "dies WITH the bridge by lineage"
