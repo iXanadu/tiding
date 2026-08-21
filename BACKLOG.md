@@ -441,6 +441,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   that an unaddressed peer post may wake nobody immediately — his rooms,
   his call.
 
+- **CTX-1-SWEEP** The once-per-session banner/guidance bridge (afcc010,
+  2026-08-21) is live on macmini only; spokes run the ec39872 bridge until
+  the sweep (`git -C /opt/srv/engram pull --ff-only && scripts/install-mcp-wrapper.sh`
+  per box, lands per session at next bridge start). Residual on the same
+  theme, server-side: the inbox guidance WORDING itself (polling-cadence
+  essay, addressing essay) is still long on its first showing — trim it in
+  `server/services/inbox_guidance.py` when a prod bounce is already
+  scheduled; not worth a bounce on its own.
+
 - **OPS-BAK-1** `principals_bak_20260820` (12 rows) sits in prod as the
   pre-AUDIT-2-migration safety net. Owner says the word → drop it. Do not
   let it become permanent clutter.
