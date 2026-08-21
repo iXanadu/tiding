@@ -521,6 +521,13 @@ class MemoryClient:
             "seat": seat, "nonce": nonce,
         }, headers=self._provenance_headers(None))
 
+    async def watch_status(self, seat: str) -> dict:
+        """Who holds the watch for ``seat`` and whether it is fresh:
+        {"state": "covered"|"expired"|"unheld", ...}. Sensing only."""
+        return await self._request("GET", "/session/watch/status",
+                                   params={"seat": seat},
+                                   headers=self._provenance_headers(None))
+
     async def inbox_list(
         self,
         listen_set: list[str],

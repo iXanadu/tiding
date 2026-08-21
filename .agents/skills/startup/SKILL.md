@@ -51,7 +51,7 @@ Compare dates across results. If the most recent memories are newer than `startu
 
 `memory_inbox` — messages from other Claude instances. Read and reply to anything relevant or actionable.
 
-## 4a-bis. Are you co-working? Take a seat BEFORE arming the watcher
+## 4a-bis. Are you co-working? Take a seat BEFORE attaching the wake stream
 
 If the user says another agent is (or will be) working in this same folder —
 "you're co-working", "grok is on this too", "you two are pairing" — this
@@ -64,8 +64,10 @@ echo, so **they cannot wake each other at all**.
    Discriminate by **role** (`-audit`, `-build`, `-remediate`); use the
    provider (`-grok`, `-claude`) only when that is the real distinction.
    Don't take a seat a peer already holds.
-3. Then arm the watcher **with that seat** (step 4b) — the seat must be
-   decided first, because the watcher command carries it.
+3. Then attach the wake stream (step 4b) — the seat must be decided
+   first, because the bridge's watcher claims the watch under the seat it
+   resolves at attach time (it re-reads the seat file every poll, so a
+   runtime seat is followed without any re-arm).
 
 Memory scoping does not change: co-workers still share one project memory.
 Only addressing splits. If the session was launched with
@@ -84,52 +86,48 @@ listening for you either way; the incarnation ordinal is mortal by design,
 so moving it loses nothing durable — but moving it for a corpse costs your
 successor the address's thread continuity for no reason.
 
-## 4b. Arm the Inbox Watcher (always-listen)
+## 4b. Attach the Wake Stream (always-listen) — you NEVER start a watcher
 
-**⛔ FIRST: check whether the bridge already armed a watcher for you.** Call
-`memory_status`. If it prints a `wake stream: attach with Monitor -> …` line,
-the bridge has ALREADY spawned a claiming watcher for this seat and it is
-blocked waiting for a consumer. Your ONE act is to run that exact printed
-command under the **Monitor** tool (persistent) — it is a cat-loop over a
-FIFO, `while true; do cat <fifo> 2>/dev/null; sleep 1; done`. Do NOT
-substitute `tail -F`/`tail -f` (on a FIFO, tail buffers until writer-EOF,
-which never comes while the watcher lives — the seat reads `covered` and
-you are deaf; measured 2026-08-21). Do NOT also launch `engram-inbox-wait`
-— that is the arm-twice failure: it does not claim, and the bridge's watcher
-stays blocked, so the seat reads `unheld`. Verify: `memory_status` /
-roster shows the watcher beating. **Skip the rest of this step.**
+**Engram's bridge owns the inbox watcher.** It spawned one for this session
+the moment you made your first memory call, and supervises it (respawn on
+death, one claim per seat). No agent starts, re-arms, or "fixes" a watcher —
+the `engram-inbox-wait` launch ritual is RETIRED (owner order 2026-08-21,
+after a night of deaf sessions that had each armed their own).
 
-Only if `memory_status` prints NO wake-stream line (older bridge, no
-watch-claim on this box) does the legacy hand-arm below apply:
+Your ONE act is to attach a reader to the stream the bridge opened:
 
+1. Call `memory_status`. Read the `wake stream:` line.
+2. If it says `NOT COVERED … attach with Monitor (persistent) -> while true;
+   do cat <fifo> 2>/dev/null; sleep 1; done` — run **exactly that command**
+   under the **Monitor** tool with `persistent: true`. Then stop.
+3. If it says `COVERED (… reader attached …)` — a reader is already on the
+   stream; do nothing.
+4. Verify: `memory_status` reads `COVERED` within ~10s of the attach. Until
+   then every memory tool result carries a `⛔ WAKE STREAM NOT COVERED`
+   banner with the same command — that banner, not prose, is the standing
+   instruction; it clears itself once you are attached.
 
-**If you took a seat via `memory_take_seat`, no env prefix is needed** — the
-tool records the seat server-side AND in the seat file, and the watcher
-re-reads that file every poll (~45s), so bridge and watcher converge by
-themselves. The env prefix below is only for a seat that arrived by ENV
-(launcher-injected `ENGRAM_INBOX_IDENTITY`): there the watcher must be armed
-with the SAME env, because a seated bridge with an unseated watcher is the
-worst state available — the roster shows you correctly seated and you
-silently never wake on DMs.
+Hard rules (each one was a real deaf session):
+- **Never `tail -F`/`tail -f` the FIFO** — tail buffers a FIFO until
+  writer-EOF, which never comes; the seat reads `covered` and you are deaf.
+- **Never launch `engram-inbox-wait`** (any flags, any path). It does not
+  claim, the bridge's watcher stays unattached, the seat reads `unheld` —
+  and two processes then race for one seat.
+- **Never run the cat-loop in a foreground Bash** — it does not return; it
+  locks your turn until the tool times out.
+- If the banner reappears mid-session, your Monitor reader died (it
+  happens): re-attach with the same command. The watcher survives the
+  detach and re-sends the wake it lost.
+- If `memory_status` says `bridge watcher not started`, the bridge has the
+  kill-switch set or predates watch-claim — REPORT it (inbox to `engram`),
+  do not hand-arm.
 
-So this session wakes on *any* inbound message for its whole lifetime — not just after you send one and wait — launch the inbox watcher as a background **Monitor** stream. Each new message becomes an injected notification; when one fires, read it (`memory_inbox`) and handle it.
-
-```
-/usr/local/bin/engram-inbox-wait --follow --project-dir <repo-abs-path>
-```
-
-(That's the stable fleet-wide symlink installed by `scripts/install-mcp-wrapper.sh`. If it doesn't exist on this box yet, fall back to the venv path — `~/.pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait` on macOS, `/usr/local/pyenv/versions/cc-memory-3.12/bin/engram-inbox-wait` on shared-pyenv Linux — or resolve it with `scripts/resolve-venv-python.sh cc-memory-3.12 engram-inbox-wait`.)
-
-- **Seat declared? Arm the watcher with it.** If this session was launched
-  with `ENGRAM_INBOX_IDENTITY` (or declares a seat after a SEAT COLLISION
-  prompt), prefix the SAME env on the watcher command:
-  `ENGRAM_INBOX_IDENTITY=<seat> <abs>/engram-inbox-wait --follow ...` —
-  bridge and watcher must resolve one identity. (A bare launch needs no
-  prefix; both inherit the same environment.)
-
-- Run it under the **Monitor** tool (each stdout JSON line = one wake). It seeds on the current backlog and only emits mail that arrives *after* it starts, so it won't re-surface what you just read in step 4 — with ONE exception (MSG-7): unacked directive-intent mail (`action`/`proceed`/`escalate`/`authority-directive`) in that backlog gets a single `queued-directives` summary line. Treat those as live instructions addressed to this session, not history — they arrived while no watcher was armed (e.g. during the restart that produced you) and woke nobody. Corollary for step 4: **ack directive mail only when you have actually handled it** — an ack for "I saw this" tells the watcher, and your successor, that nothing is left to do.
-- Auth comes from `~/.config/engram/identity` (a bare shell process doesn't inherit the bridge's `~/.claude.json` env — the token must be in that file).
-- Best-effort: if the `engram-inbox-wait` entrypoint isn't installed (older bridge) or Monitor is unavailable, skip and proceed — it's an enhancement, not a gate. Session-lifetime only: it dies with the session (the cron inbox-sweep is the backstop for "reply arrives tomorrow").
+What the stream carries: one JSON line per wake. On attach it emits a
+`backlog-digest` (counts of unread pre-arm mail on your addresses) and an
+`estate-survey`; an unread `authority-directive` older than the watcher
+still gets its own line. Treat those as live instructions, not history —
+they arrived while nobody was listening. Corollary for step 4: **ack
+directive mail only when you have actually handled it.**
 
 ## 5. Read Project Identity
 

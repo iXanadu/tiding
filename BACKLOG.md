@@ -226,6 +226,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **ADDR-4** `memory_send`/`memory_reply` to a PROJECT address prints
+  "⚠ <project>: last heartbeat Nh ago, watcher silent — do not expect a
+  reply" from the GROUP address's own presence row, while a live seated
+  session on that project (listening on the group address) is beating and
+  replying within seconds — measured twice 2026-08-21 (agentbeast-claude-5
+  answered a message the warning had written off). Predicate should be
+  "no seat on this project is live", not "this string's row is stale".
+  `class:absence-vs-failure` — a stale row for the group string is not
+  silence on the group.
+
 - **REG-DEATH-1** The register attaches death evidence by session_key, and a
   launcher's slot-derived key SURVIVES respawns — so a predecessor's death
   cert pins to the name's current, live holder. Measured 2026-08-18 on this
@@ -384,11 +394,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 - **WATCH-CLAIM-2** Residuals of the 2026-08-20 watch-claim ship (design
   `docs/design/watch-claim.md` v2, adversarially reviewed; steps 1/2/4/5/6
   built, gated, deployed; murder row proven at the ratified ~155s bound):
-  (a) PROSE RETIREMENT — startup skill 4b, AGENTS.md auto-watch, the
-  broadcast recipe — cut only after per-harness arrival-matrix rows pass
-  COLD with prose skipped (claude ✓ in-harness; grok and cursor are live
-  tests the owner offered to run). Removing prose first re-opens the
-  believed-armed hole by documentation.
+  (a) *(DONE 2026-08-21 by owner order — "engram spawns watchers, agents
+  never do": every arm-your-own instruction purged from the startup skill,
+  global AGENTS.md/CLAUDE.md, README/SECURITY/messaging/multi-provider/
+  daily-workflow, the bridge's take_seat text and the watcher's own gasp;
+  the believed-armed hole is closed by CODE now — the bridge banners
+  `⛔ WAKE STREAM NOT COVERED` + attach command on every tool result until
+  the store measures `covered`. The matrix-rows-first gate is overtaken.)*
   (b) CODEX: daemon-scoped bridge is not 1:1 — shared bridge must claim one
   watch per seat it serves, or one-watch-per-seat is false on codex from
   day one. Named hole, not silent deferral.
@@ -405,21 +417,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   hinted command for real); the ACCEPTANCE row still does not — add a leg
   that spawns the exact `memory_status` command, sends a DM, and asserts
   the line is EMITTED, not merely consumed (`class:absence-vs-failure`:
-  covered-but-deaf). Prose (a) for claude was CORRECTED, not retired:
-  startup skill 4b + AGENTS.md auto-watch now say memory_status-first,
-  rolled to all five boxes 2026-08-21 02:50Z.
-
-- **WATCH-CLAIM-3** "The child dies with the bridge, which dies with the
-  session" is FALSE as shipped — measured 2026-08-21 02:52Z: three
-  bridge-spawned `--claim` watchers with ppid 1 (one from a real dead AB
-  bridge, two from `acceptance/test_a7_a9_release_vs_crash` 7.5h earlier —
-  so the harness's "zero residue" is also false). All three sat blocked at
-  open-for-write with no claim (harmless until a consumer attaches to a
-  same-named FIFO, at which point the corpse and the live watcher both
-  unblock and race for the seat). macOS has no PDEATHSIG; lineage alone
-  does not reap. Fix: the watcher exits when `getppid()` becomes 1 (it
-  already polls; add the check), and the acceptance teardown kills what it
-  spawned. Reaped by hand tonight.
+  covered-but-deaf). Add a second leg the same shape for CONSUMER LOSS:
+  attach, kill the reader, send a DM, attach again, assert the DM is the
+  first line the new reader sees (fixed in the watcher 2026-08-21 and
+  proven by hand against the real store — the acceptance row should own it).
 
 - **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
   48h) violate the room's own @mention rule — each forces a full model
@@ -440,8 +441,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 - **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
   bridge-owned watcher's claim expires ~150s after its beats stop and
   one-watch-per-seat is store-enforced; "dies WITH the bridge by lineage"
-  was the claim, falsified 2026-08-21 — see WATCH-CLAIM-3 — though an
-  orphan blocked at open holds no claim and beats nothing. The zombie-beat class this item describes cannot form on the
+  was the claim, falsified 2026-08-21 and then made true by mechanism the
+  same day: the watcher exits when its ppid becomes 1, releasing its claim. The zombie-beat class this item describes cannot form on the
   claim path; it persists only for legacy bare watchers until prose
   retirement. Re-triage after the per-harness matrix rows run.)*
   *(evidence add 2026-08-18: the bare-watcher gap measured on a
@@ -779,3 +780,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   huddles) in posts so search finds THIS engram.
 
 ## Blocked-external
+
+- **HARNESS-FREEZE-1** Claude Code (2.1.238) froze a session's input queue
+  for 6.5 minutes with NO tool call in flight — measured 2026-08-21
+  11:50:17Z→11:56:52Z on engram-claude-2 (owner typed at 11:50; the
+  harness enqueued and never dequeued until the owner killed it). In the
+  same window the session's Monitor cat-loop child died (sibling session's
+  identical loop survived). Engram's side is fixed (watcher survives
+  consumer loss; bridge banners the uncovered state) but the freeze itself
+  is the harness's: recurrence is the signal to escalate upstream with the
+  transcript (queue-operation enqueue/dequeue gap is the evidence shape).

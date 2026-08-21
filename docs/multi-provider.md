@@ -240,8 +240,8 @@ propagates within one poll interval with no restart and no re-arm step. The
 split state becomes impossible rather than documented.
 
 Without a session key there is no file, both sides fall back to start-time
-resolution, and `memory_take_seat` says plainly that you must re-arm the
-watcher yourself. The seat file is read defensively: missing, unreadable or
+resolution, and `memory_take_seat` says so plainly (the bridge-spawned
+watcher then follows the seat only at its next respawn). The seat file is read defensively: missing, unreadable or
 malformed all resolve to "no file" rather than an error, because a watcher
 listening on a *stale* seat still catches project-addressed mail, while a dead
 one catches nothing.
@@ -318,8 +318,8 @@ Consequences, in order of how easily they bite:
 Cursor has no blocking-stream equivalent to Claude Code's Monitor or Grok's
 `monitor` — its hooks and `/loop` fire on turn boundaries or a timer, and none
 of them is an external event entering a dormant session. Under ACP, though, the
-**client owns turn initiation**: a driver holding `engram-inbox-wait --follow`
-can issue `session/prompt` when mail lands. So a Cursor seat is a full peer
+**client owns turn initiation**: a driver reading the session's bridge-spawned
+wake FIFO can issue `session/prompt` when mail lands. So a Cursor seat is a full peer
 *when something drives it over ACP*, and a hand-launched terminal Cursor session
 has no wake path at all — it can be addressed, and will read its mail whenever
 it is next prompted.
@@ -362,18 +362,21 @@ task boundary; the driver sees it in the roster (`awaiting-input`), sends
 `proceed` (routine) or `escalate`s to the human (irreversible/costly). The
 wake mechanics are validated: a spawned worker at a seam, woken by an
 independent sender's message, acted autonomously in ~26s. Two hard rules
-learned from that test: the **launcher must arm the inbox watcher** (workers
-don't self-arm), and drivers **advance stalled peers — mid-turn messages
-queue** rather than interrupt.
+learned from that test: the **launcher must attach a reader to the worker's
+wake stream** where the harness has no background-stream tool (the bridge
+spawns the watcher; nobody reading its FIFO is the deaf state), and drivers
+**advance stalled peers — mid-turn messages queue** rather than interrupt.
 
 **Either provider can take either seat.** Every agent session is dormant
 between turns — that is not a Claude trait, and no supported provider polls
 engram on its own. What wakes a dormant session is the same primitive
 everywhere: a **harness-level background process** whose stdout re-enters the
 session as a turn (Claude Code's Monitor tool, Grok's `monitor` tool), holding
-`engram-inbox-wait --follow` open for the session's lifetime. The engram MCP
-tools are turn-scoped and cannot do this — the watcher is deliberately a plain
-shell process for exactly that reason.
+a reader on the session's wake FIFO for the session's lifetime — the watcher
+that writes it is spawned and supervised by the bridge, never by the agent
+(since 2026-08-21). The engram MCP tools are turn-scoped and cannot wake a
+session themselves — the reader is deliberately a plain shell process for
+exactly that reason.
 
 > Corrected 2026-07-23. This page previously described Grok as "always-awake…
 > doesn't pause" and built the driver/worker split on it. That was wrong about

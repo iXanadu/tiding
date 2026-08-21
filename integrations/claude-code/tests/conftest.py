@@ -1,3 +1,17 @@
+import os
+import sys
+
+# Test THIS tree, not whichever tree the shared venv's editable install
+# points at. Dev (~/projects/engram) and prod (/opt/srv/engram) share
+# cc-memory-3.12 and only one holds the `pip install -e` mapping — found
+# 2026-08-21 when a green run here had exercised prod's code while dev's
+# edits sat untested. src/ goes FIRST on sys.path before any engram_mcp import.
+_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+for _m in [m for m in list(sys.modules) if m == "engram_mcp" or m.startswith("engram_mcp.")]:
+    del sys.modules[_m]
+
 import pytest
 import respx
 
@@ -6,6 +20,32 @@ import engram_mcp.config as config
 import engram_mcp.identity as identity
 from engram_mcp.client import MemoryClient
 from engram_mcp.identity import reset_session_pin
+
+
+@pytest.fixture(autouse=True)
+def _no_real_watcher_in_tests(monkeypatch):
+    """The bridge's heartbeat lazily starts a REAL watcher supervisor thread
+    (real FIFO under ~/.local/state/engram/wake/, real child polling the
+    real store as whatever seat this cwd resolves to). In a test process that
+    is residue, not coverage — found 2026-08-21 as a row of auto-macmini-*
+    FIFOs in the wake dir and a banner leaking into an exact-match test.
+    Kill-switch it for every test; a test that wants the supervisor sets the
+    env back itself."""
+    import engram_mcp.server as _srv
+    monkeypatch.setenv("ENGRAM_BRIDGE_WATCHER", "off")
+    monkeypatch.setattr(_srv, "_WATCH_STATE",
+                        {"state": None, "checked": 0.0, "seat": None})
+
+
+@pytest.fixture(autouse=True)
+def _quiet_id1_announce(monkeypatch):
+    """ID-1's admin-fallthrough banner is a ONCE-PER-PROCESS announcement, so
+    which test 'consumed' it depended on collection order and which tree was
+    imported — test_memory_search_empty's exact-match failed when run alone
+    or under the src/ pin. Default it to already-announced; the ID-1 tests
+    reset it themselves."""
+    import engram_mcp.server as _srv
+    monkeypatch.setattr(_srv, "_ADMIN_FALLBACK_ANNOUNCED", True)
 
 
 @pytest.fixture(autouse=True)

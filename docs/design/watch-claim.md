@@ -256,3 +256,59 @@ the `sleep` keeps a missing FIFO from spinning. `memory_status` prints the
 exact command. Covered by `test_watcher_attach_command_streams_live` in the
 bridge suite, which runs the hinted command for real against a held-open
 writer — the test that would have gone red on `tail`.
+
+## Consumer loss is EPIPE, not a stall (measured 2026-08-21 11:53Z)
+
+This document said above that if the reader detaches "writes block, the
+poll loop stalls, beats stop, and the claim EXPIRES — honestly." Half
+right. Beats do stop and the claim does expire — but not because writes
+block: a write to a FIFO with **no reader is `EPIPE`**, and the shipped
+watcher took it as a crash. Sequence, from engram-claude-2's transcript
+and wake log: the session's Monitor cat-loop died (cause in the harness,
+still unexplained — its input queue also froze for 6.5 minutes); the next
+emit raised `BrokenPipeError`; the dying gasp went down the same dead
+pipe; the supervisor respawned a child that sat at open-for-write with no
+claim; the seat read `expired`; the owner typed at a session that believed
+itself covered.
+
+Repaired contract (`_out`, `_open_fifo_for_write`, `_orphaned`):
+
+- **Emit survives detach.** On `EPIPE` the watcher logs, re-opens the
+  FIFO (waiting for the next reader), and re-sends the line that failed —
+  the wake that found the consumer gone is the first thing the next
+  consumer sees. While it waits, beats stop and the claim expires: still
+  the honest answer to "nobody is listening." The first beat after
+  re-attach re-asserts the claim (same nonce, CAS on the row) or learns it
+  was stolen and exits for respawn.
+- **The open is interruptible.** `O_NONBLOCK` open polled once a second,
+  switched back to blocking once a reader exists, so a watcher whose
+  bridge has died (`getppid() == 1`) exits instead of becoming the
+  WATCH-CLAIM-3 orphan. The poll loop checks the same thing and releases
+  its claim on the way out.
+- **The session is told.** The bridge senses `GET /session/watch/status`
+  on its heartbeat (briskly while uncovered) and prepends
+  `⛔ WAKE STREAM NOT COVERED` with the attach command to every tool result
+  until the seat reads `covered`. Claude-only: the command never returns,
+  so a harness without a background stream tool is never handed it.
+  `memory_status` now MEASURES coverage at the store rather than assuming
+  it from the existence of a FIFO.
+- **The gasp never hands over a launch.** A bridge-spawned watcher's last
+  word names the attach command, not `engram-inbox-wait`; the legacy form
+  says "do not re-arm — memory_status and attach."
+
+Proven live the same morning against the real store: reader killed →
+emit into the void → watcher alive, blocked → second reader attached →
+the lost wake delivered first. Unit coverage:
+`tests/test_wake_stream_consumer_loss.py`.
+
+## Prose retirement, executed (owner order 2026-08-21)
+
+"Engram spawns watchers, agents never do." Every instruction that had an
+agent launch `engram-inbox-wait` is gone from the startup skill, the global
+agent directives, the README, SECURITY, messaging, multi-provider and
+daily-workflow docs, and the watcher's own dying gasp; the remaining legal
+use of the console script is as a launcher-owned reader/consumer (AB's grok
+path, WATCH-G1) and in the acceptance harness. WATCH-CLAIM-2(a) — "retire
+prose only after the per-harness matrix passes cold" — is overtaken by the
+owner's ruling: the believed-armed hole is now closed by the banner, which
+is code, not prose.

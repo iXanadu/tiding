@@ -82,8 +82,11 @@ fi
 
 # --- Stable command paths (fleet-uniform) ---
 # Symlink the console scripts to /usr/local/bin so .claude.json, launchd,
-# systemd, and skill docs reference ONE path on every box, regardless of
+# systemd, and launcher code reference ONE path on every box, regardless of
 # where pyenv lives (~/.pyenv on macOS, /usr/local/pyenv on shared Linux).
+# engram-inbox-wait stays installed for LAUNCHER/consumer use (e.g. a driver
+# reading a grok session's stream) and the acceptance harness — agents never
+# launch it themselves; the bridge spawns the watcher (watch-claim v2).
 # Best-effort: a failed symlink degrades to the venv path, never the install.
 STABLE_BIN_DIR="/usr/local/bin"
 VENV_BIN_DIR="$(dirname "$VENV_PY")"

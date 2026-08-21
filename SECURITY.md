@@ -91,11 +91,18 @@ not the right tool as-is.
 - The admin token entered in the UI lives in `sessionStorage` (dies with the
   tab), not `localStorage`.
 
-## Watcher (`engram-inbox-wait`)
+## Watcher (bridge-spawned `engram_mcp.inbox_wait`)
 
+- The MCP bridge spawns one watcher per session and supervises it; agents do
+  not launch watchers. One watch per seat is store-enforced (nonce CAS), so
+  a stale or duplicate watcher cannot deliver a seat's mail twice.
 - An auth rejection (401/403) kills the watcher loudly (exit 2) instead of
   retrying forever — a watcher that silently misses every wake is worse than
   a dead one. Transient server errors still retry.
+- The wake FIFO is created `0600` under `~/.local/state/engram/wake/`; a
+  consumer that detaches does not crash the watcher (it waits for the next
+  reader and re-sends), and a watcher whose bridge has died exits rather
+  than orphaning.
 - Plain `http://` to a non-local host warns at startup: the token would
   travel unencrypted. Use https or a private overlay (Tailscale).
 

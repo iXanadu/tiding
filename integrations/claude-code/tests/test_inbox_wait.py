@@ -531,24 +531,29 @@ async def test_run_identity_flag_asserts_and_proceeds(
 
 # --- WATCH-2: the dying gasp (owner order 2026-08-17) ---------------------
 
-def test_dying_gasp_is_one_stdout_line_with_the_rearm_command(capsys, monkeypatch):
+def test_dying_gasp_is_one_stdout_line_and_never_hands_over_a_launch(capsys, monkeypatch):
     """A watcher ending coverage on a live session must say so on STDOUT
-    (Monitor injects stdout lines as session-waking notifications) and hand
-    over the exact re-arm command — argv reconstructed, flags intact."""
-    from engram_mcp.inbox_wait import _dying_gasp
+    (Monitor injects stdout lines as session-waking notifications). Since
+    2026-08-21 (owner: engram spawns watchers, agents never do) the gasp
+    must NOT hand the agent a launch command — that was the arm-twice
+    recipe. Legacy (no FIFO) form: the act is memory_status → attach the
+    bridge's stream; argv is kept as `was` for forensics only."""
+    from engram_mcp import inbox_wait as iw
+    monkeypatch.setattr(iw, "_FIFO_PATH", None)
     monkeypatch.setattr(
         "sys.argv",
         ["/abs/path/engram-inbox-wait", "--follow",
          "--project-dir", "/Users/x/projects/engram"],
     )
-    _dying_gasp("test reason")
+    iw._dying_gasp("test reason")
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     obj = json.loads(lines[0])
     assert obj["event"] == "watcher-dying"
     assert obj["reason"] == "test reason"
-    assert "Re-arm" in obj["action"] or "re-arm" in obj["action"]
-    assert obj["command"] == (
+    assert "Do NOT re-arm" in obj["action"]
+    assert obj["command"] == "memory_status"
+    assert obj["was"] == (
         "/abs/path/engram-inbox-wait --follow "
         "--project-dir /Users/x/projects/engram"
     )

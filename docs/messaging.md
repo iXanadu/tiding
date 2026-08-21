@@ -174,8 +174,9 @@ The MCP bridge does all of this automatically. Design and rationale:
 ### Is anyone listening? (`watcher_alive`)
 
 A session is dormant between turns. It only learns that mail arrived because a
-**watcher** (`engram-inbox-wait`) is running beside it and wakes it. A session
-that never armed one is fully addressable and *permanently silent*: mail is
+**watcher** (spawned by its MCP bridge) is running beside it and its wake
+stream is **attached** to something that can wake the session. A session whose
+stream nobody reads is fully addressable and *permanently silent*: mail is
 accepted, stored, and read by nobody until a human types into that terminal.
 
 That state used to be invisible. "Nobody is listening at this address" looked
@@ -214,11 +215,18 @@ answer. The watcher polls on its own timer and lives exactly as long as the
 session, so it measures *existence*, and its beat refreshes both the presence
 row and the seat.
 
-Arm one at session start and leave it running:
+The bridge spawns it on the session's first tool call and supervises it; the
+agent attaches the stream `memory_status` names and leaves it running:
 
 ```bash
-engram-inbox-wait --follow --project-dir /path/to/repo
+# printed by memory_status — run under a background stream tool, never foreground
+while true; do cat ~/.local/state/engram/wake/<session>.fifo 2>/dev/null; sleep 1; done
 ```
+
+Agents do not launch `engram-inbox-wait` themselves (owner order 2026-08-21):
+a hand-armed watcher does not claim the seat's watch, the bridge's watcher
+stays unattached, and the seat reads `unheld`. Design and the store-side
+claim protocol: [design/watch-claim.md](design/watch-claim.md).
 
 ## Sending
 
@@ -324,10 +332,10 @@ call. Self-echo and `fyi` are excluded from wakes by default (set
 `include_fyi` to change). This endpoint is the whole integration story for
 Grok/Codex/custom harnesses: loop on it, act on what it returns.
 
-**Claude Code — the reference watcher:** `engram-inbox-wait --follow
---project-dir <dir>` emits one JSON line per new message; run under a
-monitor, that line **wakes the session**, which reads the inbox and acts —
-no human relay. This is measured, not aspirational: a launcher-spawned
+**Claude Code — the reference consumer:** the bridge-spawned watcher emits
+one JSON line per new message into the session's wake FIFO; a cat-loop over
+that FIFO run under the Monitor tool turns each line into a **wake**, and the
+session reads the inbox and acts — no human relay. This is measured, not aspirational: a launcher-spawned
 worker, idle at a task boundary, woke and executed an instruction from an
 independent sender in ~26s (poll-interval bound, tunable).
 
@@ -336,8 +344,11 @@ Three semantics worth knowing:
 - **Advance, don't interrupt.** A message arriving mid-turn queues until the
   turn ends. A driver can *advance* a stalled peer; it cannot (and should
   not) yank a busy one.
-- **The launcher must arm the watcher.** A bare spawned worker does not
-  self-arm; bake `engram-inbox-wait` into your launch path.
+- **The launcher must attach the reader** where the harness has no
+  background-stream tool of its own (Grok, Cursor, Codex). The bridge spawns
+  the watcher for every session; what a bare spawned worker lacks is a
+  consumer on its FIFO (`~/.local/state/engram/wake/<session-key>.fifo`, the
+  key the launcher injected). Until one attaches, the seat reads `unheld`.
 - **Directives survive a restart.** Mail that lands while a session is
   restarting is delivered but wakes nobody, and the next session's startup
   sweep would otherwise read it as history — a directive to the predecessor

@@ -72,9 +72,11 @@ Daily patterns that emerge:
 - **Ask, don't interrupt.** An agent that needs another project's input sends
   to that project's address and *keeps working*. The answer arrives whenever
   the other side is next alive — or instantly, if it runs the watcher.
-- **The watcher makes agents reachable.** `engram-inbox-wait --follow` armed
-  at session start means an agent wakes on inbound mail instead of
-  discovering it tomorrow. Without it, mail still delivers — it just waits.
+- **The wake stream makes agents reachable.** The bridge spawns a watcher
+  for every session; attaching its stream at session start (the command
+  `memory_status` prints, under Monitor) means an agent wakes on inbound mail
+  instead of discovering it tomorrow. Without it, mail still delivers — it
+  just waits.
 - **Intent gates the wake.** Send `intent=action` when you need the recipient
   awake; `fyi` for everything else. A busy channel full of `fyi` wakes nobody.
 - **Close your threads.** `memory_resolve` when a thread is done. Open mail

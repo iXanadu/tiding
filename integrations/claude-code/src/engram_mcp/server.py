@@ -311,6 +311,7 @@ def _append_guidance(body: str, result: dict) -> str:
     """
     guidance = result.get("guidance") if isinstance(result, dict) else None
     alert = (_server_time_line() + _auth_health_banner()
+             + _wake_stream_banner()
              + _seat_collision_banner() + _seat_revert_banner()
              + _seat_rename_banner() + _identity_override_banner()
              + _admin_fallback_banner() + _seat_claim_health_banner())
@@ -832,6 +833,74 @@ import atexit as _atexit
 _atexit.register(_kill_watcher_child)
 
 
+# ─── Wake-stream coverage: tell a LIVE session when its stream is gone ──────
+# The store knows whether this seat's watch is `covered` (a consumer is
+# attached and the watcher beats) or not; nothing told the SESSION. Measured
+# 2026-08-21: engram-claude-2's Monitor reader died, the watcher crashed on
+# EPIPE, the seat read `expired` for 4 minutes while the owner typed at a
+# session that believed itself covered. Same SU-1 pattern as the collision
+# banner: sense on the heartbeat, interrogate on every tool result until
+# healed, and hand over the ONE act that heals it.
+_WATCH_STATE: dict = {"state": None, "checked": 0.0, "seat": None}
+_WATCH_CHECK_COVERED_EVERY = 120.0   # covered: ride the heartbeat cadence
+_WATCH_CHECK_UNCOVERED_EVERY = 10.0  # uncovered: re-check briskly so a fresh
+#                                      attach clears the banner within a call
+#                                      or two, not two minutes later
+
+
+async def _refresh_watch_state(project_dir: str | None) -> None:
+    """Best-effort; never fails the caller. Skipped when the bridge does not
+    own a watcher (kill-switch) — there is no stream to be attached to."""
+    if not _WATCHER_SUP.get("started") or not _WATCHER_SUP.get("fifo"):
+        return
+    now = time.monotonic()
+    every = (_WATCH_CHECK_COVERED_EVERY if _WATCH_STATE["state"] == "covered"
+             else _WATCH_CHECK_UNCOVERED_EVERY)
+    if now - _WATCH_STATE["checked"] < every:
+        return
+    _WATCH_STATE["checked"] = now
+    try:
+        reader_identity, _ = compute_identity(project_dir or None)
+        seat = reader_identity.split("@", 1)[0]
+        r = await _client.watch_status(seat)
+        if not isinstance(r, dict) or not r.get("state"):
+            return  # not a verdict (old server, odd body) — keep the last one
+        _WATCH_STATE["state"] = r.get("state")
+        _WATCH_STATE["seat"] = seat
+        _WATCH_STATE["last_beat"] = r.get("last_beat")
+        _WATCH_STATE["armed_by"] = r.get("armed_by")
+    except Exception:
+        pass  # a sensing failure is not a coverage verdict; keep the last one
+
+
+def _wake_stream_banner() -> str:
+    """⛔ when this session's wake stream is NOT covered — it will not be
+    woken by mail until a reader is attached. Claude-only: the attach command
+    never returns, so it is safe ONLY under a background stream tool
+    (Monitor). A harness without one (grok/cursor/codex) must not be told to
+    run it — its launcher owns the reader (the FIFO path is derived from the
+    session key the launcher injected) — and would hang a foreground shell
+    for ten minutes if it tried. memory_status shows the state to everyone."""
+    st = _WATCH_STATE.get("state")
+    if st not in ("expired", "unheld"):   # only a measured NOT-covered fires
+        return ""
+    if resolve_provider() != "claude":
+        return ""
+    attach = _watcher_attach_command()
+    if not attach:
+        return ""
+    return (
+        f"⛔ WAKE STREAM NOT COVERED (state={st}, seat={_WATCH_STATE.get('seat')}) "
+        f"— mail will NOT wake this session until a reader is attached.\n"
+        f"   Attach NOW under the Monitor tool, persistent=true, EXACTLY:\n"
+        f"   {attach}\n"
+        f"   Nothing to arm — the bridge owns the watcher and respawns it. "
+        f"Never launch engram-inbox-wait yourself; never `tail -F` the FIFO; "
+        f"never run the loop in a foreground shell. Verify with memory_status "
+        f"(wake stream: covered) — this banner clears within ~10s of attach.\n\n"
+    )
+
+
 async def _heartbeat(project_dir: str | None) -> None:
     global _last_heartbeat
     now = time.monotonic()
@@ -871,6 +940,7 @@ async def _heartbeat(project_dir: str | None) -> None:
         _SEAT_COLLISION = resp.get("collision")  # dict when colliding, None clears
     except Exception:
         pass  # presence is best-effort; never fail the caller
+    await _refresh_watch_state(project_dir)
 
 
 def _seat_collision_banner(project_dir: str | None = None) -> str:
@@ -957,7 +1027,7 @@ async def memory_store(
         listen_set=listen_set,
         reader_identity=reader_identity,
     )
-    banner_text = _server_time_line() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _server_time_line() + _wake_stream_banner() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
     proj_suffix = f", project: {project}" if project else ""
     # Prefer the CANONICAL namespace the server says it wrote to (it
     # canonicalizes legacy aliases); fall back to config for older servers.
@@ -1072,7 +1142,7 @@ async def memory_search(
         snippet_lines=SEARCH_SNIPPET_LINES,
     )
 
-    banner_text = _server_time_line() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
+    banner_text = _server_time_line() + _wake_stream_banner() + _seat_collision_banner(project_dir or None) + _render_inbox_banner(result.get("inbox_banner"))
 
     if result.get("status") != "ok" or not result.get("results"):
         # SEC-9: this early return used to DROP the server's advisories, so a
@@ -1434,11 +1504,12 @@ async def memory_take_seat(
     You keep the project's group address, so project-wide broadcasts still
     reach you. You additionally get a private address only you receive.
 
-    ⚠ YOU MUST RE-ARM YOUR INBOX WATCHER after calling this. Your watcher is a
-    separate process still running under your OLD identity; until it is
-    restarted you are addressed at the new seat but still listening at the old
-    one, and DMs to your new seat will not wake you. This response gives you
-    the exact command. Do it immediately — the failure is silent.
+    Your wake stream follows the seat by itself: the bridge-spawned watcher
+    re-reads this session's seat file every poll (~45s) and re-claims under
+    the new name — nothing to arm, nothing to restart. The response says
+    whether that file could be written; in the rare no-session-key case the
+    watcher cannot follow a runtime seat and the response says so plainly
+    (prefer relaunching with ENGRAM_INBOX_IDENTITY=<seat> then).
 
     Args:
         name: The seat to take, e.g. "meidura-audit". Discriminate by ROLE
@@ -1490,10 +1561,6 @@ async def memory_take_seat(
     reader_identity, listen_set = compute_identity(project_dir or None)
     project = derive_project_name(remember_project_dir(project_dir or None))
     seat_file = seat_file_path()
-    watcher = (
-        f"ENGRAM_INBOX_IDENTITY={seat} /usr/local/bin/engram-inbox-wait "
-        f"--follow --project-dir {project_dir or '<this session cwd>'}"
-    )
     warn = ""
     if previous_env and previous_env != seat:
         warn = (
@@ -1503,21 +1570,21 @@ async def memory_take_seat(
         )
     if seat_file:
         watcher_note = (
-            f"✅ YOUR WATCHER WILL PICK THIS UP BY ITSELF — no re-arm needed.\n"
-            f"   Your seat was recorded at {seat_file}, and the watcher\n"
-            f"   re-reads it every poll, so it re-seats within one poll interval\n"
-            f"   (~45s). Nothing for you to do.\n"
+            f"✅ YOUR WAKE STREAM FOLLOWS THIS SEAT BY ITSELF — nothing to arm.\n"
+            f"   Your seat was recorded at {seat_file}; the bridge-spawned\n"
+            f"   watcher re-reads it every poll and re-claims under the new\n"
+            f"   name within one poll interval (~45s). Keep your Monitor reader\n"
+            f"   attached as it is.\n"
         )
     else:
         watcher_note = (
-            f"⛔ NOW RE-ARM YOUR WATCHER, or you will not wake on DMs to this seat.\n"
-            f"   This session has no ENGRAM_SESSION_KEY (it wasn't started by a\n"
-            f"   launcher), so the watcher cannot discover the change on its own.\n"
-            f"   Stop your current inbox watcher, then start it with the SAME seat:\n\n"
-            f"    {watcher}\n\n"
-            f"   Until you do, you are ADDRESSED at the new seat but still\n"
-            f"   LISTENING at the old one. Project mail keeps arriving, so this\n"
-            f"   failure is silent — DMs to your new seat simply never wake you.\n"
+            f"⚠ NO SEAT FILE could be written (this session has no resolvable\n"
+            f"   session key), so the bridge-spawned watcher CANNOT follow this\n"
+            f"   runtime seat: you are ADDRESSED at the new seat but the stream\n"
+            f"   keeps listening on your project/lane addresses only — DMs to\n"
+            f"   the new seat will not wake you. Do NOT hand-arm a watcher (it\n"
+            f"   would not claim and would race the bridge's). If you need DMs\n"
+            f"   on this seat, relaunch with ENGRAM_INBOX_IDENTITY={seat}.\n"
         )
     return (
         f"Seat taken: you are now addressed as '{reader_identity}'.\n"
@@ -1605,12 +1672,26 @@ async def memory_status() -> str:
         # session that never attaches stays honestly UNHELD in the register.
         attach = _watcher_attach_command()
         if attach:
-            lines.append(
-                f"  wake stream: attach with Monitor -> {attach}  "
-                f"(log: {_WATCHER_SUP.get('log')})"
-            )
+            # Measure, don't assume: a FIFO with a dead reader looks armed
+            # from here and is deaf (2026-08-21). Force a fresh store read.
+            _WATCH_STATE["checked"] = 0.0
+            await _refresh_watch_state(None)
+            st = _WATCH_STATE.get("state") or "unknown"
+            if st == "covered":
+                lines.append(
+                    f"  wake stream: COVERED (seat {_WATCH_STATE.get('seat')}, "
+                    f"reader attached, last beat {_WATCH_STATE.get('last_beat')}) "
+                    f"— consumer: {attach}  (log: {_WATCHER_SUP.get('log')})"
+                )
+            else:
+                lines.append(
+                    f"  wake stream: NOT COVERED (state={st}) — attach with "
+                    f"Monitor (persistent) -> {attach}  "
+                    f"(log: {_WATCHER_SUP.get('log')})"
+                )
         else:
-            lines.append("  wake stream: bridge watcher not yet started")
+            lines.append("  wake stream: bridge watcher not started "
+                         "(ENGRAM_BRIDGE_WATCHER=off, or no tool call yet)")
         return "\n".join(lines)
     except Exception as e:
         return f"Memory service unreachable: {e}\nServer version: {VERSION}"
@@ -1904,8 +1985,8 @@ async def memory_roster(
             f"\n\n⛔ SEAT COLLISION on: {', '.join(collisions)} — multiple live "
             f"sessions share one inbox identity (shared acks; they cannot "
             f"message each other). Relaunch one per identity with "
-            f"ENGRAM_INBOX_IDENTITY=<identity>-<role> and re-arm its watcher "
-            f"with the same env."
+            f"ENGRAM_INBOX_IDENTITY=<identity>-<role>; its bridge-spawned "
+            f"watcher follows that env by itself."
         )
     return _append_guidance(head, result)
 

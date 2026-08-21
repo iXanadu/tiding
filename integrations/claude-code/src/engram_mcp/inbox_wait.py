@@ -135,15 +135,91 @@ def _warn_plaintext_url(url: str) -> None:
         )
 
 
-def _rearm_command() -> str:
-    """The exact command that restarts THIS watcher with THIS configuration.
+# ─── The wake stream (watch-claim v2 §Consumer) ──────────────────────────────
+# With --fifo, every emit lands in a named pipe that the SESSION's streaming
+# reader (Monitor cat-loop, or a launcher's reader) consumes. Two facts about
+# FIFOs decide the code below, both measured in production 2026-08-21:
+#   · open-for-write blocks until a reader exists — so "claim follows attach"
+#     is free: a stream nobody reads never claims coverage;
+#   · a write with NO reader is EPIPE, NOT a block. The v2 design assumed the
+#     detached case would stall the loop and let the claim expire honestly;
+#     instead the first emit after the consumer vanished CRASHED the watcher
+#     (the dying gasp went down the same dead pipe), the supervisor respawned
+#     a child that blocked at open forever, and the seat read `expired` with
+#     the live session never told. That is how engram-claude-2 went deaf at
+#     11:53Z with the owner typing at it.
+# So: emits survive EPIPE by re-opening the FIFO (blocking for the next
+# consumer) and re-sending the line that failed; while blocked, beats stop and
+# the claim expires — honest — and the first beat after re-attach re-asserts
+# it (same nonce; CAS on the store row) or learns it was stolen and exits for
+# respawn. The bridge's re-attach banner is the other half: it tells the live
+# session its stream is gone.
+_FIFO_PATH: str | None = None
+_FIFO_FILE = None  # keeps the write end referenced for the process lifetime
+_FIFO_FD: int | None = None  # the write end _out targets (tests point it at a pipe)
+_MIRROR_TO_STDOUT = True  # dup2 the FIFO onto fd 1 so stray prints ride it too
 
-    Reconstructed from argv so the dying gasp never tells the session to
-    re-arm with a guessed path or dropped flag — argv[0] is the absolute
-    console-script path when launched per the startup doctrine, and every
-    identity-bearing flag (--project-dir, --identity, --address) rides along
-    verbatim.
+
+def _fifo_mode() -> bool:
+    return bool(_FIFO_PATH)
+
+
+def _attach_command() -> str:
+    """The ONE act an agent may take about its wake stream: attach a
+    streaming reader. A cat-loop, never `tail -F` (tail buffers a FIFO until
+    writer-EOF — measured deaf 2026-08-21), never a foreground shell (it does
+    not return — run it under a background stream tool such as Monitor)."""
+    return f"while true; do cat {_FIFO_PATH} 2>/dev/null; sleep 1; done"
+
+
+def _reattach_fifo() -> None:
+    """Consumer gone (EPIPE on emit): block until a new one attaches, then
+    point fd 1 at it again. Beats stop while we block — the claim expiring
+    meanwhile is the design's honest answer to 'nobody is listening'."""
+    global _FIFO_FILE, _FIFO_FD
+    print("inbox-wait: wake consumer DETACHED (EPIPE on emit) — blocking until "
+          "a new consumer attaches; the claim expires meanwhile and is "
+          "re-asserted on attach", file=sys.stderr, flush=True)
+    f = _open_fifo_for_write(_FIFO_PATH)
+    if _MIRROR_TO_STDOUT:
+        os.dup2(f.fileno(), 1)
+    _FIFO_FILE = f
+    _FIFO_FD = f.fileno()
+
+
+def _out(line: str, *, block_on_detach: bool = True) -> None:
+    """Emit one line on the wake stream.
+
+    Plain stdout when not in FIFO mode (one-shot / legacy / tests). In FIFO
+    mode the line goes straight to fd 1 with os.write — no TextIOWrapper
+    buffer to leave half-flushed across an EPIPE — and a detached consumer
+    means: re-attach (blocking) and send the SAME line again, so the wake
+    that found the consumer gone is the first thing the next consumer sees.
+    `block_on_detach=False` is for last words (the dying gasp): if nobody is
+    listening there is nobody to block for.
     """
+    if not _fifo_mode():
+        print(line, flush=True)
+        return
+    data = (line + "\n").encode("utf-8", "replace")
+    while True:
+        try:
+            view = memoryview(data)
+            while view:
+                n = os.write(_FIFO_FD, view)
+                view = view[n:]
+            return
+        except BrokenPipeError:
+            if not block_on_detach:
+                return
+            _reattach_fifo()
+
+
+def _rearm_command() -> str:
+    """The exact command that restarts THIS watcher with THIS configuration
+    (argv verbatim). Only meaningful for a LEGACY hand-armed watcher; a
+    bridge-spawned one is respawned by its supervisor and the agent's only
+    act is to re-ATTACH (see _attach_command)."""
     return " ".join(shlex.quote(a) for a in sys.argv)
 
 
@@ -161,30 +237,47 @@ def _dying_gasp(reason: str) -> None:
     Deliberately NOT emitted when the watched session itself is gone (the
     farewell path) — there is nobody left to warn, and a gasp there would
     wake a successor with a stale instruction.
+
+    2026-08-21 (owner order: engram spawns watchers, agents never do): a
+    bridge-spawned watcher's gasp must NOT hand the agent a launch command —
+    that is the arm-twice recipe. Its supervisor respawns it; the agent's
+    only act is to make sure its stream reader is attached. The legacy
+    hand-armed form (no --fifo) says the same: do not re-arm by hand, call
+    memory_status and attach the bridge's stream.
     """
-    print(
-        json.dumps(
-            {
-                "event": "watcher-dying",
-                "reason": reason,
-                "action": (
-                    "ACTION REQUIRED: this session's inbox watcher is "
-                    "exiting — mail will no longer wake you. Re-arm it NOW "
-                    "under Monitor with the command below (fix the stated "
-                    "reason first if it names one)."
-                ),
-                "command": _rearm_command(),
-            },
-            separators=(",", ":"),
-        ),
-        flush=True,
+    if _fifo_mode():
+        action = (
+            "This bridge-owned watcher is exiting; its supervisor respawns "
+            "it — do NOT launch engram-inbox-wait yourself. If your Monitor "
+            "stream has ended, re-attach with the command below (persistent)."
+        )
+        command = _attach_command()
+    else:
+        action = (
+            "This hand-armed inbox watcher is exiting — mail will no longer "
+            "wake you. Do NOT re-arm it by hand: call memory_status and "
+            "attach the bridge's wake stream (the bridge owns the watcher)."
+        )
+        command = "memory_status"
+    line = json.dumps(
+        {
+            "event": "watcher-dying",
+            "reason": reason,
+            "action": action,
+            "command": command,
+            "was": _rearm_command(),
+        },
+        separators=(",", ":"),
     )
+    # The log always gets the last word; the stream gets it if anyone is there.
+    print(f"inbox-wait: dying — {reason}", file=sys.stderr, flush=True)
+    _out(line, block_on_detach=False)
 
 
 def _emit_wake(w: dict) -> None:
     """One JSON line per wake — an utterance's ping, never a letter (O6).
     `ref` is where the record lives; nothing landed in the inbox."""
-    print(
+    _out(
         json.dumps(
             {
                 "event": "wake",
@@ -197,13 +290,12 @@ def _emit_wake(w: dict) -> None:
             },
             separators=(",", ":"),
         ),
-        flush=True,
     )
 
 
 def _emit(msg: dict) -> None:
     """Print one compact JSON line per new message (Monitor → one wake each)."""
-    print(
+    _out(
         json.dumps(
             {
                 "id": msg.get("id"),
@@ -214,7 +306,6 @@ def _emit(msg: dict) -> None:
             },
             separators=(",", ":"),
         ),
-        flush=True,
     )
 
 
@@ -293,7 +384,7 @@ def _emit_estate_survey(entries: list, project: str) -> int:
         total += n
     if not nodes:
         return 0
-    print(
+    _out(
         json.dumps(
             {
                 "event": "estate-survey",
@@ -309,7 +400,6 @@ def _emit_estate_survey(entries: list, project: str) -> int:
             },
             separators=(",", ":"),
         ),
-        flush=True,
     )
     return len(nodes)
 
@@ -369,7 +459,7 @@ def _emit_backlog_digest(backlog: list, occupant: str, project: str) -> int:
             if (m.get("intent") or "").strip().lower()
             in _DIGEST_DIRECTIVE_INTENTS
         )
-        print(
+        _out(
             json.dumps(
                 {
                     "event": "backlog-digest",
@@ -395,12 +485,11 @@ def _emit_backlog_digest(backlog: list, occupant: str, project: str) -> int:
                 },
                 separators=(",", ":"),
             ),
-            flush=True,
         )
         emitted = len(immortal)
     if authority:
         newest = max(authority, key=lambda m: m.get("created_at") or "")
-        print(
+        _out(
             json.dumps(
                 {
                     "event": "authority-directive-queued",
@@ -417,7 +506,6 @@ def _emit_backlog_digest(backlog: list, occupant: str, project: str) -> int:
                 },
                 separators=(",", ":"),
             ),
-            flush=True,
         )
         emitted += len(authority)
     return emitted
@@ -606,22 +694,58 @@ class _WatchClaimState:
         return "displaced"
 
 
-def _open_fifo_for_write(path: str):
-    """Open the wake FIFO, BLOCKING until a reader attaches.
+def _orphaned() -> bool:
+    """WATCH-CLAIM-3: a bridge-spawned watcher whose parent is gone has been
+    re-parented to pid 1. "Dies with the bridge by lineage" was FALSE as
+    shipped (three ppid-1 corpses measured 2026-08-21 02:52Z, blocked at
+    open with no claim, ready to race a live watcher the moment a consumer
+    attached to a same-named FIFO); macOS has no PDEATHSIG, so the watcher
+    has to LOOK. Only meaningful in FIFO mode — a legacy hand-armed watcher
+    under nohup may legitimately have ppid 1."""
+    return _fifo_mode() and os.getppid() == 1
 
-    Load-bearing ordering (review rider): the claim is not taken until the
-    tail is attached, because this open() cannot return before a reader
-    exists. A FIFO nobody tails therefore never claims — it cannot become
-    F4-with-extra-steps. And if the reader later detaches, writes block, the
-    poll loop stalls, beats stop, and the claim EXPIRES — coverage honestly
-    releases itself with no code asked to notice.
+
+def _open_fifo_for_write(path: str):
+    """Open the wake FIFO, waiting until a reader attaches.
+
+    Load-bearing ordering (review rider): the claim is not taken until a
+    reader is attached, because this does not return before one exists. A
+    FIFO nobody reads therefore never claims — it cannot become
+    F4-with-extra-steps.
+
+    Implemented as a non-blocking open polled once a second rather than a
+    blocking open(), so the wait is interruptible: a watcher whose bridge has
+    died (ppid 1) exits here instead of sitting blocked forever as an orphan
+    (WATCH-CLAIM-3). Once a reader exists the descriptor is switched back to
+    blocking so a full pipe stalls the loop (beats stop, claim expires —
+    honest) rather than dropping wakes.
+
+    NOTE (corrects the v2 design text): a reader that later DETACHES does not
+    make writes block — it makes them EPIPE. `_out` handles that by coming
+    back here to wait for the next reader and re-sending the lost line.
     """
-    import os as _os
-    if not _os.path.exists(path):
-        _os.mkfifo(path, 0o600)
+    import errno as _errno
+    import fcntl as _fcntl
+    if not os.path.exists(path):
+        os.mkfifo(path, 0o600)
     print(f"inbox-wait: waiting for a wake consumer on {path} "
           "(claim follows attach)", file=sys.stderr, flush=True)
-    f = open(path, "w", buffering=1)
+    while True:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+            break
+        except OSError as e:
+            if e.errno != _errno.ENXIO:   # ENXIO: no reader yet
+                raise
+        if _orphaned():
+            print("inbox-wait: bridge is gone (ppid 1) while waiting for a "
+                  "consumer — exiting, not orphaning", file=sys.stderr,
+                  flush=True)
+            raise SystemExit(0)
+        time.sleep(1.0)
+    flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+    _fcntl.fcntl(fd, _fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    f = os.fdopen(fd, "w", buffering=1)
     print("inbox-wait: consumer attached", file=sys.stderr, flush=True)
     return f
 
@@ -663,11 +787,16 @@ async def _run(args) -> int:
     # exists — so with --claim, coverage is never claimed for a wake stream
     # nobody consumes (the F4-with-extra-steps case from review).
     if getattr(args, "fifo", ""):
+        global _FIFO_PATH, _FIFO_FILE, _FIFO_FD
+        _FIFO_PATH = args.fifo
         fifo_f = _open_fifo_for_write(args.fifo)
-        os.dup2(fifo_f.fileno(), 1)  # all emit prints now land in the FIFO;
-        #                              stderr stays a real log (never DEVNULL —
-        #                              AB's maintenance watcher died silently
-        #                              behind exactly that)
+        if _MIRROR_TO_STDOUT:
+            os.dup2(fifo_f.fileno(), 1)  # stray prints ride the FIFO too;
+            #                              stderr stays a real log (never
+            #                              DEVNULL — AB's maintenance watcher
+            #                              died silently behind exactly that)
+        _FIFO_FILE = fifo_f
+        _FIFO_FD = fifo_f.fileno()
     claim_state = None
     if getattr(args, "claim", False):
         # Re-resolve NOW, not at process start: this watcher is typically
@@ -823,6 +952,22 @@ async def _run(args) -> int:
                                 client, args.project_dir or "", listen_set)
                             if code is not None:
                                 return code
+            if _orphaned():
+                # WATCH-CLAIM-3: the bridge died under us. No gasp — the
+                # session that owned this stream is gone with its bridge (a
+                # live session always has a live bridge); release the claim
+                # so a successor's watcher is granted at once, not after
+                # expiry.
+                print("inbox-wait: bridge is gone (ppid 1) — releasing the "
+                      "watch and exiting, not orphaning", file=sys.stderr,
+                      flush=True)
+                if claim_state is not None and claim_state.held:
+                    try:
+                        await client.watch_release(
+                            claim_state.seat, claim_state.nonce)
+                    except Exception:
+                        pass
+                return 0
             if claim_state is not None:
                 wv = await claim_state.beat(client)
                 if wv == "displaced":
@@ -951,9 +1096,11 @@ def main() -> None:
         "polling, beat each poll, exit DISPLACED for supervisor respawn; "
         "runs UNHELD (loud) if the claim API is unreachable"))
     p.add_argument("--fifo", default="", help=(
-        "write wake lines to this FIFO instead of stdout; open BLOCKS until "
-        "a consumer attaches, and with --claim the claim follows the attach "
-        "— a FIFO nobody tails never claims coverage"))
+        "write wake lines to this FIFO instead of stdout; the watcher waits "
+        "until a consumer attaches (and exits if its bridge dies meanwhile), "
+        "with --claim the claim follows the attach — a FIFO nobody reads "
+        "never claims coverage — and a consumer that detaches is waited for "
+        "again, the lost line re-sent"))
     args = p.parse_args()
     if args.timeout <= 0:
         args.timeout = None

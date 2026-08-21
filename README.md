@@ -478,17 +478,15 @@ inbox_identity = beastchat-server  # distinct inbox address — different per se
 export ENGRAM_INBOX_IDENTITY=beastchat-server
 ```
 
-**Auto-wake watcher (`engram-inbox-wait`).** A dormant session never learns a reply arrived — it only resumes when the human types. The `engram-inbox-wait` console script (installed with the [Claude Code bridge](#claude-code)) polls the inbox and emits one line per new message, which the Claude Code harness turns into a wake-up:
+**Auto-wake — the bridge owns the watcher; the agent only attaches.** A dormant session never learns a reply arrived — it only resumes when the human types. So the MCP bridge spawns and supervises an inbox watcher for every session (one claim per seat, respawn on death) and writes its wakes — one JSON line per message — to a FIFO. The agent's single act is to attach a streaming reader, which the harness turns into wake-ups:
 
 ```bash
-# always-on: arm at session start under the Monitor tool, one wake per message
-engram-inbox-wait --follow --project-dir /path/to/repo
-
-# one-shot: exits on the first new message (Bash background → single wake)
-engram-inbox-wait --project-dir /path/to/repo
+# memory_status prints the exact command for this session; run it under a
+# background stream tool (Claude Code: Monitor, persistent) — never foreground
+while true; do cat ~/.local/state/engram/wake/<session>.fifo 2>/dev/null; sleep 1; done
 ```
 
-It authenticates from `~/.config/engram/identity` (a bare shell doesn't inherit the bridge's env). It seeds on the existing backlog so it only wakes on mail arriving *after* it starts, and it drops your own outbound (`from == self`) so you never wake on your own sends.
+`memory_status` reports the stream as `COVERED` once a reader is attached, and every tool result carries a `⛔ WAKE STREAM NOT COVERED` banner until then (and again if the reader dies — the watcher survives a detached reader and re-sends the wake it lost). Agents never launch `engram-inbox-wait` themselves: that was the old model, and two watchers on one seat is exactly the failure the bridge-owned design ended. Harnesses without a background stream tool (Grok, Cursor, Codex) have their launcher attach the reader. The watcher seeds on the existing backlog so it only wakes on mail arriving *after* attach (plus one digest of what queued while nobody listened), and it drops your own outbound (`from == self`) so you never wake on your own sends. Design: [docs/design/watch-claim.md](docs/design/watch-claim.md).
 
 ### Admin Endpoints
 
@@ -598,7 +596,7 @@ This gives every box the same three commands regardless of where pyenv lives (`~
 
 ```
 /usr/local/bin/engram-mcp          # the MCP stdio server
-/usr/local/bin/engram-inbox-wait   # inbox auto-wake watcher
+/usr/local/bin/engram-inbox-wait   # inbox watcher (bridge-spawned; launcher/consumer use only)
 /usr/local/bin/engram-doctor       # client-side self-check
 ```
 
@@ -641,7 +639,7 @@ project = my-project-name
 
 **Tools the bridge exposes:** `memory_store`, `memory_search`, `memory_get`, **`memory_keys`** (deterministic prefix listing — "every key under `wip/`", or with an empty prefix "did that agent store anything?"; search ranks, this enumerates), `memory_forget` (hard delete — self-only per MEM-8), `memory_supersede` (retire another writer's stale row, kept as history), **`memory_flag_deletion`** (request true destruction — hidden immediately, purged only after admin review); the inter-agent inbox — `memory_send`, `memory_inbox`, `memory_reply`, `memory_ack`, `memory_resolve` (close a finished thread), `memory_inbox_archive`; **`memory_roster`** (who's listening on this project/channel, with liveness and seat-collision flags); `memory_status` (health), `memory_declare_identity`, and **`memory_whoami`** — which reports the session's principal and the namespaces it can read/write (wildcards expanded). An agent can call `memory_whoami` to discover its own reach rather than being told in a prompt.
 
-The bridge also installs the **`engram-inbox-wait`** console script — arm it at session start (under Claude Code's Monitor tool) so the session wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake watcher](#inbox-inter-agent-messaging).
+The bridge also **spawns and supervises the inbox watcher itself** — the session's only act is to attach the wake stream `memory_status` names (under Claude Code's Monitor tool) so it wakes on new inbox mail without a human relaying it. See [Inbox → Auto-wake](#inbox-inter-agent-messaging).
 
 **Search is permission-driven.** By default (`memory_read_namespaces` empty) the bridge sends *no* namespace on search, so the server returns results from every namespace the **token** can read — grant a principal read of another namespace and it shows up automatically, no client config change. Set `memory_read_namespaces` to a CSV only if you want to *narrow* below the token's permissions.
 
