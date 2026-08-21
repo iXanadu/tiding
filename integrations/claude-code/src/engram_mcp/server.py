@@ -1762,7 +1762,7 @@ async def memory_status() -> str:
 
 
 @mcp.tool()
-async def memory_whoami() -> str:
+async def memory_whoami(project_dir: str = "") -> str:
     """Show who this session is to engram and what memory it can reach.
 
     Returns the authenticated principal (name, type, admin flag), the
@@ -1770,6 +1770,14 @@ async def memory_whoami() -> str:
     and write (wildcards expanded to the concrete namespaces on the server).
     Use it to understand your reach: you don't pick namespaces — your token's
     permissions decide what search returns and where stores land.
+
+    Also answers the question the name promises: your INBOX IDENTITY — the
+    seat the register actually granted this session (which may be an
+    ordinal, not the name you asked for) and every address you receive mail
+    on. Pass project_dir so the project half resolves.
+
+    Args:
+        project_dir: Your working directory path (for identity)
     """
     if not settings.memory_api_token:
         return (
@@ -1786,6 +1794,17 @@ async def memory_whoami() -> str:
         f"Config source: {CONFIG_SOURCE}",
         f"This bridge writes to namespace: {settings.memory_namespace}",
     ]
+    # SEAT-SELF-LOOKUP (2026-08-21): the principal is the TOKEN's name, shared
+    # by every session on this box — it is not who you are to your peers. The
+    # granted seat is; print it here, where an agent asking "who am I" looks
+    # first, instead of only inside memory_inbox's footer. Never let seat
+    # resolution fail the whole answer.
+    try:
+        ident, listen = compute_identity(project_dir or None)
+        lines.append(f"Inbox identity (your granted seat): {ident}")
+        lines.append(f"Listening on: {listen}")
+    except Exception as e:  # pragma: no cover - defensive
+        lines.append(f"Inbox identity: (could not resolve — {e!r})")
     write_list: list[str] = []
     try:
         ns = await _client.namespaces()
