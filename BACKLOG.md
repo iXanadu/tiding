@@ -437,9 +437,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (same re-granted seat name) claimed at ~14:01:06Z → `held` → server said
   `retry_after_seconds: 150` flat → successor uncovered until 14:04:33Z,
   while `watch_status` read `expired` for the same row from 14:01:14Z on
-  (claim and status disagree for the whole window). The flat-retry half
-  SHIPPED + deployed 2026-08-21 (da1d5f9: `retry_after_seconds` = time
-  until stealable). REMAINING — DESIGN: a claim is keyed by seat NAME only, so a re-granted seat
+  (claim and status disagree for the whole window). SHIPPED 2026-08-21:
+  flat-retry half (da1d5f9, `retry_after_seconds` = time until stealable)
+  and release-on-exit (the dying watcher never RELEASED its claim — not on
+  session-death, not on SIGTERM — so every restart left a ghost the
+  successor waited out; now released on every exit path, signal paths on a
+  fresh loop; lands per session at the next bridge start). REMAINING — DESIGN: a claim is keyed by seat NAME only, so a re-granted seat
   ordinal inherits a corpse's claim as long as the corpse beats. The seat
   register is the authority — a watch whose holder's seat-session is no
   longer the seat's occupant should be displaceable at once

@@ -607,6 +607,14 @@ async def _farewell(client, reader_identity: str, project_dir: str | None) -> No
         pass
 
 
+# WATCH-CLAIM-4(c): the claim this process currently holds, so the SIGNAL exit
+# path in main() — where the asyncio loop is already unwinding and an `await`
+# inside _run's `finally` is not reliable — can still release it on a fresh
+# loop. A claim that dies with its process is a ghost its successor must wait
+# out (up to one EXPIRY): that was the whole of the 2026-08-21 restart tax.
+_ACTIVE_CLAIM: "_WatchClaimState | None" = None
+
+
 class _WatchClaimState:
     """The watcher's side of one-seat-one-watch (docs/design/watch-claim.md v2).
 
@@ -633,6 +641,25 @@ class _WatchClaimState:
         self.fetched_through: str | None = None
         self.catch_up_after: str | None = None   # P4, set on a stolen grant
 
+    async def release(self, client) -> bool:
+        """Give the watch back on the way out (best-effort, nonce-guarded —
+        a not-holder release is a no-op at the store). Returns True when a
+        release was POSTed. Idempotent: a released claim is no longer held,
+        so a second call does nothing. Every exit path calls this, because a
+        claim that outlives its process is a ghost the successor must wait
+        out (WATCH-CLAIM-4)."""
+        global _ACTIVE_CLAIM
+        if not self.held:
+            return False
+        self.held = False
+        if _ACTIVE_CLAIM is self:
+            _ACTIVE_CLAIM = None
+        try:
+            await client.watch_release(self.seat, self.nonce)
+            return True
+        except Exception:
+            return False
+
     async def acquire(self, client, project_dir: str, listen_set: list[str]) -> int | None:
         """Claim, retrying on `held`. Returns an EXIT_ code only for the one
         unretryable outcome (partial); None once we hold OR run unheld."""
@@ -654,6 +681,8 @@ class _WatchClaimState:
             v = r.get("verdict")
             if v == "granted":
                 self.held = True
+                global _ACTIVE_CLAIM
+                _ACTIVE_CLAIM = self
                 # P4: a STOLEN grant carries the corpse's delivery watermark.
                 # Mail after it may never have been emitted by anyone — the
                 # successor's first poll must EMIT that gap, not seed it.
@@ -1072,7 +1101,41 @@ async def _run(args) -> int:
         _dying_gasp(f"unexpected watcher crash: {e!r}")
         raise
     finally:
+        # WATCH-CLAIM-4(c): never leave the watch held by a dead process.
+        # Covers session-death (the commonest exit: the watcher outlives the
+        # session, farewells, returns), --timeout, orphan, and crash. The
+        # signal paths are handled in main() — see _release_after_signal.
+        if claim_state is not None and claim_state.held:
+            try:
+                await asyncio.wait_for(claim_state.release(client), 3.0)
+            except BaseException:
+                pass
         await client.close()
+
+
+def _release_after_signal() -> None:
+    """SIGTERM/SIGINT path: the loop in _run is unwinding (asyncio cancels the
+    main task, so an await in its finally may never complete). Release the
+    held claim on a FRESH loop, best-effort, bounded. Silent on failure —
+    expiry still covers a lost release; this only shortens the successor's
+    wait from EXPIRY to zero in the common case."""
+    st = _ACTIVE_CLAIM
+    if st is None or not st.held:
+        return
+
+    async def _go():
+        client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
+        try:
+            await asyncio.wait_for(st.release(client), 3.0)
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
+    try:
+        asyncio.run(_go())
+    except BaseException:
+        pass
 
 
 def main() -> None:
@@ -1118,10 +1181,12 @@ def main() -> None:
     try:
         sys.exit(asyncio.run(_run(args)))
     except KeyboardInterrupt:
+        _release_after_signal()
         _dying_gasp("interrupted (SIGINT) with the session possibly alive")
         sys.exit(0)
     except SystemExit as e:
         if e.code == 143:
+            _release_after_signal()
             _dying_gasp("killed (SIGTERM) with the session possibly alive")
         raise
 

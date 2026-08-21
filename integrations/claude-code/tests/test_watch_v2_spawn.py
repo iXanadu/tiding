@@ -178,3 +178,63 @@ def test_tail_on_a_fifo_is_deaf_until_writer_eof(tmp_path):
     os.mkfifo(fifo, 0o600)
     got = _stream_probe(f"tail -F {fifo}", fifo, timeout=1.5)
     assert got == "", f"tail -F streamed a live FIFO here: {got!r}"
+
+
+@pytest.mark.asyncio
+async def test_release_on_exit_gives_the_watch_back_once():
+    """WATCH-CLAIM-4(c), wild specimen 2026-08-21: a watcher that died with
+    the session (restart) left its claim held; the successor sat `held` until
+    expiry. release() must POST once, flip held, clear the active record, and
+    be idempotent; a not-held state must not POST at all."""
+    import engram_mcp.inbox_wait as iw
+    released = []
+
+    class FakeClient:
+        async def watch_claim(self, **kw):
+            return {"verdict": "granted"}
+
+        async def watch_release(self, seat, nonce):
+            released.append((seat, nonce))
+            return {"verdict": "released"}
+
+    st = _WatchClaimState("proj-claude-2")
+    assert await st.acquire(FakeClient(), "/tmp", ["proj-claude-2"]) is None
+    assert st.held and iw._ACTIVE_CLAIM is st
+
+    assert await st.release(FakeClient()) is True
+    assert released == [("proj-claude-2", st.nonce)]
+    assert not st.held and iw._ACTIVE_CLAIM is None
+    assert await st.release(FakeClient()) is False and len(released) == 1
+
+    # not-held (never granted / unheld mode) never POSTs
+    st2 = _WatchClaimState("proj-claude-3")
+    assert await st2.release(FakeClient()) is False and len(released) == 1
+
+
+def test_release_after_signal_uses_a_fresh_loop(monkeypatch):
+    """The SIGTERM path runs after asyncio.run() has torn the loop down —
+    _release_after_signal must still POST the release (fresh loop), and be a
+    no-op when nothing is held."""
+    import engram_mcp.inbox_wait as iw
+    released = []
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def watch_release(self, seat, nonce):
+            released.append((seat, nonce))
+            return {"verdict": "released"}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(iw, "MemoryClient", FakeClient)
+    st = _WatchClaimState("proj-claude-9")
+    st.held = True
+    monkeypatch.setattr(iw, "_ACTIVE_CLAIM", st)
+    iw._release_after_signal()
+    assert released == [("proj-claude-9", st.nonce)] and not st.held
+    iw._release_after_signal()          # idempotent, nothing held now
+    assert len(released) == 1
+
