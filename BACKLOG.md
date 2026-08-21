@@ -126,7 +126,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   NAMESPACE-ALIAS-HIT logging added. Retire only after: AB's client
   switched to `fleet` AND the log is quiet for a full grace week.
 
-- **ADDR-2** A send to an address nobody holds succeeds silently. Measured
+- **ADDR-2** *(diagnosability half SHIPPED 2026-08-20, owner-named: GET
+  /admin/inbox/unanswered surfaces never-acked-AND-never-replied ASK mail —
+  the predicate the data chose after `read_by`-alone produced a false
+  fleet-wide alarm; plus three delivery tiers kept separate: structural
+  `delivered_to` (opt-in per read, so the watcher's own poll cannot fake it),
+  voluntary ack, reply-in-thread. What REMAINS is only the SEND-TIME
+  advisory below.)* A send to an address nobody holds succeeds silently. Measured
   2026-08-06: a private huddle named two participants as `admin@macmini` /
   `admin@webone` and waited ~12 minutes on a session that was never in it,
   because nothing listened there and delivery returned no error — from the
@@ -195,9 +201,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the master knowing. The fix is therefore not "expose the mechanism" but
   **make an unmanaged widening either impossible or visible to whoever owns
   the room.** Needs a design call.
-  Independent of that, and cheap: correct the `memory_send` /`memory_reply`
-  docstrings, which assert the opposite of what the code does and are what
-  misled three sessions.
+  *(Cheap half DONE 2026-08-20 `5fe4c8e`: the send/reply docstrings no
+  longer assert frozen membership. And the no-surface half closed
+  2026-08-21: hub add/remove routes deployed (AB `56c681b`) + app controls
+  in TF 198 — owner ran the full add→sound-off→remove loop live, verified
+  at store and hub log. What REMAINS here is only the design call above:
+  make unmanaged widening of a MANAGED room impossible or visible.)*
 
 - **CHAN-1** There is no in-session channel join, and the workaround creates
   listening the register cannot see. A running seat cannot subscribe to a
@@ -372,9 +381,46 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   workable fallback signal to announce "you just compacted, reload/flush."
   Revisit when named.
 
+- **WATCH-CLAIM-2** Residuals of the 2026-08-20 watch-claim ship (design
+  `docs/design/watch-claim.md` v2, adversarially reviewed; steps 1/2/4/5/6
+  built, gated, deployed; murder row proven at the ratified ~155s bound):
+  (a) PROSE RETIREMENT — startup skill 4b, AGENTS.md auto-watch, the
+  broadcast recipe — cut only after per-harness arrival-matrix rows pass
+  COLD with prose skipped (claude ✓ in-harness; grok and cursor are live
+  tests the owner offered to run). Removing prose first re-opens the
+  believed-armed hole by documentation.
+  (b) CODEX: daemon-scoped bridge is not 1:1 — shared bridge must claim one
+  watch per seat it serves, or one-watch-per-seat is false on codex from
+  day one. Named hole, not silent deferral.
+  (c) CURSOR: covered by NOTHING today — a spawn path ships in this arc or
+  this is the grok incident replayed for cursor.
+  (d) AB armer retirement (their step 3) is PER-SEAT, only after that
+  seat's matrix row — including the ordinal-seat-DM leg — passes. Gate is
+  agreed with the reviewer; hold them to it.
+
+- **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
+  48h) violate the room's own @mention rule — each forces a full model
+  turn whose correct output is "not for me" (~70 wasted turns/day, worse
+  at heavy context). Proposal sent 2026-08-20: owner posts wake all;
+  @mentioned wake now; everyone else gets ONE coalesced digest wake per
+  room per ~15min. Split: AB parses mentions and tags wakes; engram
+  coalesces deferred wakes server-side. ⛔ Waits on the OWNER's confirm
+  that an unaddressed peer post may wake nobody immediately — his rooms,
+  his call.
+
+- **OPS-BAK-1** `principals_bak_20260820` (12 rows) sits in prod as the
+  pre-AUDIT-2-migration safety net. Owner says the word → drop it. Do not
+  let it become permanent clutter.
+
 ## Needs-decision
 
-- **SEAT-13** *(evidence add 2026-08-18: the bare-watcher gap measured on a
+- **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
+  bridge-owned watcher dies WITH the bridge by process lineage, its claim
+  expires ~150s after its beats stop, and one-watch-per-seat is store-
+  enforced. The zombie-beat class this item describes cannot form on the
+  claim path; it persists only for legacy bare watchers until prose
+  retirement. Re-triage after the per-harness matrix rows run.)*
+  *(evidence add 2026-08-18: the bare-watcher gap measured on a
   real corpse — the 24h endurance test's Cursor session died on the owner's
   "close," but its bare-launched watcher had no process to observe, never
   sent a farewell, and kept beating the presence row indefinitely; the row
@@ -623,7 +669,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   readback + documented manual step acceptable, no picker-state endpoint
   unless the first run demands it. Starts when the owner names it.
 
-- **AUTH-SEAT-1** No credential attests a SEAT. Fleet tokens identify a
+- **AUTH-SEAT-1** *(evidence add 2026-08-20: `/api/huddle/add-participant`
+  is fleet-bearer-gated — any agent holding the fleet token can WRITE
+  itself into a private room and receive the owner's /speak fan-out. The
+  read token's grain was accepted as interim precisely because it could
+  not write membership; this route can. Pinned AB-side same night; belongs
+  in this item's tightening arc.)* No credential attests a SEAT. Fleet tokens identify a
   provider class (one shared token per provider); seats are session-asserted
   (env/take_seat), so no consumer can verify "this bearer IS seat X" —
   measured 2026-08-18 when the hub's archive endpoint tried participant-grain
