@@ -118,6 +118,16 @@ Hard rules (each one was a real deaf session):
   and two processes then race for one seat.
 - **Never run the cat-loop in a foreground Bash** — it does not return; it
   locks your turn until the tool times out.
+- **Never WAIT for coverage in a foreground Bash either** (no `sleep N`,
+  no `for i in …; do sleep 10; done`, no `until … COVERED`). If
+  `memory_status` still reads `NOT COVERED` after one re-check (~10s),
+  read the watcher log line it prints (`inbox-wait: watch held by … —
+  re-claiming in Ns` means a predecessor's claim is draining and the bridge
+  re-claims ON ITS OWN), say so in your summary, and **return the turn**.
+  A session sleeping in a Bash is not idle — the owner cannot talk to it;
+  2026-08-21 an AB session blocked 170s this way and read as "stuck".
+  If you must be told when it flips, use Bash `run_in_background` with an
+  `until` loop — never the foreground.
 - If the banner reappears mid-session, your Monitor reader died (it
   happens): re-attach with the same command. The watcher survives the
   detach and re-sends the wake it lost.

@@ -265,3 +265,46 @@ async def test_a_holder_that_fetches_is_not_displaceable(client, db_pool):
         "a DELIVERING holder was stolen from — fetched_through is not being "
         "honored, so every busy watcher is now displaceable"
     )
+
+
+@pytest.mark.asyncio
+async def test_held_retry_after_tracks_holder_expiry_not_flat(db_pool):
+    """WATCH-CLAIM-4(a), wild specimen 2026-08-21 14:01Z: a successor that
+    claims seconds BEFORE the predecessor's beat ages out was told to retry
+    in a flat EXPIRY (150s) and sat uncovered 3.5 minutes over a claim that
+    was stealable 8s later. `retry_after_seconds` must be the time until the
+    holder is stealable — floored, and never above EXPIRY."""
+    seat = _seat()
+    na, nb = mint_nonce(), mint_nonce()
+    assert (await watch_claim(seat, na, "bridge", "/tmp/p", _ls(seat)))["verdict"] == "granted"
+
+    # fresh holder: retry is (close to) the full window, never above it
+    r_fresh = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+    assert r_fresh["verdict"] == "held"
+    assert WATCH_EXPIRY_SECONDS - 10 <= r_fresh["retry_after_seconds"] <= WATCH_EXPIRY_SECONDS
+
+    # age the holder's beat to 10s short of expiry: retry must be ~10s, not 150
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE memories
+               SET metadata = jsonb_set(metadata, '{last_beat}',
+                   to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", WATCH_EXPIRY_SECONDS - 10,
+        )
+    r_late = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+    assert r_late["verdict"] == "held"
+    assert 5 <= r_late["retry_after_seconds"] <= 20, r_late
+
+    # and once stealable, the same claim is GRANTED (the existing steal path)
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE memories
+               SET metadata = jsonb_set(metadata, '{last_beat}',
+                   to_jsonb((NOW() - make_interval(secs => $2))::text), false)
+               WHERE key = $1""",
+            f"watch/{seat}", WATCH_EXPIRY_SECONDS + 5,
+        )
+    r_steal = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
+    assert r_steal["verdict"] == "granted" and r_steal.get("stolen")
+

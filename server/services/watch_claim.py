@@ -214,14 +214,38 @@ async def watch_claim(
             }
 
         row = await conn.fetchrow(
-            "SELECT metadata FROM memories WHERE namespace=$1 AND key=$2 "
-            "AND scope=$3 AND user_id=$4",
+            """
+            SELECT metadata,
+                   EXTRACT(EPOCH FROM (
+                       (metadata->>'last_beat')::timestamptz
+                       + make_interval(secs => $5) - NOW()
+                   )) AS stealable_in
+            FROM memories
+            WHERE namespace=$1 AND key=$2 AND scope=$3 AND user_id=$4
+            """,
             WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID,
+            WATCH_EXPIRY_SECONDS,
         )
         held = row["metadata"] if row else None
         if isinstance(held, str):
             held = json.loads(held)
         held = held or {}
+        # WATCH-CLAIM-4(a): retry when the holder's claim becomes STEALABLE,
+        # not a flat EXPIRY. 2026-08-21 a successor on a re-granted seat
+        # claimed 4s before its predecessor's beat aged out, was told "150",
+        # and sat uncovered 3.5 minutes over a claim that expired 8s later
+        # (while watch_status already read `expired` for the same row).
+        # Floor a few seconds so a just-beaten holder is not hammered;
+        # ceiling EXPIRY so a future-dated beat cannot park a watcher forever.
+        stealable_in = row["stealable_in"] if row else None
+        try:
+            remaining = float(stealable_in) if stealable_in is not None else None
+        except (TypeError, ValueError):
+            remaining = None
+        if remaining is None:
+            retry_after = WATCH_EXPIRY_SECONDS
+        else:
+            retry_after = max(5.0, min(float(WATCH_EXPIRY_SECONDS), remaining + 2.0))
         return {
             "verdict": "held",
             "seat": seat,
@@ -230,7 +254,7 @@ async def watch_claim(
             "holder_last_beat": held.get("last_beat"),
             # The caller's contract: retry on a timer. Stated in the response
             # so no client has to remember it from prose.
-            "retry_after_seconds": WATCH_EXPIRY_SECONDS,
+            "retry_after_seconds": round(retry_after, 1),
         }
 
 
