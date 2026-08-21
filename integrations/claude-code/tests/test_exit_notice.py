@@ -29,10 +29,11 @@ def captured(monkeypatch):
 
 
 def test_exit_notice_posts_certificate_for_granted_seat(captured, monkeypatch):
+    import os
     monkeypatch.setattr(srv, "_EXIT_NOTICE", {
         "session_key": "auto-claude-abc123", "seat": "proj-claude-3",
         "lane": "proj-claude", "project": "proj", "provider": "claude",
-        "host": "macmini",
+        "host": "macmini", "pid": os.getpid(),
     })
     srv._exit_notice()
     assert len(captured) == 1
@@ -89,3 +90,34 @@ def test_exit_hook_is_registered_to_run_before_watcher_kill():
     import inspect
     src = inspect.getsource(srv)
     assert src.index("_atexit.register(_kill_watcher_child)") < src.index("_atexit.register(_exit_notice)")
+
+
+def test_pid_guard_blocks_a_different_pid(captured, monkeypatch):
+    # A fork child / inheriting subprocess reaches atexit with the parent's
+    # _EXIT_NOTICE but its own pid. It must NOT certify the parent's live seat.
+    import os
+    monkeypatch.setattr(srv, "_EXIT_NOTICE", {
+        "session_key": "claude-ab-claude-engram", "seat": "engram-claude-8",
+        "project": "engram", "pid": os.getpid() + 100000,  # not this process
+    })
+    srv._exit_notice()
+    assert captured == [], "a foreign pid must not file a death certificate"
+
+
+def test_pid_guard_allows_the_claiming_pid(captured, monkeypatch):
+    import os
+    monkeypatch.setattr(srv, "_EXIT_NOTICE", {
+        "session_key": "k", "seat": "engram-claude-8", "project": "engram",
+        "pid": os.getpid(),
+    })
+    srv._exit_notice()
+    assert len(captured) == 1
+
+
+def test_pid_guard_missing_pid_is_failsafe_skip(captured, monkeypatch):
+    # An older stash with no pid recorded → skip rather than risk a false cert.
+    monkeypatch.setattr(srv, "_EXIT_NOTICE", {
+        "session_key": "k", "seat": "engram-claude-8", "project": "engram",
+    })
+    srv._exit_notice()
+    assert captured == []

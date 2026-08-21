@@ -649,6 +649,16 @@ async def _claim_seat(project_dir: str | None) -> None:
                 "session_key": session_key, "seat": granted,
                 "lane": implicit_lane, "project": project,
                 "provider": resolve_provider(), "host": hostname(),
+                # pid-guard: the ONE process allowed to certify this seat's
+                # exit is the one that CLAIMED it. atexit handlers are
+                # inherited by fork children and by any subprocess that
+                # imports this module, so without this a forked child's exit
+                # (or a helper that inherited ENGRAM_SESSION_KEY and ran the
+                # bridge) would file a death for a seat its parent still
+                # holds — the false-cert-under-a-stable-session-key churn
+                # measured 2026-08-21. os.getpid() is re-read at exit; only a
+                # match certifies.
+                "pid": os.getpid(),
             })
         _SEAT_CLAIMED = True
         _SEAT_CLAIM_FAILURES = 0
@@ -926,6 +936,12 @@ def _exit_notice() -> None:
     """atexit: certify this session's own exit — only if it ever held a seat."""
     if not _EXIT_NOTICE.get("seat") or not _EXIT_NOTICE.get("session_key"):
         return  # never seated → nothing to certify (and never invent a seat)
+    # pid-guard (2026-08-21): certify ONLY from the process that claimed the
+    # seat. A fork child or an inheriting subprocess reaches this atexit with
+    # the parent's _EXIT_NOTICE but its own pid — certifying then would kill a
+    # live seat. No recorded pid (older stash) → skip, fail-safe.
+    if _EXIT_NOTICE.get("pid") != os.getpid():
+        return
     if not settings.memory_api_token:
         return
     payload = {
