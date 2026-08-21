@@ -312,3 +312,22 @@ path, WATCH-G1) and in the acceptance harness. WATCH-CLAIM-2(a) — "retire
 prose only after the per-harness matrix passes cold" — is overtaken by the
 owner's ruling: the believed-armed hole is now closed by the banner, which
 is code, not prose.
+
+## Rejected alternative — claim on ARM (2026-08-21)
+
+Proposed the morning AB-hosted grok seats were found deaf: have the watcher
+claim the watch when it *arms* rather than when a reader *attaches*, so a
+reader-less seat "degrades to not-woken instead of unclaimed". Withdrawn by
+its proposer and closed by the huddle PM the same hour. Reason: the claim is
+sensing only and never gated delivery — mail queued and read fine throughout
+(the "letters never landed" symptom was AB's listener missing the ordinal
+seat from its listen set, AB `c849bff`). What claim-on-arm *would* do is mark
+a seat nobody is listening on as **covered** — the exact lie this design
+exists to prevent ("never show an unheld seat as covered", `watch_claim.py`).
+Do not re-propose without a case where it helps. Story: project memory
+`decision/claim-on-arm-withdrawn-2026-08-21`.
+
+Owner invariant recorded the same hour (`decision/hand-launched-agents-are-
+first-class-2026-08-21`): nothing in this layer may prevent a hand-started
+agent — any provider, no AgentBeast involved — from getting a mailbox, a
+watcher, and mail with every other running agent.
