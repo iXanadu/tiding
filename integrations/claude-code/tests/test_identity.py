@@ -1202,3 +1202,31 @@ class TestTzStableProcessWatch:
         fake, _ = self._ps("", "")
         monkeypatch.setattr(identity.subprocess, "run", fake)
         assert identity.process_is_gone(1234, "Wed Aug 13 14:52:42 2026") is True
+
+
+def test_seat_cache_reconciles_to_newer_seat_file(monkeypatch):
+    """SEAT-CACHE-1 (2026-08-21): when the cached runtime seat (_SESSION_SEAT)
+    and the seat FILE disagree, the file was written more recently by a
+    register-driven move and wins — the tool identity path must not keep
+    stamping the stale ordinal. Mirrors the watcher, which re-reads the file.
+    """
+    monkeypatch.setattr(identity, "_SESSION_SEAT", "engram-claude-9")
+    monkeypatch.setattr(identity, "read_seat_file", lambda: "engram-claude-8")
+    got = identity.resolve_session_identity("/tmp/x")
+    assert got == "engram-claude-8"
+    # and the cache is healed, so the next call is stable without re-reading
+    assert identity._SESSION_SEAT == "engram-claude-8"
+
+
+def test_seat_cache_kept_when_file_agrees(monkeypatch):
+    monkeypatch.setattr(identity, "_SESSION_SEAT", "engram-claude-8")
+    monkeypatch.setattr(identity, "read_seat_file", lambda: "engram-claude-8")
+    assert identity.resolve_session_identity("/tmp/x") == "engram-claude-8"
+
+
+def test_seat_cache_kept_when_no_file(monkeypatch):
+    # a runtime take_seat with no readable file (rare) still returns the cache,
+    # never None — the deliberate seat must not evaporate.
+    monkeypatch.setattr(identity, "_SESSION_SEAT", "engram-claude-8")
+    monkeypatch.setattr(identity, "read_seat_file", lambda: None)
+    assert identity.resolve_session_identity("/tmp/x") == "engram-claude-8"

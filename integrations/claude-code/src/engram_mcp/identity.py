@@ -207,7 +207,23 @@ def resolve_session_identity(project_dir: str | None) -> str | None:
     information than whatever its spawn assumed. The tool that sets it reports
     when it overrides a launcher-set seat, so the override is never silent.
     """
+    global _SESSION_SEAT  # SEAT-CACHE-1: may adopt a newer seat-file value
     if _SESSION_SEAT:
+        # SEAT-CACHE-1 (2026-08-21): the seat FILE is the reconciliation
+        # channel between this process, the watcher, and the register — and
+        # `take_seat` writes it on every set, so in steady state file ==
+        # _SESSION_SEAT. If they DIFFER here, the file was written more
+        # recently than our cached set (a register-driven seat move: the
+        # allocator handed continuity a different ordinal and the claim path
+        # wrote it), so the file is authoritative and the cache is stale.
+        # Adopt it — otherwise the tool path keeps stamping the old ordinal and
+        # throws a false NOT COVERED for it while the watcher, which re-reads
+        # the file every poll, has already moved. Measured on a live session
+        # after a -8↔-9 oscillation: file=-8, cache=-9, tool calls said -9.
+        from_file = read_seat_file()
+        if from_file and from_file != _SESSION_SEAT:
+            _SESSION_SEAT = from_file
+            return from_file
         return _SESSION_SEAT
     # SEAT-2: a seat taken by our SIBLING process this session (the bridge, if
     # we are the watcher). Sits above the launch env for the same reason the
