@@ -86,6 +86,23 @@ successor the address's thread continuity for no reason.
 
 ## 4b. Arm the Inbox Watcher (always-listen)
 
+**⛔ FIRST: check whether the bridge already armed a watcher for you.** Call
+`memory_status`. If it prints a `wake stream: attach with Monitor -> …` line,
+the bridge has ALREADY spawned a claiming watcher for this seat and it is
+blocked waiting for a consumer. Your ONE act is to run that exact printed
+command under the **Monitor** tool (persistent) — it is a cat-loop over a
+FIFO, `while true; do cat <fifo> 2>/dev/null; sleep 1; done`. Do NOT
+substitute `tail -F`/`tail -f` (on a FIFO, tail buffers until writer-EOF,
+which never comes while the watcher lives — the seat reads `covered` and
+you are deaf; measured 2026-08-21). Do NOT also launch `engram-inbox-wait`
+— that is the arm-twice failure: it does not claim, and the bridge's watcher
+stays blocked, so the seat reads `unheld`. Verify: `memory_status` /
+roster shows the watcher beating. **Skip the rest of this step.**
+
+Only if `memory_status` prints NO wake-stream line (older bridge, no
+watch-claim on this box) does the legacy hand-arm below apply:
+
+
 **If you took a seat via `memory_take_seat`, no env prefix is needed** — the
 tool records the seat server-side AND in the seat file, and the watcher
 re-reads that file every poll (~45s), so bridge and watcher converge by
