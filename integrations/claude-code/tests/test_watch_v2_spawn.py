@@ -238,3 +238,46 @@ def test_release_after_signal_uses_a_fresh_loop(monkeypatch):
     iw._release_after_signal()          # idempotent, nothing held now
     assert len(released) == 1
 
+
+
+@pytest.mark.asyncio
+async def test_pause_then_recover_logs_both_once(capsys):
+    """OBS (2026-08-21): a lost beat logs a pause; the recovery on the next
+    successful beat must ALSO log, once — otherwise a log ending at the pause
+    line reads as a stuck watcher when it has in fact resumed and gone quiet.
+    """
+    class C:
+        def __init__(self, r):
+            self.r = r
+
+        async def watch_beat(self, *a, **kw):
+            if isinstance(self.r, Exception):
+                raise self.r
+            return self.r
+
+    st = _WatchClaimState("s")
+    st.held = True
+
+    assert await st.beat(C(ConnectionError("blip"))) == "unknown"
+    assert await st.beat(C(ConnectionError("blip"))) == "unknown"  # still down
+    assert await st.beat(C({"verdict": "holder"})) == "holder"     # recovered
+    err = capsys.readouterr().err
+    # pause logged exactly once across the outage (not once per failed cycle)
+    assert err.count("pausing emission until a verdict") == 1
+    # recovery logged exactly once
+    assert err.count("watch beat recovered — emission resumed") == 1
+
+
+@pytest.mark.asyncio
+async def test_steady_holder_beats_log_nothing(capsys):
+    class C:
+        async def watch_beat(self, *a, **kw):
+            return {"verdict": "holder"}
+
+    st = _WatchClaimState("s")
+    st.held = True
+    for _ in range(3):
+        assert await st.beat(C()) == "holder"
+    err = capsys.readouterr().err
+    assert "pausing emission" not in err
+    assert "emission resumed" not in err  # no false "recovered" without a pause

@@ -655,6 +655,8 @@ class _WatchClaimState:
         self.nonce = secrets.token_hex(16)   # random, never pid (ghost class)
         self.held = False
         self.unheld_mode = False             # K3: running without a claim
+        self._emission_paused = False        # OBS: True between a lost beat and
+        #                                      its recovery, so the log says both
         # K2 delivery-liveness: the newest mail created_at this process has
         # actually EMITTED. Beating proves existence; THIS proves delivery,
         # and a holder that beats without advancing it while mail waits is
@@ -734,10 +736,23 @@ class _WatchClaimState:
             r = await client.watch_beat(self.seat, self.nonce,
                                         fetched_through=self.fetched_through)
         except Exception:
-            print("inbox-wait: watch beat lost — pausing emission until a "
-                  "verdict", file=sys.stderr, flush=True)
+            # OBS: log only the FIRST failed beat of a run, not every cycle —
+            # a long outage otherwise floods the log with identical lines.
+            if not self._emission_paused:
+                self._emission_paused = True
+                print("inbox-wait: watch beat lost — pausing emission until a "
+                      "verdict", file=sys.stderr, flush=True)
             return "unknown"
         if r.get("verdict") == "holder":
+            # OBS (2026-08-21): the pause was logged but the resume never was,
+            # so a log ending at the pause line read as a STUCK watcher when it
+            # had recovered on the next beat and gone quiet. Say when emission
+            # comes back, once, so "paused then silent" is distinguishable from
+            # "paused then resumed".
+            if self._emission_paused:
+                self._emission_paused = False
+                print("inbox-wait: watch beat recovered — emission resumed",
+                      file=sys.stderr, flush=True)
             return "holder"
         print("inbox-wait: DISPLACED — another watcher holds this seat; "
               "exiting for supervisor respawn", file=sys.stderr, flush=True)
