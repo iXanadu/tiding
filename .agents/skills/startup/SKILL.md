@@ -9,7 +9,9 @@ Session startup. Follow these steps:
 
 Do both of these before any `scope=project` memory calls or substantive work.
 
-**0a. Refresh global directives.** Read `~/.claude/CLAUDE.md` — your global operating rules (communication style, memory scope resolution, git safety, Python convention). It's loaded at session start but fades when buried in a long system prompt; re-reading pulls it into active attention.
+**0a. Do NOT re-read what is already in context.** `~/.claude/CLAUDE.md` (→ `~/.agents/AGENTS.md`), the project `CLAUDE.md`, and `MEMORY.md` are injected into your system prompt at launch — re-`cat`ting them costs ~1k tokens each and adds nothing. Skim them *in the prompt* if you need to refresh a rule.
+
+**Tool schemas — one `ToolSearch` call, only what startup needs:** `memory_get, memory_search, memory_inbox, memory_status, memory_store, memory_reply, memory_ack, Monitor`. Load `memory_send`, `memory_roster`, `memory_take_seat`, `memory_resolve_thread`, `memory_keys` later, only if a step below actually needs them.
 
 **0b. Confirm project identity.** Check `.engram.cfg` at the repo root.
 
@@ -30,22 +32,23 @@ Note the date the handoff was written. If it's more than a day or two old, treat
 
 `memory_search` query="wip" scope=project limit=3 — if `wip/current` exists, the last session was interrupted. Read it, orient, and plan to continue.
 
-## 3. Thorough Memory Recovery
+## 3. Memory Recovery — sized to the handoff's age
 
-The handoff captures one moment. To orient fully, sweep memory with several targeted queries (run in parallel where possible):
+`memory_search` returns full bodies; a 10-result query costs 2–4k tokens. Spend it where the handoff is weak, not by reflex.
 
-### Project scope
-1. `memory_search` query="session" scope=project limit=10 — recent session summaries
-2. `memory_search` query="decision architecture" scope=project limit=10 — design decisions
-3. `memory_search` query="strategy direction goals" scope=project limit=5 — strategic context
-4. `memory_search` query="wip current working module" scope=project limit=5 — active work
+**If `startup/next` is < 48h old (the normal case):** run ONLY
+1. `memory_search` query="session" scope=project limit=3 — confirms nothing newer than the handoff exists.
+Everything else (decisions, strategy, shared lessons, machine facts) is stable knowledge already banked in the handoff and `MEMORY.md`; fetch a specific key with `memory_get` only when a step needs it.
 
-### Shared + machine
-5. `memory_search` query="engram memory semantic" scope=shared limit=5 — cross-project lessons relevant to engram
-6. `memory_search` scope=machine limit=3 — local env, paths, services
+**If the handoff is older than 48h, or missing, or `wip/current` exists:** full sweep, in parallel —
+1. `memory_search` query="session" scope=project limit=5 — recent session summaries
+2. `memory_search` query="decision architecture" scope=project limit=5 — design decisions
+3. `memory_search` query="strategy direction goals" scope=project limit=3 — strategic context
+4. `memory_search` query="engram memory semantic" scope=shared limit=3 — cross-project lessons relevant to engram
+5. `memory_search` scope=machine limit=3 — local env, paths, services
 
 ### Reconcile
-Compare dates across results. If the most recent memories are newer than `startup/next`, the handoff is incomplete — note the gap and lead with the newer state.
+Compare dates. If the most recent memories are newer than `startup/next`, the handoff is incomplete — note the gap and lead with the newer state.
 
 ## 4. Check Inbox
 
@@ -129,9 +132,9 @@ still gets its own line. Treat those as live instructions, not history —
 they arrived while nobody was listening. Corollary for step 4: **ack
 directive mail only when you have actually handled it.**
 
-## 5. Read Project Identity
+## 5. Project Identity
 
-Read `.claude/CLAUDE.md` for structure, conventions, and commands. For migration work, also check `docs/project-migration.md`.
+The project `CLAUDE.md` (repo root) is already in context — do not re-read it. Read `BACKLOG.md` (this IS required every session; `head -60` plus the section headers is enough to orient, read an item in full only when you pull it). For migration work, also check `docs/project-migration.md`.
 
 ## 6. Check Current State
 

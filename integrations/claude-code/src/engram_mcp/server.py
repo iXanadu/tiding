@@ -296,6 +296,57 @@ def _server_time_line() -> str:
     return f"server time: {iso}\n" if iso else ""
 
 
+# CTX-1 (2026-08-21): reference text is shown IN FULL the first time a given
+# kind appears in this session and as a one-liner afterwards. A Claude session
+# measured ~575 tokens for memory_inbox to say "empty" and ~1.5k chars of
+# identical ⛔ banner on every tool result during startup; the instruction is
+# unchanged, only the repetition goes. Facts about THIS call (digest counts,
+# estate warnings, listen_set, the attach command) are always kept.
+_SHOWN_ONCE: set[str] = set()
+
+
+def _first_time(kind: str) -> bool:
+    """True the first time `kind` is shown this process; False afterwards."""
+    if kind in _SHOWN_ONCE:
+        return False
+    _SHOWN_ONCE.add(kind)
+    return True
+
+
+_GUIDANCE_KINDS = (
+    "Polling cadence", "Handling messages", "How inbox addressing works",
+    "Acked.", "Resolved.", "Archived.",
+)
+_GUIDANCE_KEEP = (
+    "\U0001f4ec",                 # 📬 digest line
+    "  \u2022 \u26a0",            # ⚠️ estate / stale warnings
+    "  \u2022 You are listening as",
+    "  \u2022 Your own listen_set",
+    "  \u2022 You just sent to",
+    "  \u2022 Nothing open",
+)
+
+
+def _compact_guidance(guidance: str) -> str:
+    """Full guidance the first time its KIND is seen this session; afterwards
+    only the per-call facts, plus a one-line pointer."""
+    kind = next((k for k in _GUIDANCE_KINDS if k in guidance), None)
+    if kind is None or _first_time(f"guidance:{kind}"):
+        return guidance
+    kept: list[str] = []
+    keep_cont = False
+    for line in guidance.splitlines():
+        if line.startswith(_GUIDANCE_KEEP):
+            kept.append(line)
+            keep_cont = True
+        elif keep_cont and line.startswith("    ") and not line.startswith("  \u2022"):
+            kept.append(line)          # continuation of a kept bullet
+        else:
+            keep_cont = False
+    kept.append(f"(inbox guidance \u2014 '{kind}' \u2014 shown in full earlier this session.)")
+    return "\n".join(kept)
+
+
 def _append_guidance(body: str, result: dict) -> str:
     """Append server-provided advisories and usage guidance to a tool result.
 
@@ -320,7 +371,7 @@ def _append_guidance(body: str, result: dict) -> str:
         body = f"{body}\n\n{advisory}"
     if not guidance:
         return alert + body
-    return f"{alert}{body}\n\n---\n{guidance}"
+    return f"{alert}{body}\n\n---\n{_compact_guidance(guidance)}"
 
 
 # Shown once per session: a committed .engram.cfg declaration that the launch
@@ -883,12 +934,18 @@ def _wake_stream_banner() -> str:
     for ten minutes if it tried. memory_status shows the state to everyone."""
     st = _WATCH_STATE.get("state")
     if st not in ("expired", "unheld"):   # only a measured NOT-covered fires
+        _SHOWN_ONCE.discard("banner:wake")   # next uncovered episode is full again
         return ""
     if resolve_provider() != "claude":
         return ""
     attach = _watcher_attach_command()
     if not attach:
         return ""
+    if not _first_time("banner:wake"):
+        return (
+            f"\u26d4 WAKE STREAM NOT COVERED (state={st}, seat={_WATCH_STATE.get('seat')}) "
+            f"\u2014 attach under Monitor (persistent), EXACTLY: {attach}\n\n"
+        )
     return (
         f"⛔ WAKE STREAM NOT COVERED (state={st}, seat={_WATCH_STATE.get('seat')}) "
         f"— mail will NOT wake this session until a reader is attached.\n"
@@ -949,6 +1006,7 @@ def _seat_collision_banner(project_dir: str | None = None) -> str:
     string when clear. Prepended to memory tool results so the collision is
     impossible to miss at the moment it matters (SU-1 interrogate pattern)."""
     if not _SEAT_COLLISION:
+        _SHOWN_ONCE.discard("banner:collision")
         return ""
     try:
         reader_identity, _ = compute_identity(project_dir or None)
@@ -957,6 +1015,12 @@ def _seat_collision_banner(project_dir: str | None = None) -> str:
         seat = "<this identity>"
     n = _SEAT_COLLISION.get("live_sessions", 2)
     provs = ", ".join(_SEAT_COLLISION.get("providers", [])) or "unknown"
+    if not _first_time("banner:collision"):
+        return (
+            f"\u26d4 SEAT COLLISION \u2014 {n} live sessions on '{seat}' ({provs}); "
+            f"re-check next call (a predecessor's tail self-clears); if it PERSISTS: "
+            f"memory_take_seat(name='{seat}-<role>', project_dir=<your cwd>)\n\n"
+        )
     # T2/O4 rewrite: succession no longer flags (the server now treats a
     # displaced nonce as a corpse at the write door too), so a flag that
     # persists means a GENUINE rival — two distinct live sessions on one
