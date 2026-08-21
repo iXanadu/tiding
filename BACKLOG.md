@@ -796,6 +796,3 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 - ⓘ Naming note for promotion: "engram" is a crowded term in AI-memory
   tooling — lean on distinctive vocabulary (wake-not-letter, seats,
   huddles) in posts so search finds THIS engram.
-
-## Blocked-external
-
