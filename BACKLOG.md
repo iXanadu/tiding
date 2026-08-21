@@ -484,6 +484,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
+- **SEAT-CACHE-1** *(DEGRADING, self-clears on bridge restart)* After a mid-session
+  seat churn, the bridge's WATCHER re-reads the seat file each poll and follows the
+  new ordinal (ID-2), but the MCP tool identity path caches the seat resolved at
+  claim and does NOT re-read — so `memory_send`/`memory_inbox`/`memory_status` keep
+  reporting the OLD ordinal and a false `WAKE STREAM NOT COVERED` for it, while the
+  session is in fact covered on the new ordinal. Cosmetic to delivery (mail still
+  routes via the project/lane addresses and the watcher covers the live seat) but it
+  mislabels the sender and can send a peer to a stale ordinal. Measured 2026-08-21:
+  after a one-time -8↔-9 oscillation, seat file + fresh heartbeat + watcher all read
+  engram-claude-8 while tool calls read engram-claude-9. Fix: the MCP identity path
+  re-reads the seat file (or invalidates its cache) when the file mtime changes,
+  same as the watcher. Root=bridge identity cache · Found=post-churn live.
+
 - **FAREWELL-2** *(narrowed 2026-08-21 19:50Z: AB-spawned sessions now read
   EXITED via the spawner's death certificate — e8461f5, roster joins LANE-4
   certs; this item is now ONLY about sessions with no spawner to certify.)*
