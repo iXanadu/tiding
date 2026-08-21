@@ -614,6 +614,27 @@ async def _farewell(client, reader_identity: str, project_dir: str | None) -> No
 # out (up to one EXPIRY): that was the whole of the 2026-08-21 restart tax.
 _ACTIVE_CLAIM: "_WatchClaimState | None" = None
 
+# FAREWELL-ON-SIGNAL: what the SIGNAL exit path needs in order to OBSERVE
+# the session before dying. The bridge owns this watcher and SIGTERMs it from
+# `atexit` on its own exit (start_new_session=False — "die with the bridge's
+# group", WATCH-CLAIM-3), which is the commonest way a session ends: the
+# harness closes the bridge's stdin, the bridge exits, the watcher is killed.
+# Before this, that path gasped "killed with the session possibly alive" and
+# never asked — so the session-exit farewell, the ONE observation that turns
+# a corpse into a recorded exit, was dead code on exactly the exit it existed
+# for, and every shut-down seat read `running` for 48h of retention
+# (measured 2026-08-21: owner restarted both sessions, walked the dog an
+# hour, came back to peers still routing around his own dead seats).
+_WATCHED: "tuple[int, str] | None" = None
+_WATCHED_READER_IDENTITY: str | None = None
+_WATCHED_PROJECT_DIR: str | None = None
+# How long the dying watcher waits for a concurrently-exiting session to be
+# positively gone. The harness tears down several MCP servers; the bridge's
+# atexit fires while the harness may still be unwinding — a few seconds, not
+# minutes. Two consecutive positive polls, same as the in-loop path.
+FAREWELL_ON_SIGNAL_WINDOW = 8.0
+FAREWELL_ON_SIGNAL_POLL = 0.5
+
 
 class _WatchClaimState:
     """The watcher's side of one-seat-one-watch (docs/design/watch-claim.md v2).
@@ -848,6 +869,10 @@ async def _run(args) -> int:
     # as a death. None means "no session identified", which stays permanently
     # distinct from "the session is gone": we simply never report a farewell.
     watched = discover_session_process()
+    global _WATCHED, _WATCHED_READER_IDENTITY, _WATCHED_PROJECT_DIR
+    _WATCHED = watched
+    _WATCHED_READER_IDENTITY = reader_identity
+    _WATCHED_PROJECT_DIR = args.project_dir or None
     if watched is None:
         print(
             "inbox-wait: no session process identified — wake still works, "
@@ -1138,6 +1163,63 @@ def _release_after_signal() -> None:
         pass
 
 
+def _farewell_after_signal(
+    window: float | None = None, poll: float | None = None,
+) -> bool:
+    """SIGTERM/SIGINT path: OBSERVE the session before dying, and farewell if
+    it is positively gone. Returns True when a farewell was sent (the session
+    died — there is nobody to gasp at), False otherwise (gasp as before).
+
+    Bounded, synchronous, fresh loop — same constraints as
+    _release_after_signal. Requires TWO consecutive positive observations
+    (process_is_gone is already fail-safe: it never answers "gone" when it
+    could not ask); a false farewell is the expensive direction, and a few
+    hundred ms of latency on a death report costs nothing. No session
+    identified (watched is None) stays permanently distinct from "gone":
+    never a farewell.
+    """
+    watched = _WATCHED
+    ident = _WATCHED_READER_IDENTITY
+    if watched is None or not ident:
+        return False
+    window = FAREWELL_ON_SIGNAL_WINDOW if window is None else window
+    poll = FAREWELL_ON_SIGNAL_POLL if poll is None else poll
+    deadline = time.monotonic() + window
+    gone_seen = 0
+    while True:
+        try:
+            gone = process_is_gone(*watched)
+        except Exception:
+            gone = False
+        gone_seen = gone_seen + 1 if gone else 0
+        if gone_seen >= 2:
+            break
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+    async def _go():
+        client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
+        try:
+            await asyncio.wait_for(
+                _farewell(client, ident, _WATCHED_PROJECT_DIR), 3.0)
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
+    try:
+        asyncio.run(_go())
+    except BaseException:
+        return False
+    print(
+        "inbox-wait: the watched session exited while this watcher was being "
+        "stopped — farewell recorded (the seat reads as exited, not silent)",
+        file=sys.stderr, flush=True,
+    )
+    return True
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="engram-inbox-wait",
@@ -1182,12 +1264,17 @@ def main() -> None:
         sys.exit(asyncio.run(_run(args)))
     except KeyboardInterrupt:
         _release_after_signal()
-        _dying_gasp("interrupted (SIGINT) with the session possibly alive")
+        # Observe before announcing: if the session is gone, this is its
+        # exit, not a deafening — farewell, and no gasp (WATCH-2: nobody
+        # left to tell). Only a session that is still alive gets the gasp.
+        if not _farewell_after_signal():
+            _dying_gasp("interrupted (SIGINT) with the session possibly alive")
         sys.exit(0)
     except SystemExit as e:
         if e.code == 143:
             _release_after_signal()
-            _dying_gasp("killed (SIGTERM) with the session possibly alive")
+            if not _farewell_after_signal():
+                _dying_gasp("killed (SIGTERM) with the session possibly alive")
         raise
 
 

@@ -938,6 +938,11 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                     hrs = info["age_seconds"] / 3600.0
                     age = f"{hrs:.1f}h" if hrs >= 1 else f"{int(info['age_seconds'])}s"
                     facts = f"last heartbeat {age} ago"
+                    # A project address is judged by its freshest listener;
+                    # name it so the reader knows WHOSE silence this is.
+                    listener = info.get("listener")
+                    if listener and listener != addr:
+                        facts = f"freshest listener {listener}: " + facts
                     if info["watcher_alive"] is False:
                         facts += ", watcher silent"
                     # The one fact here that needs no window to elapse. A seat

@@ -2262,29 +2262,57 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
     keys = [f"presence/{a}" for a in addresses]
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Two kinds of row can speak for an address. A SEAT address
+        # (`proj-claude-5`) has exactly one: `presence/<addr>`. A PROJECT
+        # address (`proj`) is a group address — every seat on the project
+        # listens on it — so every presence row whose user_id is that
+        # project speaks for it. Before 2026-08-21 only the first kind was
+        # consulted, and a project whose bare name had ONCE been used as a
+        # seat identity (legacy / env-set seats did this) was judged by that
+        # one corpse: `engram` read "239h dead, do not expect a reply" on
+        # every cross-project reply while a live seat was listening on it.
         rows = await conn.fetch(
             """
             SELECT key, user_id, metadata, last_used_at
             FROM memories
-            WHERE namespace = $1 AND scope = $2 AND key = ANY($3::text[])
+            WHERE namespace = $1 AND scope = $2
+              AND (key = ANY($3::text[]) OR user_id = ANY($4::text[]))
             """,
-            PRESENCE_NAMESPACE, PRESENCE_SCOPE, keys,
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, keys, addresses,
         )
     now = datetime.now(timezone.utc)
-    out: dict[str, dict] = {}
+    # Freshest listener per address wins. `state=done` rows are retired
+    # sessions and never speak for a group address (a seat address is still
+    # judged by its own row, done or not — that is what was asked about).
+    best: dict[str, tuple[datetime, dict, str]] = {}
     for r in rows:
         md = r["metadata"] or {}
         if isinstance(md, str):
             md = json.loads(md)
         ident = r["key"].removeprefix("presence/")
         last_seen = r["last_used_at"] or now
+        speaks_for = []
+        if ident in addresses:
+            speaks_for.append(ident)
+        proj = (r["user_id"] or "").lower()
+        if proj in addresses and proj != ident and md.get("state") != "done":
+            speaks_for.append(proj)
+        for addr in speaks_for:
+            cur = best.get(addr)
+            if cur is None or last_seen > cur[0]:
+                best[addr] = (last_seen, md, ident)
+    out: dict[str, dict] = {}
+    for addr, (last_seen, md, ident) in best.items():
         age = (now - last_seen).total_seconds()
         watcher_alive, _ = _watcher_state(md, now)
         # Facts only, same discipline as the roster. The caller composing a
         # warning gets watcher_alive and age and decides what they mean — the
         # store attests, it does not judge. (`state` was dropped here too on
         # 2026-08-01: no caller read it, and it only ever said "running".)
-        out[ident] = {
+        out[addr] = {
+            # Which row spoke: the address itself, or (for a project
+            # address) its freshest listening seat. Same as addr for seats.
+            "listener": ident,
             "age_seconds": round(age, 1),
             "is_stale": age >= PRESENCE_STALE_AFTER_SECONDS,
             "watcher_alive": watcher_alive,

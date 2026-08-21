@@ -352,3 +352,112 @@ async def test_a_farewell_never_invents_a_session(client, db_pool):
         row = await conn.fetchval(
             "SELECT count(*) FROM memories WHERE key = 'presence/neverwas'")
     assert row == 0, "a farewell conjured a session in order to bury it"
+
+
+@_pytest.mark.asyncio
+async def test_project_address_is_judged_by_its_freshest_listener(
+        client, db_pool):
+    """A PROJECT address is a group address — every seat on the project
+    listens on it. Liveness for it must come from the freshest LISTENER, not
+    from a row that merely shares its name.
+
+    Measured 2026-08-21: `presence/engram` was a 10-day-old legacy seat (a
+    Cursor session that had used the bare project name as its identity).
+    Every cross-project reply into engram printed "last heartbeat 239.2h ago,
+    watcher silent — do not expect a reply" while engram-claude-5 was live on
+    that very address. Peers started doubting delivery into a project whose
+    owner-delegate was sitting right there.
+    """
+    proj = "freshlistproj"
+    legacy, member = proj, f"{proj}-claude-5"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id=$1", proj)
+
+    # The corpse that shares the project's name: 10 days silent.
+    await client.post("/memory/presence", json={
+        "identity": legacy, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": legacy, "project": proj, "state": "running", "watcher": True})
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '240 hours')::text), true),
+                last_used_at = NOW() - interval '240 hours'
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{legacy}")
+
+    # Nobody live yet: the corpse IS the freshest thing on the address, so
+    # the warning is honest.
+    r = await client.post("/memory/send", json={
+        "to": proj, "from_": "peerproj-claude-2", "intent": "action",
+        "subject": "anyone home?", "body": "b"})
+    assert r.status_code == 200
+    warns = r.json().get("recipient_warnings") or []
+    assert warns and proj in warns[0] and "last heartbeat" in warns[0], warns
+
+    # A live seat on the project: the group address is ALIVE. No warning,
+    # whatever the legacy row says.
+    await client.post("/memory/presence", json={
+        "identity": member, "project": proj, "state": "running"})
+    await client.post("/memory/presence", json={
+        "identity": member, "project": proj, "state": "running", "watcher": True})
+    r = await client.post("/memory/send", json={
+        "to": proj, "from_": "peerproj-claude-2", "intent": "action",
+        "subject": "anyone home?", "body": "b"})
+    assert r.status_code == 200
+    assert not r.json().get("recipient_warnings"), (
+        "a project address with a LIVE listener was reported dead because a "
+        "legacy row shares its name — the store judged the group by a corpse"
+    )
+
+    # A seat address with no row of its own stays silent (absent is not dead)
+    # — project membership never bleeds into a SEAT address's verdict.
+    r = await client.post("/memory/send", json={
+        "to": f"{proj}-claude-9", "from_": "x",
+        "intent": "action", "subject": "s", "body": "b"})
+    warns = r.json().get("recipient_warnings") or []
+    assert not any("last heartbeat" in w for w in warns), (
+        "absent is not dead", warns)  # (a typo advisory is a different thing)
+
+    # Live seat goes quiet for 3h, legacy still 10 days: the warning is back,
+    # and it names the FRESHEST listener, not the corpse.
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memories
+            SET metadata = jsonb_set(metadata, '{watcher_last_seen}',
+                    to_jsonb((NOW() - interval '3 hours')::text), true),
+                last_used_at = NOW() - interval '3 hours'
+            WHERE scope='presence' AND user_id=$1 AND key=$2
+            """,
+            proj, f"presence/{member}")
+    r = await client.post("/memory/send", json={
+        "to": proj, "from_": "peerproj-claude-2", "intent": "action",
+        "subject": "anyone home?", "body": "b"})
+    warns = r.json().get("recipient_warnings") or []
+    assert warns and f"freshest listener {member}" in warns[0], warns
+    assert "3.0h" in warns[0], warns  # the member's age, not the corpse's
+
+    # A retired (state=done) seat never speaks for the group.
+    await client.post("/memory/presence", json={
+        "identity": f"{proj}-probe", "project": proj, "state": "done"})
+    r = await client.post("/memory/send", json={
+        "to": proj, "from_": "peerproj-claude-2", "intent": "action",
+        "subject": "anyone home?", "body": "b"})
+    warns = r.json().get("recipient_warnings") or []
+    assert warns and f"freshest listener {member}" in warns[0], warns
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='presence' AND user_id=$1", proj)
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id=$1", proj)
+        await conn.execute(
+            "DELETE FROM memories WHERE scope='inbox' AND user_id=$1",
+            f"{proj}-claude-9")
