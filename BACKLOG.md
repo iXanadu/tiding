@@ -421,6 +421,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   attach, kill the reader, send a DM, attach again, assert the DM is the
   first line the new reader sees (fixed in the watcher 2026-08-21 and
   proven by hand against the real store — the acceptance row should own it).
+  (f) *(observed 2026-08-21 13:08Z)* COVERED IS MEASURED AT WRITE TIME ONLY.
+  The owner killed this session's cat-loop reader at 13:04:02Z;
+  `memory_status` still said `COVERED (reader attached, last beat 13:07:31)`
+  at 13:08Z — the watcher beats `covered` without re-verifying a reader is
+  on the FIFO, so the bridge banner stays silent until the next wake hits
+  EPIPE. Mail is not lost (EPIPE → wait → re-send), but the session is not
+  TOLD it is uncovered between wakes. Fix shape: per beat, probe the FIFO
+  with `open(O_WRONLY|O_NONBLOCK)` — succeeds only when a reader holds it,
+  ENXIO otherwise — and report `expired` on ENXIO. `class:absence-vs-failure`.
 
 - **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
   48h) violate the room's own @mention rule — each forces a full model
@@ -781,12 +790,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocked-external
 
-- **HARNESS-FREEZE-1** Claude Code (2.1.238) froze a session's input queue
-  for 6.5 minutes with NO tool call in flight — measured 2026-08-21
-  11:50:17Z→11:56:52Z on engram-claude-2 (owner typed at 11:50; the
-  harness enqueued and never dequeued until the owner killed it). In the
-  same window the session's Monitor cat-loop child died (sibling session's
-  identical loop survived). Engram's side is fixed (watcher survives
-  consumer loss; bridge banners the uncovered state) but the freeze itself
-  is the harness's: recurrence is the signal to escalate upstream with the
-  transcript (queue-operation enqueue/dequeue gap is the evidence shape).
+- **HARNESS-FREEZE-1** *(RE-DIAGNOSED 2026-08-21 13:10Z — not a harness
+  bug. Both AB-spawned Claude sessions wedged 12:52Z→13:07Z; the pane was
+  sitting on Claude Code 2.1.238's modal `bridge-disconnect-dialog`
+  ("Remote Control … ❯ Continue · Esc to continue"). Cause: RC now
+  auto-connects at launch (`[remote-bridge] v2 transport connected` 1s after
+  start), and the spawner then blind-fires `/remote-control`, whose
+  already-connected branch became a modal in this build; a headless pane
+  never presses Esc, so the REPL enqueues everything and dequeues nothing.
+  The 11:50Z freeze on -2 was the same shape. Killing the Monitor did not
+  free it; a human (or `tmux send-keys Escape`) did. Fix is the spawner's
+  (skip the fire when the debug file shows the transport connected; watchdog
+  dismisses the modal) — sent to agentbeast 2026-08-21 13:14Z.)* Stays here
+  only until AB confirms the launcher guard is deployed; then delete.
+  Evidence shape for any recurrence: transcript `queue-operation` enqueue
+  with no dequeue + `tmux capture-pane` showing "Esc to continue".
