@@ -484,21 +484,21 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **FAREWELL-2** FAREWELL-1 (ed5709b) records a farewell only on two paths: the
-  watcher catches SIGTERM/SIGINT, or its poll loop observes the session's pid
-  gone. The owner's stop path delivers neither (terminal kill → SIGHUP → the
-  bridge's child group dies with it). Measured 2026-08-21 on the first real
-  owner-initiated stop, two seats across two projects: `farewell_at=None` on
-  both, no gasp line and no farewell line in either watcher log. Working as
-  designed; the design does not cover how these sessions actually die — the
-  code's own comment names SIGKILL as uncatchable. `class:absence-vs-failure`
-  (a labelled absence, not a regression). The roster now renders an observed
-  exit ONLY when one was observed (b0216e2), so the gap is honest, not hidden.
-  Decide: (a) leave as-is, labelled; (b) make the observer survive its
-  session's killer (own process group + orphan-detect — more machinery on a
-  property engram's own docs call unobservable); (c) server-side: infer an
-  exit from a lapsed watcher beat — which is the retire-vs-hide question the
-  owner already has open. Root=watcher design · Found=live restart proof ·
+- **FAREWELL-2** *(narrowed 2026-08-21 19:50Z: AB-spawned sessions now read
+  EXITED via the spawner's death certificate — e8461f5, roster joins LANE-4
+  certs; this item is now ONLY about sessions with no spawner to certify.)*
+  A HAND-STARTED session (terminal, no AgentBeast) that is killed still reads
+  "watcher gone quiet", not EXITED: FAREWELL-1's observation half fires only
+  on SIGTERM/SIGINT or a pid-gone poll, and the common stop path delivers
+  neither (measured 2026-08-21 on the first real owner stop: `farewell_at=None`,
+  no gasp line, no farewell line). Working as designed; the design does not
+  cover how these sessions die — the code's own comment names SIGKILL as
+  uncatchable. `class:absence-vs-failure`. Honest on the surface: the roster
+  renders an exit ONLY when one was observed or certified. Decide: (a) leave
+  labelled; (b) make the observer survive its session's killer (own process
+  group + orphan-detect — more machinery on a property engram's docs call
+  unobservable); (c) infer an exit from a lapsed watcher beat (retire-vs-hide,
+  owner's open question). Root=watcher design · Found=live restart proof ·
   Related: SEAT-13. Story: `finding/farewell-1-cannot-fire-on-sigkill-2026-08-21`.
 
 - **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
