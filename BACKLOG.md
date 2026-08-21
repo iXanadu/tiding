@@ -799,18 +799,3 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocked-external
 
-- **HARNESS-FREEZE-1** *(RE-DIAGNOSED 2026-08-21 13:10Z — not a harness
-  bug. Both AB-spawned Claude sessions wedged 12:52Z→13:07Z; the pane was
-  sitting on Claude Code 2.1.238's modal `bridge-disconnect-dialog`
-  ("Remote Control … ❯ Continue · Esc to continue"). Cause: RC now
-  auto-connects at launch (`[remote-bridge] v2 transport connected` 1s after
-  start), and the spawner then blind-fires `/remote-control`, whose
-  already-connected branch became a modal in this build; a headless pane
-  never presses Esc, so the REPL enqueues everything and dequeues nothing.
-  The 11:50Z freeze on -2 was the same shape. Killing the Monitor did not
-  free it; a human (or `tmux send-keys Escape`) did. Fix is the spawner's
-  (skip the fire when the debug file shows the transport connected; watchdog
-  dismisses the modal) — sent to agentbeast 2026-08-21 13:14Z.)* Stays here
-  only until AB confirms the launcher guard is deployed; then delete.
-  Evidence shape for any recurrence: transcript `queue-operation` enqueue
-  with no dequeue + `tmux capture-pane` showing "Esc to continue".
