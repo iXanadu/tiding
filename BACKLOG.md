@@ -397,6 +397,29 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (d) AB armer retirement (their step 3) is PER-SEAT, only after that
   seat's matrix row — including the ordinal-seat-DM leg — passes. Gate is
   agreed with the reviewer; hold them to it.
+  (e) *(added 2026-08-21 after the owner found the engram seat `covered`
+  and deaf)* THE GATE MUST RUN THE HINTED CONSUMER. The acceptance rows
+  read the FIFO with a Python O_NONBLOCK reader; the command the hint hands
+  agents was never exercised, and it was `tail -F` — which buffers a FIFO
+  until writer-EOF. Fixed to a cat-loop (7ddb0f3, bridge unit test runs the
+  hinted command for real); the ACCEPTANCE row still does not — add a leg
+  that spawns the exact `memory_status` command, sends a DM, and asserts
+  the line is EMITTED, not merely consumed (`class:absence-vs-failure`:
+  covered-but-deaf). Prose (a) for claude was CORRECTED, not retired:
+  startup skill 4b + AGENTS.md auto-watch now say memory_status-first,
+  rolled to all five boxes 2026-08-21 02:50Z.
+
+- **WATCH-CLAIM-3** "The child dies with the bridge, which dies with the
+  session" is FALSE as shipped — measured 2026-08-21 02:52Z: three
+  bridge-spawned `--claim` watchers with ppid 1 (one from a real dead AB
+  bridge, two from `acceptance/test_a7_a9_release_vs_crash` 7.5h earlier —
+  so the harness's "zero residue" is also false). All three sat blocked at
+  open-for-write with no claim (harmless until a consumer attaches to a
+  same-named FIFO, at which point the corpse and the live watcher both
+  unblock and race for the seat). macOS has no PDEATHSIG; lineage alone
+  does not reap. Fix: the watcher exits when `getppid()` becomes 1 (it
+  already polls; add the check), and the acceptance teardown kills what it
+  spawned. Reaped by hand tonight.
 
 - **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
   48h) violate the room's own @mention rule — each forces a full model
@@ -415,9 +438,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 ## Needs-decision
 
 - **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
-  bridge-owned watcher dies WITH the bridge by process lineage, its claim
-  expires ~150s after its beats stop, and one-watch-per-seat is store-
-  enforced. The zombie-beat class this item describes cannot form on the
+  bridge-owned watcher's claim expires ~150s after its beats stop and
+  one-watch-per-seat is store-enforced; "dies WITH the bridge by lineage"
+  was the claim, falsified 2026-08-21 — see WATCH-CLAIM-3 — though an
+  orphan blocked at open holds no claim and beats nothing. The zombie-beat class this item describes cannot form on the
   claim path; it persists only for legacy bare watchers until prose
   retirement. Re-triage after the per-harness matrix rows run.)*
   *(evidence add 2026-08-18: the bare-watcher gap measured on a
