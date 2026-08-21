@@ -1949,6 +1949,15 @@ def _age_line(m: dict) -> str:
     return f"\nSent: {stamp} UTC ({rel}){warn}"
 
 
+def _short_ts(ts) -> str:
+    """ISO timestamp → 'YYYY-MM-DDTHH:MM:SSZ' for a roster line; anything
+    unrecognised is printed as-is (never hide the fact because of its shape)."""
+    t = str(ts)
+    if len(t) >= 19 and t[10:11] == "T":
+        return t[:19] + "Z"
+    return t
+
+
 @mcp.tool()
 async def memory_roster(
     project: str = "",
@@ -2000,6 +2009,7 @@ async def memory_roster(
     lines = []
     collisions = []
     deaf = []
+    exited = []
     for e in entries:
         stale = " ⚠️ STALE" if e.get("is_stale") else ""
         age = int(e.get("age_seconds") or 0)
@@ -2017,8 +2027,22 @@ async def memory_roster(
         # verdict wearing an observation's clothes: the beat is a fact, "is
         # listening" is an inference from it, and printing the inference is how
         # a reader stops checking the timestamp beside it.
+        #
+        # FAREWELL-1 / ROSTER-FAREWELL-RENDER: a recorded farewell is the ONE
+        # roster fact that is evidence of an exit rather than of silence — a
+        # watcher OBSERVED the session end. The server has returned it since
+        # ed5709b; this renderer never printed it, so a shut-down seat read
+        # "watcher gone quiet" exactly like a busy one (measured 2026-08-21 on
+        # two seats across two projects). It outranks the three beat states
+        # and never lands in the "no watcher beat" advisory below — that text
+        # says "a session can be doing real work", which is the one thing an
+        # observed exit rules out.
         wa = e.get("watcher_alive")
-        if wa is True:
+        fa = e.get("farewell_at")
+        if fa:
+            ear = f" · watcher OBSERVED the session exit at {_short_ts(fa)}"
+            exited.append(e["identity"])
+        elif wa is True:
             ear = " · watcher beat recently"
         elif wa is False:
             ear = " · watcher gone quiet"
@@ -2043,6 +2067,13 @@ async def memory_roster(
             f"report that the session is gone: a session can be doing real "
             f"work with a dead watcher. Unreachable is not the same as absent, "
             f"and neither is a death — ask whatever spawned it if you need one."
+        )
+    if exited:
+        head += (
+            f"\n\n☠ EXITED (observed): {', '.join(exited)} — a watcher saw the "
+            f"session end; this is not silence. Mail to the address still "
+            f"queues, but nothing reads it until a new session takes the seat. "
+            f"Do not hand work to these chairs."
         )
     if collisions:
         head += (
