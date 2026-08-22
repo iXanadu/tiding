@@ -281,3 +281,63 @@ async def test_steady_holder_beats_log_nothing(capsys):
     err = capsys.readouterr().err
     assert "pausing emission" not in err
     assert "emission resumed" not in err  # no false "recovered" without a pause
+
+
+@pytest.mark.asyncio
+async def test_watcher_sends_the_bridges_seat_nonce_so_the_claim_follows_the_seat(monkeypatch):
+    """WATCH-CLAIM-4(b): the bridge hands its spawned watcher ENGRAM_SEAT_NONCE
+    (the seat register's per-process nonce); the watcher sends it as
+    seat_nonce on every claim. Absent → None (hand-launched watcher, old
+    rules)."""
+    calls = []
+
+    class FakeClient:
+        async def watch_claim(self, **kw):
+            calls.append(kw)
+            return {"verdict": "granted", "stolen": True,
+                    "displaced_reason": "claim-follows-seat"}
+
+    monkeypatch.setenv("ENGRAM_SEAT_NONCE", "abc123nonce")
+    st = _WatchClaimState("proj-claude-2")
+    assert st.seat_nonce == "abc123nonce"
+    assert await st.acquire(FakeClient(), "/tmp", ["proj-claude-2"]) is None
+    assert calls and calls[-1]["seat_nonce"] == "abc123nonce"
+
+    monkeypatch.delenv("ENGRAM_SEAT_NONCE", raising=False)
+    st2 = _WatchClaimState("proj-claude-2")
+    assert st2.seat_nonce is None
+    await st2.acquire(FakeClient(), "/tmp", ["proj-claude-2"])
+    assert calls[-1]["seat_nonce"] is None
+
+
+def test_spawned_watcher_env_carries_the_bridge_seat_nonce(monkeypatch, tmp_path):
+    """The supervisor's Popen passes ENGRAM_SEAT_NONCE = this bridge's
+    _SESSION_NONCE (the value seat_claim registers as the occupant's
+    per-process identity), on top of the inherited environment."""
+    import subprocess
+    import time as _t
+    import engram_mcp.server as srv
+    captured = {}
+
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, **kw):
+        if not (isinstance(cmd, list) and "engram_mcp.inbox_wait" in cmd):
+            return real_popen(cmd, **kw)  # anything else (ps probes) runs for real
+        captured["cmd"] = cmd
+        captured["env"] = kw.get("env")
+        raise RuntimeError("stop-after-capture")  # spawn "fails" → supervisor backs off
+
+    def fake_sleep(_):
+        raise KeyboardInterrupt  # BaseException: escapes the supervisor's except Exception
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(_t, "sleep", fake_sleep)
+    monkeypatch.setattr(srv, "_wake_state_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(srv, "resolve_session_key", lambda: "testkey-spawn-env")
+    with pytest.raises(KeyboardInterrupt):
+        srv._watcher_supervisor_thread(str(tmp_path))
+    assert captured["env"] is not None, "Popen was not given an env"
+    assert captured["env"]["ENGRAM_SEAT_NONCE"] == srv._SESSION_NONCE
+    assert captured["env"]["PATH"] == os.environ["PATH"]  # inherited, not replaced
+    assert "--claim" in captured["cmd"]

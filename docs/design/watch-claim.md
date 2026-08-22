@@ -331,3 +331,45 @@ Owner invariant recorded the same hour (`decision/hand-launched-agents-are-
 first-class-2026-08-21`): nothing in this layer may prevent a hand-started
 agent — any provider, no AgentBeast involved — from getting a mailbox, a
 watcher, and mail with every other running agent.
+
+
+## Claim follows the seat — WATCH-CLAIM-4(b) (2026-08-22)
+
+**Measured hole.** A claim is keyed by seat NAME, and names are re-granted.
+A successor on a re-granted ordinal — or the same session's bridge
+restarted — inherited the corpse's claim for as long as the corpse kept
+beating: `held`, retry on a timer, deaf for up to one EXPIRY (~150s).
+2026-08-21 14:01Z: predecessor's last beat 13:58:40Z, successor claimed
+14:01:06Z, covered 14:04:33Z. Release-on-exit (shipped the same day) closes
+the graceful case; a hard-killed watcher still left the ghost.
+
+**Authority.** The seat REGISTER says who occupies a name. Its row carries
+the occupant's per-process `session_nonce`, and SEAT-9 newest-wins
+refreshes it on every re-claim — same key restarted, or a different session
+granted the name. A watch is legitimate iff it serves the register's current
+occupant.
+
+**Protocol change (additive).** The bridge hands the watcher it spawns its
+own seat nonce (`ENGRAM_SEAT_NONCE` in the child's env); the watcher sends
+it as `seat_nonce` on `/session/watch/claim`; the store records it on the
+watch row. In the steal CAS a third branch joins expiry and mute:
+
+    claimant.seat_nonce = seat_row.session_nonce      -- claimant IS the occupant
+    AND incumbent.seat_nonce IS DISTINCT FROM it       -- incumbent is not
+
+→ granted, `stolen: true`, `displaced_reason: "claim-follows-seat"`, beats
+or no beats. The corpse's next beat reads `displaced` and it exits (the
+existing contract). Catch-up (P4) is unchanged: the successor emits from the
+corpse's `fetched_through`.
+
+**What does not change.** A claimant with no nonce, or a nonce the register
+does not recognize (hand-launched, AB-armed, pre-sweep bridge), falls
+through to the expiry / mute rules exactly as before — nothing that held a
+claim yesterday loses it to this branch. A claimant that IS the occupant can
+never be `held` by a stale watch; it can still be `held` by its own live
+watcher (same nonce), which is the one case that is correct.
+
+**Same-key restart.** Covered: the restarted bridge mints a new process nonce,
+re-claims the seat (newest-wins rewrites the row's nonce), spawns a watcher
+carrying it; the old watcher's row carries the old nonce → displaced on the
+first claim. Zero deafness beyond the claim round-trip.

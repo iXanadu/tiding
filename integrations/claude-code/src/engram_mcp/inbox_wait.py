@@ -657,6 +657,12 @@ class _WatchClaimState:
         import secrets
         self.seat = seat
         self.nonce = secrets.token_hex(16)   # random, never pid (ghost class)
+        # WATCH-CLAIM-4(b): the seat register's per-process nonce of the
+        # bridge that spawned us (ENGRAM_SEAT_NONCE, set at spawn). With it
+        # the store can tell the OCCUPANT's watcher from a corpse's and let
+        # the claim follow the seat at once instead of waiting out EXPIRY.
+        # Absent on a hand-launched watcher: the old rules apply unchanged.
+        self.seat_nonce = (os.environ.get("ENGRAM_SEAT_NONCE") or "").strip() or None
         self.held = False
         self.unheld_mode = False             # K3: running without a claim
         self._emission_paused = False        # OBS: True between a lost beat and
@@ -696,6 +702,7 @@ class _WatchClaimState:
                 r = await client.watch_claim(
                     seat=self.seat, nonce=self.nonce, armed_by="bridge",
                     project_dir=project_dir or "", listen_set=listen_set,
+                    seat_nonce=self.seat_nonce,
                 )
             except Exception as e:
                 self.unheld_mode = True
@@ -710,6 +717,10 @@ class _WatchClaimState:
                 self.held = True
                 global _ACTIVE_CLAIM
                 _ACTIVE_CLAIM = self
+                if r.get("stolen"):
+                    print(f"inbox-wait: watch claim GRANTED by displacing the "
+                          f"incumbent ({r.get('displaced_reason') or 'stale'})",
+                          file=sys.stderr, flush=True)
                 # P4: a STOLEN grant carries the corpse's delivery watermark.
                 # Mail after it may never have been emitted by anyone — the
                 # successor's first poll must EMIT that gap, not seed it.

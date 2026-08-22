@@ -503,11 +503,15 @@ class MemoryClient:
 
     async def watch_claim(self, seat: str, nonce: str, armed_by: str,
                           project_dir: str, listen_set: list[str],
-                          host: str | None = None) -> dict:
+                          host: str | None = None,
+                          seat_nonce: str | None = None) -> dict:
         return await self._request("POST", "/session/watch/claim", json={
             "seat": seat, "nonce": nonce, "armed_by": armed_by,
             "project_dir": project_dir, "listen_set": listen_set,
             "host": host,
+            # WATCH-CLAIM-4(b): the seat register's nonce for the session
+            # this watcher serves, so the claim follows the seat.
+            "seat_nonce": seat_nonce,
         }, headers=self._provenance_headers(None))
 
     async def watch_beat(self, seat: str, nonce: str,

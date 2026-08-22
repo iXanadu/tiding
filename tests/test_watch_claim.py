@@ -308,3 +308,68 @@ async def test_held_retry_after_tracks_holder_expiry_not_flat(db_pool):
     r_steal = await watch_claim(seat, nb, "bridge", "/tmp/p", _ls(seat))
     assert r_steal["verdict"] == "granted" and r_steal.get("stolen")
 
+
+
+@pytest.mark.asyncio
+async def test_claim_follows_the_seat_occupants_watcher_displaces_a_corpse_at_once(db_pool):
+    """WATCH-CLAIM-4(b): a watch is keyed by seat NAME; the seat REGISTER is
+    the authority on who occupies the name (per-process session_nonce,
+    refreshed on every re-claim). The occupant's watcher — the one carrying
+    the register's CURRENT nonce — displaces an incumbent watch that does not
+    carry it immediately, beats or no beats. A claimant the register does not
+    recognize as the occupant still waits out the old rules."""
+    from server.services.session_registry import seat_claim
+    proj = f"wcfs{uuid.uuid4().hex[:8]}"
+    key = f"wcfs-key-{uuid.uuid4().hex[:8]}"
+    # Incarnation 1 of a session: seat row nonce n1; its watcher claims with it.
+    r1 = await seat_claim(session_key=key, project=proj, provider="claude",
+                          session_nonce="n1-" + uuid.uuid4().hex[:6], host="h")
+    seat = r1["seat"]
+    n1 = r1.get("session_nonce") or None
+    # The register's row is what matters, read it back rather than trust r1's shape.
+    async with db_pool.acquire() as conn:
+        n1 = await conn.fetchval(
+            "SELECT metadata->>'session_nonce' FROM memories WHERE scope='seat' AND key=$1",
+            f"seat/{seat}")
+    assert n1
+    wa = mint_nonce()
+    ra = await watch_claim(seat, wa, "bridge", "/tmp/p", _ls(seat), seat_nonce=n1)
+    assert ra["verdict"] == "granted"
+    await watch_beat(seat, wa)  # the corpse keeps beating (hard-killed bridge, live watcher)
+    try:
+        # A stranger (no nonce / wrong nonce) is still held by a beating holder.
+        rs = await watch_claim(seat, mint_nonce(), "ab", "/tmp/p", _ls(seat))
+        assert rs["verdict"] == "held"
+        rs = await watch_claim(seat, mint_nonce(), "bridge", "/tmp/p", _ls(seat),
+                               seat_nonce="not-the-occupant")
+        assert rs["verdict"] == "held"
+        # Incarnation 2: same session restarted (new process nonce) re-claims the
+        # seat — SEAT-9 newest-wins rewrites the register's nonce.
+        n2 = "n2-" + uuid.uuid4().hex[:6]
+        r2 = await seat_claim(session_key=key, project=proj, provider="claude",
+                              session_nonce=n2, host="h")
+        assert r2["seat"] == seat
+        async with db_pool.acquire() as conn:
+            assert await conn.fetchval(
+                "SELECT metadata->>'session_nonce' FROM memories WHERE scope='seat' AND key=$1",
+                f"seat/{seat}") == n2
+        # Its watcher claims with the register's CURRENT nonce: granted NOW,
+        # over a beating incumbent, with the reason named.
+        wb = mint_nonce()
+        rb = await watch_claim(seat, wb, "bridge", "/tmp/p", _ls(seat), seat_nonce=n2)
+        assert rb["verdict"] == "granted", rb
+        assert rb.get("stolen") is True
+        assert rb.get("displaced_reason") == "claim-follows-seat"
+        # The corpse's next beat reads displaced; the successor holds.
+        assert (await watch_beat(seat, wa))["verdict"] == "displaced"
+        assert (await watch_beat(seat, wb))["verdict"] == "holder"
+        # And the occupant's own live watcher is NOT displaced by a second
+        # claimant carrying the same (correct) nonce — that one is held.
+        rc = await watch_claim(seat, mint_nonce(), "bridge", "/tmp/p", _ls(seat), seat_nonce=n2)
+        assert rc["verdict"] == "held"
+    finally:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM memories WHERE (scope IN ('seat','presence','death','watch','lane-cursor') "
+                "AND (project = $1 OR key = $2 OR user_id = $1))",
+                proj, f"watch/{seat}")

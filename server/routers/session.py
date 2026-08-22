@@ -265,6 +265,10 @@ class WatchClaimRequest(_BM):
     project_dir: str = _F(default="", max_length=4096)
     listen_set: list[str] = _F(default_factory=list, max_length=32)
     host: str | None = _F(default=None, max_length=200)
+    # WATCH-CLAIM-4(b): the seat register's per-process session_nonce of
+    # the session this watcher serves (bridge-spawned watchers get it from
+    # their bridge). Lets the claim follow the seat; optional.
+    seat_nonce: str | None = _F(default=None, max_length=64)
 
 
 class WatchBeatRequest(_BM):
@@ -284,7 +288,7 @@ async def watch_claim_endpoint(req: WatchClaimRequest, request: Request):
         return await _watch_claim(
             seat=req.seat, nonce=req.nonce, armed_by=req.armed_by,
             project_dir=req.project_dir, listen_set=req.listen_set,
-            host=req.host,
+            host=req.host, seat_nonce=req.seat_nonce,
         )
     except Exception:
         logger.exception("watch_claim failed")

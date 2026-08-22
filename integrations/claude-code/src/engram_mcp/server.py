@@ -854,6 +854,12 @@ def _watcher_supervisor_thread(project_dir: str | None) -> None:
                     stdout=subprocess.DEVNULL,  # wakes ride the FIFO, not stdout
                     stderr=logf,
                     start_new_session=False,     # die with the bridge's group
+                    # WATCH-CLAIM-4(b): hand the watcher THIS bridge's seat
+                    # nonce (what seat_claim registers as the occupant's
+                    # per-process identity) so its watch claim follows the
+                    # seat — a corpse's watch on a re-granted name is
+                    # displaced at once instead of waited out.
+                    env={**os.environ, "ENGRAM_SEAT_NONCE": _SESSION_NONCE},
                 )
             _WATCHER_SUP["proc"] = proc
             while proc.poll() is None:

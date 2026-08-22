@@ -77,7 +77,8 @@ def mint_nonce() -> str:
 
 
 def _row_meta(seat: str, nonce: str, armed_by: str, project_dir: str,
-              listen_set: list[str], host: str | None) -> dict:
+              listen_set: list[str], host: str | None,
+              seat_nonce: str | None = None) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
         "kind": "watch",
@@ -87,6 +88,10 @@ def _row_meta(seat: str, nonce: str, armed_by: str, project_dir: str,
         "project_dir": project_dir,    # F10/P2: the tree this watcher actually polls for
         "listen_set": listen_set,      # F10/P2: what it actually wakes on
         "host": host,
+        # WATCH-CLAIM-4(b): the seat register's per-process nonce of the
+        # session this watcher serves (the bridge hands it to the watcher it
+        # spawns). Lets the claim FOLLOW THE SEAT — see watch_claim.
+        "seat_nonce": seat_nonce,
         "claimed_at": now,
         "last_beat": now,
     }
@@ -99,6 +104,7 @@ async def watch_claim(
     project_dir: str,
     listen_set: list[str],
     host: str | None = None,
+    seat_nonce: str | None = None,
 ) -> dict:
     """Claim the watch for ``seat``. Returns a verdict dict, never raises
     for protocol outcomes.
@@ -112,6 +118,20 @@ async def watch_claim(
                            claiming for. You would hold coverage for an
                            address you cannot hear (F10). Fix the listen set;
                            do not retry as-is.
+
+    WATCH-CLAIM-4(b) — THE CLAIM FOLLOWS THE SEAT. A claim is keyed by seat
+    NAME, and names are re-granted: a successor on a re-granted ordinal, or
+    the same session's bridge restarted, inherited the corpse's claim for as
+    long as the corpse kept beating (≤ EXPIRY, ~150s of deafness per
+    restart; measured 2026-08-21 14:01Z). The seat REGISTER is the authority
+    on who occupies a name: its row carries the occupant's per-process
+    ``session_nonce`` (SEAT-9 newest-wins refreshes it on every re-claim).
+    So a claimant that presents the seat's CURRENT nonce is the occupant's
+    watcher, and any incumbent watch that does not carry that nonce serves a
+    process the register no longer seats — stealable at once, beats or no
+    beats. A claimant whose nonce does not match the register (older
+    watcher, hand-launched, AB-armed) falls through to the expiry / mute
+    rules unchanged, so nothing that worked before loses its claim here.
     """
     seat = (seat or "").strip().lower()
     if not seat:
@@ -129,7 +149,9 @@ async def watch_claim(
             "listen_set": normalized,
         }
 
-    meta = _row_meta(seat, nonce, armed_by, project_dir, normalized, host)
+    seat_nonce = (seat_nonce or "").strip() or None
+    meta = _row_meta(seat, nonce, armed_by, project_dir, normalized, host,
+                     seat_nonce)
     key = f"watch/{seat}"
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -182,6 +204,17 @@ async def watch_claim(
               AND (
                 (w.metadata->>'last_beat')::timestamptz
                     < NOW() - make_interval(secs => $6)
+                -- WATCH-CLAIM-4(b) claim-follows-seat: the claimant IS the
+                -- register's current occupant (its nonce matches the seat
+                -- row) and the incumbent watch does not carry that nonce.
+                OR ($9::text IS NOT NULL
+                    AND w.metadata->>'seat_nonce' IS DISTINCT FROM $9::text
+                    AND EXISTS (
+                      SELECT 1 FROM memories s
+                      WHERE s.namespace = $1 AND s.scope = 'seat'
+                        AND s.user_id = 'global'
+                        AND s.key = 'seat/' || $10::text
+                        AND s.metadata->>'session_nonce' = $9::text))
                 OR EXISTS (
                   SELECT 1 FROM memories m
                   WHERE m.namespace = $1 AND m.scope = 'inbox'
@@ -199,10 +232,18 @@ async def watch_claim(
             """,
             WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, json.dumps(meta),
             WATCH_EXPIRY_SECONDS, MUTE_GRACE_SECONDS, MUTE_LOOKBACK_SECONDS,
+            seat_nonce, seat,
         )
         if stole:
             return {
                 "verdict": "granted", "seat": seat, "stolen": True,
+                # Why the incumbent lost, for the log line: the register
+                # says the claimant is the occupant and the incumbent was
+                # not (claim-follows-seat), vs. it simply went silent/mute.
+                "displaced_reason": (
+                    "claim-follows-seat"
+                    if seat_nonce and prior_md.get("seat_nonce") != seat_nonce
+                    else "expired-or-mute"),
                 "expiry_seconds": WATCH_EXPIRY_SECONDS,
                 # P4: gap mail must never depend on a side path reaching
                 # back. The successor catches up from what the corpse

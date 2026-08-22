@@ -398,26 +398,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   with `open(O_WRONLY|O_NONBLOCK)` — succeeds only when a reader holds it,
   ENXIO otherwise — and report `expired` on ENXIO. `class:absence-vs-failure`.
 
-- **WATCH-CLAIM-4** A successor's watch claim that lands seconds BEFORE
-  the predecessor's claim expires waits the FULL window. Observed
-  2026-08-21 14:01Z: predecessor watcher's last beat ~13:58:40Z; successor
-  (same re-granted seat name) claimed at ~14:01:06Z → `held` → server said
-  `retry_after_seconds: 150` flat → successor uncovered until 14:04:33Z,
-  while `watch_status` read `expired` for the same row from 14:01:14Z on
-  (claim and status disagree for the whole window). SHIPPED 2026-08-21:
-  flat-retry half (da1d5f9, `retry_after_seconds` = time until stealable)
-  and release-on-exit (the dying watcher never RELEASED its claim — not on
-  session-death, not on SIGTERM — so every restart left a ghost the
-  successor waited out; now released on every exit path, signal paths on a
-  fresh loop; lands per session at the next bridge start). REMAINING — DESIGN: a claim is keyed by seat NAME only, so a re-granted seat
-  ordinal inherits a corpse's claim as long as the corpse beats. The seat
-  register is the authority — a watch whose holder's seat-session is no
-  longer the seat's occupant should be displaceable at once
-  (claim-follows-seat). Cost today: every successor on a re-granted name
-  is deaf for up to one EXPIRY, and agents then block their own turn
-  waiting for it (startup skill now forbids that; AB's skill needs the
-  same line). `class:absence-vs-failure` (covered-late reads as deaf).
-
 - **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
   48h) violate the room's own @mention rule — each forces a full model
   turn whose correct output is "not for me" (~70 wasted turns/day, worse
