@@ -659,10 +659,12 @@ async def _observe_exit_then_farewell(
 _ACTIVE_CLAIM: "_WatchClaimState | None" = None
 
 # FAREWELL-ON-SIGNAL: what the SIGNAL exit path needs in order to OBSERVE
-# the session before dying. The bridge owns this watcher and SIGTERMs it from
-# `atexit` on its own exit (start_new_session=False — "die with the bridge's
-# group", WATCH-CLAIM-3), which is the commonest way a session ends: the
-# harness closes the bridge's stdin, the bridge exits, the watcher is killed.
+# the session before dying. The bridge owns this watcher and SIGTERMs it BY
+# PID from `atexit` on its own exit, which is the commonest way a session
+# ends: the harness closes the bridge's stdin, the bridge exits, the watcher
+# is terminated. (Since FAREWELL-2, 2026-08-22, the watcher runs in its OWN
+# session — start_new_session=True — so a group-directed force-quit no longer
+# takes it down first; that case arrives as the orphan path in _run instead.)
 # Before this, that path gasped "killed with the session possibly alive" and
 # never asked — so the session-exit farewell, the ONE observation that turns
 # a corpse into a recorded exit, was dead code on exactly the exit it existed
