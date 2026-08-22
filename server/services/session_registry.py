@@ -1005,6 +1005,18 @@ async def death_certify(
     spawner never had a key (SEAT-6). The cursor union re-runs on repeats —
     it is idempotent by construction, which also heals a cert that stored
     but failed mid-harvest.
+
+    EXIT-NOTICE-2: the key is STABLE across restarts (SEAT-3 continuity —
+    a harness-derived session_key outlives many incarnations), so a plain
+    DO NOTHING froze a session's FIRST death forever: an exit→restart→exit
+    session displayed its first death time, and a cert from days ago sat
+    under a live session's key waiting to be consumed at the next bounce
+    (measured 2026-08-21: a 4-day-old cert under a live seat's key made
+    the register read it dead for one claim cycle). The cert is now
+    MONOTONIC on died_at — a LATER death replaces the record, an earlier or
+    equal one is a no-op — so the row always tells the most recent death
+    and true repeats stay idempotent. Never keyed per incarnation: the
+    spawner's view of a session IS the stable key.
     """
     project = (project or "").strip().lower()
     idem = session_key or f"{seat}|{died_at.isoformat()}"
@@ -1030,13 +1042,18 @@ async def death_certify(
                 (namespace, key, value, scope, user_id, project,
                  tags, tags_search, search_text, embedding, metadata)
             VALUES ($1, $2, $3, $4, $5, $6, '', '', $3, NULL, $7::jsonb)
-            ON CONFLICT (namespace, key, scope, user_id, project) DO NOTHING
-            RETURNING key
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+                SET metadata = EXCLUDED.metadata,
+                    value = EXCLUDED.value
+                WHERE (memories.metadata->>'died_at')::timestamptz
+                      < (EXCLUDED.metadata->>'died_at')::timestamptz
+            RETURNING key, (xmax = 0) AS inserted
             """,
             SEAT_NAMESPACE, key, idem, DEATH_SCOPE, SEAT_USER_ID,
             project, json.dumps(meta),
         )
-        created = row is not None
+        created = bool(row is not None and row["inserted"])
+        updated = bool(row is not None and not row["inserted"])
 
         # Cert-beats-heartbeat, recorded as a FACT consumers may weigh: the
         # seat row (if it still exists) is marked, never deleted or aged.
@@ -1128,8 +1145,8 @@ async def death_certify(
                     SEAT_USER_ID, project, f"cursor/{lane}",
                 )
             cursor_updated = True
-    return {"created": created, "cursor_updated": cursor_updated,
-            "cursor_size": cursor_size}
+    return {"created": created, "updated": updated,
+            "cursor_updated": cursor_updated, "cursor_size": cursor_size}
 
 
 async def _apply_lane_inheritance(conn, seat: str, project: str,

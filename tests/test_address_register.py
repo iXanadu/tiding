@@ -235,6 +235,32 @@ async def test_death_certificate_attaches_by_session_key(client, db_pool):
 
 
 @pytest.mark.asyncio
+async def test_reused_key_successor_is_not_pinned_with_its_predecessors_cert(client, db_pool):
+    """REG-DEATH-1 (shipped 616140a, pinned here): a launcher's slot-derived
+    session_key SURVIVES respawns, so a predecessor's cert lands under the
+    name's CURRENT holder's key. Evidence of life AFTER died_at — here the
+    successor's own claim — voids the cert on the register; it must not read
+    a live seat as dead off a corpse that shares its key."""
+    from datetime import datetime, timedelta, timezone
+
+    await _clear(db_pool)
+    seat = (await _claim(client, "reusedkey")).json()["seat"]
+    # A cert for the PREVIOUS incarnation: it died an hour ago, under the
+    # same key, and this claim happened after that.
+    died_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    r = await client.post("/session/death", json={
+        "session_key": "reusedkey", "seat": seat, "project": PROJ,
+        "provider": "claude", "died_at": died_at, "cause": "stop",
+        "graceful": True,
+    })
+    assert r.status_code == 200
+    entry = (await _register(client))[seat]
+    assert entry["allocation"]["reason"] == "live-holder"
+    assert entry["death"] is None, "a claim after died_at must void the cert"
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
 async def test_project_filter_and_channel_exclusion(client, db_pool):
     """?project= narrows; '#'-channels never appear (not allocatable names)."""
     await _clear(db_pool)

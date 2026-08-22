@@ -1294,6 +1294,10 @@ class DeathCertRequest(BaseModel):
 class DeathCertResponse(BaseModel):
     status: str
     created: bool
+    # EXIT-NOTICE-2: an existing cert under this key was REPLACED because
+    # this died_at is later (a stable session_key's newest death wins).
+    # created=False, updated=False ⇒ an earlier/equal repeat: no-op.
+    updated: bool = False
     cursor_updated: bool = False
     cursor_size: int = 0
 

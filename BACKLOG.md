@@ -212,15 +212,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   `/health`, and print both. `class:absence-vs-failure` (a missing fact was
   filled by a wrong one).
 
-- **REG-DEATH-1** The register attaches death evidence by session_key, and a
-  launcher's slot-derived key SURVIVES respawns — so a predecessor's death
-  cert pins to the name's current, live holder. Measured 2026-08-18 on this
-  project's own PM seat: register served a death cert alongside
-  allocation.reason=live-holder on the same row. By-key attachment assumed
-  keys are per-session; slot keys are per-slot. Needs: cert must not attach
-  when the row's holder shows later life (the farewell rule, applied to
-  certs), or certs must carry the nonce.
-
 - **PYVER-1** Fleet Python patch drift, measured 2026-08-18: within every
   box the server venv and bridge venv MATCH (the owner's feared skew does
   not exist), but BETWEEN boxes webone runs 3.12.0 — the original release,

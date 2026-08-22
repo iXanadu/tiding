@@ -1981,7 +1981,12 @@ def _format_inbox_message(m: dict) -> str:
         sender = _defang(relayed_from)
         label = (m.get("from_") or "").strip()
         via = _defang(m.get("from_principal") or "relay")
-        badge = f" [via relay · sent by {via}; authority: none]"
+        if m.get("authority"):
+            # The relay carried the OWNER's own words (author == sending
+            # principal): the server kept authority, and so does the render.
+            badge = f" ✓ VERIFIED OWNER ({via}) [via relay]"
+        else:
+            badge = f" [via relay · sent by {via}; authority: none]"
         if label and label.lower() != relayed_from.lower():
             badge += f" (label: {_defang(label)})"
     elif m.get("authority"):

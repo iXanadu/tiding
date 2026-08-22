@@ -121,3 +121,39 @@ async def test_recipient_liveness_carries_the_certificate(services):
         assert info["death"]["graceful"] is False
     finally:
         await _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cert_is_monotonic_on_died_at_under_a_stable_session_key(services):
+    """EXIT-NOTICE-2: the cert key is the session_key, which SURVIVES restarts
+    (SEAT-3 continuity). A plain first-writer-wins froze a session's FIRST
+    death forever. A LATER died_at must replace the record; an earlier or
+    equal one must not move it backwards; true repeats stay idempotent."""
+    try:
+        await presence_update(
+            identity="deathtest-claude-5", project=PROJECT, state="running",
+            provider="claude", session_nonce="n5", host="macmini",
+        )
+        base = datetime.now(timezone.utc) + timedelta(seconds=5)
+        t1, t2, t0 = base, base + timedelta(minutes=10), base - timedelta(minutes=10)
+        common = dict(session_key="grok-abgrok-deathtest-stable", seat="deathtest-claude-5",
+                      lane="deathtest-claude", project=PROJECT, provider="claude",
+                      host="macmini", graceful=True, certified_by="agentbeast")
+        r = await death_certify(died_at=t1, cause="first-exit", **common)
+        assert r["created"] is True and r["updated"] is False
+        assert (await _entry("deathtest-claude-5"))["death"]["cause"] == "first-exit"
+        # The session restarted and exited again, later: the cert follows.
+        r = await death_certify(died_at=t2, cause="second-exit", **common)
+        assert r["created"] is False and r["updated"] is True
+        e = await _entry("deathtest-claude-5")
+        assert e["death"]["cause"] == "second-exit"
+        assert e["death"]["died_at"] == t2.isoformat()
+        # A stale/late cert for an EARLIER death never moves it backwards.
+        r = await death_certify(died_at=t0, cause="stale", **common)
+        assert r["created"] is False and r["updated"] is False
+        assert (await _entry("deathtest-claude-5"))["death"]["cause"] == "second-exit"
+        # An exact repeat is a no-op too (idempotent).
+        r = await death_certify(died_at=t2, cause="second-exit", **common)
+        assert r["created"] is False and r["updated"] is False
+    finally:
+        await _cleanup()

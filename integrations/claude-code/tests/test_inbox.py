@@ -866,6 +866,14 @@ def test_relayed_from_leads_the_from_line_and_never_wears_the_owner_badge():
     out = _format_inbox_message(m)
     assert "(label:" not in out
     assert "From: agentbeast-grok-4 [via relay · sent by ixanadu; authority: none]" in out
+    # The relay carrying the OWNER's own line: server kept authority (author ==
+    # sending principal) and the render must agree with the envelope.
+    m = {"id": "inbox/x", "to": "me", "from_": "ixanadu",
+         "from_principal": "ixanadu", "authority": True,
+         "relayed_from": "ixanadu", "subject": "go", "body": "proceed"}
+    out = _format_inbox_message(m)
+    assert "From: ixanadu ✓ VERIFIED OWNER (ixanadu) [via relay]" in out
+    assert "authority: none" not in out
 
 
 def test_subject_forgery_defanged_inline():
