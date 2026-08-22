@@ -551,6 +551,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
+- **MEM-9** `POST /memory/supersede` on a row that is ALREADY superseded
+  answers 404 "no live row … within your readable namespaces" — the same text
+  as a true miss. Measured 2026-08-22 18:30Z: two seats retried a supersede
+  the store had already performed by MEM-6 cross-writer collapse (stamped,
+  attributed, replacement set) and both read it as "permission refused / row
+  not found". Answer should say "already superseded at <when> by <who>
+  (replacement <key>)" — a distinct, honest branch. `class:absence-vs-failure`.
+
 - **LIBRARIAN-SHIFT-1** ★ Owner direction 2026-08-18: the librarian role
   (judgment curation — GrokBot contributions via the mail protocol, MEM-7
   passes, estate decisions) runs as a DAILY SHIFT, not an always-on brain.
