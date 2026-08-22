@@ -373,3 +373,21 @@ watcher (same nonce), which is the one case that is correct.
 re-claims the seat (newest-wins rewrites the row's nonce), spawns a watcher
 carrying it; the old watcher's row carries the old nonce → displaced on the
 first claim. Zero deafness beyond the claim round-trip.
+
+
+## Force-quit reporting — FAREWELL-2 (2026-08-22)
+
+The watcher no longer shares the bridge's process group (`start_new_session=True`
+at spawn). A force-quit aimed at the session — group SIGKILL, a closed terminal's
+SIGHUP, Activity Monitor on the harness — used to take the watcher down in the
+same shot, before it could observe the exit, so a hand-started session killed
+the hard way read "watcher quiet" for 48h instead of EXITED. Now the watcher
+survives the group kill, finds itself orphaned (ppid 1 — the existing
+WATCH-CLAIM-3 check), OBSERVES the session for a short window (two consecutive
+positive `process_is_gone` polls, fail-safe: "could not ask" is never "gone"),
+files the farewell if the session is positively gone, releases its claim, and
+exits. Session still alive when the window closes (bridge died alone) → exit
+quietly as before; a respawned bridge brings a new watcher. SIGHUP is handled
+like SIGTERM (observe → farewell or gasp). Graceful exit is unchanged — the
+bridge terminates its watcher by PID. What still reads "quiet": power-off, or a
+kill aimed at the watcher's own pid — correctly, since nothing observed anything.

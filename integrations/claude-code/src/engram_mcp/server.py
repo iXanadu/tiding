@@ -876,7 +876,18 @@ def _watcher_supervisor_thread(project_dir: str | None) -> None:
                     cmd,
                     stdout=subprocess.DEVNULL,  # wakes ride the FIFO, not stdout
                     stderr=logf,
-                    start_new_session=False,     # die with the bridge's group
+                    # FAREWELL-2: its OWN session/process group. Until
+                    # 2026-08-22 this was False ("die with the bridge's
+                    # group", WATCH-CLAIM-3) — and a force-quit aimed at the
+                    # session (group SIGKILL/SIGHUP) took the watcher down in
+                    # the same shot, before it could observe the exit, so a
+                    # hand-started session killed the hard way read "watcher
+                    # quiet" for 48h instead of EXITED. Now it survives the
+                    # group kill, observes the session positively gone, files
+                    # the farewell, and exits itself (it already exits when
+                    # orphaned). Graceful exit is unchanged: _kill_watcher_child
+                    # terminates it by PID, not by group.
+                    start_new_session=True,
                     # WATCH-CLAIM-4(b): hand the watcher THIS bridge's seat
                     # nonce (what seat_claim registers as the occupant's
                     # per-process identity) so its watch claim follows the

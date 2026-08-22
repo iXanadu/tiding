@@ -423,23 +423,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **FAREWELL-2** *(narrowed 2026-08-21 19:50Z: AB-spawned sessions now read
-  EXITED via the spawner's death certificate — e8461f5, roster joins LANE-4
-  certs; this item is now ONLY about sessions with no spawner to certify.)*
-  A HAND-STARTED session (terminal, no AgentBeast) that is killed still reads
-  "watcher gone quiet", not EXITED: FAREWELL-1's observation half fires only
-  on SIGTERM/SIGINT or a pid-gone poll, and the common stop path delivers
-  neither (measured 2026-08-21 on the first real owner stop: `farewell_at=None`,
-  no gasp line, no farewell line). Working as designed; the design does not
-  cover how these sessions die — the code's own comment names SIGKILL as
-  uncatchable. `class:absence-vs-failure`. Honest on the surface: the roster
-  renders an exit ONLY when one was observed or certified. Decide: (a) leave
-  labelled; (b) make the observer survive its session's killer (own process
-  group + orphan-detect — more machinery on a property engram's docs call
-  unobservable); (c) infer an exit from a lapsed watcher beat (retire-vs-hide,
-  owner's open question). Root=watcher design · Found=live restart proof ·
-  Related: SEAT-13. Story: `finding/farewell-1-cannot-fire-on-sigkill-2026-08-21`.
-
 - **SEAT-13** *(terrain change 2026-08-20: watch-claim shipped — a
   bridge-owned watcher's claim expires ~150s after its beats stop and
   one-watch-per-seat is store-enforced; "dies WITH the bridge by lineage"

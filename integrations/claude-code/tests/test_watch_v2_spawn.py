@@ -326,6 +326,7 @@ def test_spawned_watcher_env_carries_the_bridge_seat_nonce(monkeypatch, tmp_path
             return real_popen(cmd, **kw)  # anything else (ps probes) runs for real
         captured["cmd"] = cmd
         captured["env"] = kw.get("env")
+        captured["start_new_session"] = kw.get("start_new_session")
         raise RuntimeError("stop-after-capture")  # spawn "fails" → supervisor backs off
 
     def fake_sleep(_):
@@ -341,3 +342,7 @@ def test_spawned_watcher_env_carries_the_bridge_seat_nonce(monkeypatch, tmp_path
     assert captured["env"]["ENGRAM_SEAT_NONCE"] == srv._SESSION_NONCE
     assert captured["env"]["PATH"] == os.environ["PATH"]  # inherited, not replaced
     assert "--claim" in captured["cmd"]
+    # FAREWELL-2: the watcher runs in its OWN session, so a force-quit aimed
+    # at the session's process group cannot take it down before it observes
+    # and reports the exit. Graceful stop still terminates it by PID.
+    assert captured["start_new_session"] is True

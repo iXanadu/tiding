@@ -611,6 +611,46 @@ async def _farewell(client, reader_identity: str, project_dir: str | None) -> No
         pass
 
 
+async def _observe_exit_then_farewell(
+    client, watched, reader_identity: str | None, project_dir: str | None,
+    window: float | None = None, poll: float | None = None,
+    is_gone=None,
+) -> bool:
+    """FAREWELL-2 (orphan path): the bridge died under us. Before exiting,
+    OBSERVE the session for a short window; if it is positively gone (two
+    consecutive positive polls — process_is_gone is fail-safe and never says
+    "gone" when it could not ask), file the farewell and return True. If the
+    session is still alive when the window closes (the bridge died alone; a
+    respawned bridge brings a new watcher), return False — exit quietly as
+    before. No session identified (watched is None) is never a farewell.
+
+    The async twin of _farewell_after_signal: that one runs on a fresh loop
+    from the SIGNAL path; this one runs inside the poll loop, where the
+    group kill that motivates it never reaches us any more (the watcher now
+    runs in its own session) — the bridge is simply gone and we are ppid 1.
+    """
+    if watched is None or not reader_identity:
+        return False
+    window = FAREWELL_ON_SIGNAL_WINDOW if window is None else window
+    poll = FAREWELL_ON_SIGNAL_POLL if poll is None else poll
+    probe = is_gone or process_is_gone
+    deadline = time.monotonic() + window
+    gone_seen = 0
+    while True:
+        try:
+            gone = probe(*watched)
+        except Exception:
+            gone = False
+        gone_seen = gone_seen + 1 if gone else 0
+        if gone_seen >= 2:
+            break
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll)
+    await _farewell(client, reader_identity, project_dir)
+    return True
+
+
 # WATCH-CLAIM-4(c): the claim this process currently holds, so the SIGNAL exit
 # path in main() — where the asyncio loop is already unwinding and an `await`
 # inside _run's `finally` is not reliable — can still release it on a fresh
@@ -1037,14 +1077,26 @@ async def _run(args) -> int:
                             if code is not None:
                                 return code
             if _orphaned():
-                # WATCH-CLAIM-3: the bridge died under us. No gasp — the
-                # session that owned this stream is gone with its bridge (a
-                # live session always has a live bridge); release the claim
-                # so a successor's watcher is granted at once, not after
-                # expiry.
-                print("inbox-wait: bridge is gone (ppid 1) — releasing the "
-                      "watch and exiting, not orphaning", file=sys.stderr,
-                      flush=True)
+                # WATCH-CLAIM-3: the bridge died under us. No gasp — nobody
+                # is left to re-arm. FAREWELL-2: but DO observe before
+                # leaving. Since the watcher runs in its own session, a
+                # force-quit of the session (group SIGKILL/SIGHUP) no longer
+                # kills us in the same shot — we find ourselves orphaned
+                # instead, and THIS is the moment a hard-killed session can
+                # be reported EXITED rather than left "watcher quiet" for 48h.
+                # Two positive polls inside the window → farewell; session
+                # still alive (bridge died alone) → exit quietly as before.
+                # Then release the claim so a successor is granted at once.
+                print("inbox-wait: bridge is gone (ppid 1) — observing the "
+                      "session before exiting", file=sys.stderr, flush=True)
+                reported = await _observe_exit_then_farewell(
+                    client, watched, reader_identity, args.project_dir or None)
+                print(("inbox-wait: the watched session exited too — farewell "
+                       "recorded (the seat reads as exited, not silent)")
+                      if reported else
+                      ("inbox-wait: session still alive (bridge died alone) — "
+                       "releasing the watch and exiting, not orphaning"),
+                      file=sys.stderr, flush=True)
                 if claim_state is not None and claim_state.held:
                     try:
                         await client.watch_release(
@@ -1250,6 +1302,35 @@ def _farewell_after_signal(
     return True
 
 
+#: Exit codes the signal handlers raise → the signal's name, for the gasp.
+#: SIGKILL cannot be caught — for that death the roster's watcher_alive going
+#: stale, or (FAREWELL-2) this watcher outliving the group kill and observing
+#: the exit from the orphan path, are the detectors.
+_SIGNAL_EXIT_CODES = {143: "SIGTERM", 129: "SIGHUP"}
+
+
+def _on_sigterm(signum, frame):
+    raise SystemExit(143)
+
+
+def _on_sighup(signum, frame):
+    raise SystemExit(129)
+
+
+def _install_signal_handlers() -> None:
+    """WATCH-2: a kill must not be a silent deafening. SIGTERM is how a
+    supervisor or TaskStop ends this process; the handler raises SystemExit
+    so the asyncio loop unwinds, and main() then observes the session and
+    either farewells (it is gone) or gasps (it is alive, and now deaf).
+    FAREWELL-2 adds SIGHUP — a closed terminal / hung-up controlling tty
+    delivers it; unhandled it was a silent death with no observation."""
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    try:
+        signal.signal(signal.SIGHUP, _on_sighup)
+    except (AttributeError, ValueError, OSError):
+        pass  # no SIGHUP on this platform / not the main thread
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="engram-inbox-wait",
@@ -1280,15 +1361,7 @@ def main() -> None:
     if args.timeout <= 0:
         args.timeout = None
 
-    # WATCH-2: a kill must not be a silent deafening. SIGTERM is how a
-    # supervisor or TaskStop ends this process; the handler raises SystemExit
-    # so the asyncio loop unwinds, and the gasp below tells the session it is
-    # now deaf and exactly how to re-arm. SIGKILL cannot be caught — for that
-    # death the roster's watcher_alive going stale is the only detector.
-    def _on_sigterm(signum, frame):
-        raise SystemExit(143)
-
-    signal.signal(signal.SIGTERM, _on_sigterm)
+    _install_signal_handlers()
 
     try:
         sys.exit(asyncio.run(_run(args)))
@@ -1301,10 +1374,11 @@ def main() -> None:
             _dying_gasp("interrupted (SIGINT) with the session possibly alive")
         sys.exit(0)
     except SystemExit as e:
-        if e.code == 143:
+        name = _SIGNAL_EXIT_CODES.get(e.code)
+        if name:
             _release_after_signal()
             if not _farewell_after_signal():
-                _dying_gasp("killed (SIGTERM) with the session possibly alive")
+                _dying_gasp(f"killed ({name}) with the session possibly alive")
         raise
 
 
