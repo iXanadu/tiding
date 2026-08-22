@@ -1838,7 +1838,24 @@ async def memory_status() -> str:
         result = await _client.health()
         checks = result.get("checks", {})
         status = result.get("status", "unknown")
-        lines = [f"Memory service: {status}", f"Server version: {VERSION}"]
+        # VER-1: two honest lines. The SERVER's version comes from /health on
+        # every call — it changes exactly when the server restarts, so it is
+        # the answer to "is my fix live?". The bridge's own hash is a
+        # different fact (this process, fixed at bridge start) and is
+        # labelled as such. Until 2026-08-22 one line printed the bridge's
+        # hash as "Server version" and two readers on two days concluded a
+        # deploy had not landed when it had.
+        srv_ver = result.get("version")
+        srv_sha = result.get("sha")
+        if srv_ver or srv_sha:
+            started = result.get("started_at")
+            server_line = (f"Server: {srv_ver or '?'} ({srv_sha or '?'}) — live "
+                           f"from /health" + (f", up since {started}" if started else ""))
+        else:
+            server_line = ("Server: version not served (pre-VER-1 server) — "
+                           "read git -C /opt/srv/engram rev-parse --short HEAD")
+        lines = [f"Memory service: {status}", server_line,
+                 f"Bridge build: {VERSION} (this process, fixed at bridge start)"]
         for name, ok in checks.items():
             lines.append(f"  {name}: {'ok' if ok else 'FAILED'}")
         # BRIDGE-1: the claim path's health is part of this session's status —
@@ -1880,7 +1897,7 @@ async def memory_status() -> str:
                          "(ENGRAM_BRIDGE_WATCHER=off, or no tool call yet)")
         return "\n".join(lines)
     except Exception as e:
-        return f"Memory service unreachable: {e}\nServer version: {VERSION}"
+        return f"Memory service unreachable: {e}\nBridge build: {VERSION} (this process)"
 
 
 @mcp.tool()

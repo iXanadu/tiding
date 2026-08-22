@@ -14,6 +14,11 @@ async def test_health(client):
     data = resp.json()
     assert data["status"] in ("ok", "degraded")
     assert "checks" in data
+    # VER-1: the running server names itself — version, git sha (computed in
+    # THIS process at start), and when it started.
+    assert data["version"] == "0.2.0"
+    assert isinstance(data["sha"], str) and data["sha"]
+    assert data["started_at"].startswith("20")
 
 
 @pytest.mark.asyncio

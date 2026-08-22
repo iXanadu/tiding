@@ -358,8 +358,26 @@ async def test_memory_status_ok(respx_mock):
     )
     result = await memory_status()
     assert "Memory service: ok" in result
-    assert f"Server version: {VERSION}" in result
+    assert f"Bridge build: {VERSION}" in result
+    # A pre-VER-1 server serves no version: say so, never print the bridge's
+    # hash under a server label.
+    assert "Server: version not served" in result
+    assert "Server version:" not in result
     assert "postgres: ok" in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_status_reports_the_servers_live_version_separately(respx_mock):
+    """VER-1: the server's version/sha come from /health on every call (they
+    change exactly when the server restarts); the bridge's own hash is a
+    different fact and is labelled as the bridge's."""
+    respx_mock.get("/health").mock(return_value=httpx.Response(200, json={
+        "status": "ok", "checks": {"postgres": True, "embeddings": True},
+        "version": "0.2.0", "sha": "abc1234", "started_at": "2026-08-22T19:58:31+00:00"}))
+    result = await memory_status()
+    assert "Server: 0.2.0 (abc1234) — live from /health, up since 2026-08-22T19:58:31+00:00" in result
+    assert f"Bridge build: {VERSION} (this process, fixed at bridge start)" in result
+    assert "Server version:" not in result
 
 
 async def test_memory_status_unreachable():
@@ -370,7 +388,7 @@ async def test_memory_status_unreachable():
     ):
         result = await memory_status()
         assert "unreachable" in result
-        assert f"Server version: {VERSION}" in result
+        assert f"Bridge build: {VERSION}" in result
 
 
 @respx.mock(base_url="http://localhost:8920")

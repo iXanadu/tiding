@@ -204,14 +204,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
-- **VER-1** `memory_status` prints "Server version: 0.2.0 (<hash>)" but the
-  hash is the BRIDGE's own import-time stamp, not the store's — `/health`
-  serves no version at all. Measured 2026-08-21: prod bounced to a new hash
-  and a peer read the unchanged line as "the bounce did not take". Fix:
-  relabel the bridge line ("Bridge:"), serve the running tree's hash from
-  `/health`, and print both. `class:absence-vs-failure` (a missing fact was
-  filled by a wrong one).
-
 - **PYVER-1** Fleet Python patch drift, measured 2026-08-18: within every
   box the server venv and bridge venv MATCH (the owner's feared skew does
   not exist), but BETWEEN boxes webone runs 3.12.0 — the original release,
