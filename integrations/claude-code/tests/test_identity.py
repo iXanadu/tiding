@@ -1230,3 +1230,34 @@ def test_seat_cache_kept_when_no_file(monkeypatch):
     monkeypatch.setattr(identity, "_SESSION_SEAT", "engram-claude-8")
     monkeypatch.setattr(identity, "read_seat_file", lambda: None)
     assert identity.resolve_session_identity("/tmp/x") == "engram-claude-8"
+
+
+def test_seat_claim_project_is_anchored_not_moved_by_a_cross_project_memory_call(monkeypatch):
+    """2026-08-22: compute_identity had been anchored since 81c6637, but the
+    SEAT CLAIM (and the heartbeat, runtime-seat registration and the
+    reply-to-channel test) still derived "my project" from the memory pin
+    (`remember_project_dir`, last-explicit-wins). One memory_store scoped to a
+    sibling project's folder therefore re-derived the session's project, and
+    the next heartbeat claimed a NEW seat under it: a live engram session
+    became `cursorchat-claude-2` mid-huddle, its huddle reply was refused
+    ("parent not in this session's listen_set") and its wake stream read
+    unheld until it took its seat back. `_own_project()` now resolves from the
+    identity anchor, like compute_identity; the memory pin still moves for
+    memory scoping — that is its job."""
+    import engram_mcp.server as server
+    _host(monkeypatch)
+    monkeypatch.setattr(identity, "_IDENTITY_ANCHOR", None)
+    monkeypatch.setattr(identity, "_STARTUP_CWD", "/Users/ixanadu/projects/engram")
+    monkeypatch.setattr(identity, "_SESSION_PROJECT_DIR", None)
+    names = lambda d: "cursorchat" if (d or "").endswith("CursorChat") else "engram"
+    monkeypatch.setattr(identity, "derive_project_name", names)
+    monkeypatch.setattr(server, "derive_project_name", names)
+
+    assert server._own_project() == "engram"
+    # One memory call scoped to a sibling project — ordinary, supported work.
+    server.remember_project_dir("/Users/ixanadu/projects/CursorChat")
+    # Memory scoping followed the call (its job)...
+    assert server.derive_project_name(server.remember_project_dir(None)) == "cursorchat"
+    # ...and the session's OWN project — what its seat, heartbeat and runtime
+    # seat are registered under — did not move.
+    assert server._own_project() == "engram", "a memory call re-seated the session"

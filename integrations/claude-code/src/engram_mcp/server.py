@@ -26,6 +26,7 @@ from engram_mcp.identity import (
     reader_to_address,
     record_session_process,
     remember_project_dir,
+    identity_anchor_dir,
     resolve_channels,
     resolve_provider,
     resolve_session_key,
@@ -50,6 +51,26 @@ PRINCIPAL_RETRY_SECONDS = 30.0
 # Per-process nonce: lets the server distinguish two live sessions sharing
 # one inbox identity (seat-collision detection). Regenerated per bridge start.
 _SESSION_NONCE = uuid.uuid4().hex[:12]
+
+
+def _own_project() -> str:
+    """THIS session's project — for seat claims, heartbeats, runtime seats and
+    "is that parent from another project" tests. Resolves from the identity
+    ANCHOR, never from the per-call ``project_dir`` pin.
+
+    ``remember_project_dir(project_dir)`` answers "which project's memory is
+    this call reading?" and is last-explicit-wins by design. Until 2026-08-22
+    four identity sites read it too, so ONE memory_store scoped to another
+    project's folder re-derived the session's project, and the next heartbeat
+    CLAIMED A NEW SEAT under that project: a live engram session became
+    `cursorchat-claude-2` mid-huddle, its reply to the room was refused
+    ("parent not in this session's listen_set"), and its wake stream read
+    unheld until it took its seat back. compute_identity had been anchored
+    since 81c6637 (2026-08-06); the claim's project had not. Same rule, same
+    anchor: anything a per-call argument can move is not an identity.
+    """
+    return derive_project_name(identity_anchor_dir())
+
 _SEAT_COLLISION: dict | None = None  # set/cleared by _heartbeat from server responses
 
 
@@ -604,7 +625,9 @@ async def _claim_seat(project_dir: str | None) -> None:
         _SEAT_LAST_CLAIM_ERROR = "no resolvable session key"
         return
     try:
-        project = derive_project_name(remember_project_dir(project_dir or None))
+        # The SEAT's project is this session's own project (anchor), never
+        # the project of the memory call that triggered the heartbeat.
+        project = _own_project()
         reader_identity, _ = compute_identity(project_dir or None)
         preferred = reader_identity.split("@", 1)[0]
         # ID-2: a runtime seat (memory_take_seat) is a DECLARATION, not a
@@ -1065,8 +1088,10 @@ async def _heartbeat(project_dir: str | None) -> None:
         reader_identity, _listen_set = compute_identity(project_dir or None)
         identity = reader_identity.split("@", 1)[0]
         # Derive the project group directly — never peek at listen_set
-        # positions (its shape now varies with overrides AND channels).
-        project = derive_project_name(remember_project_dir(project_dir or None))
+        # positions (its shape now varies with overrides AND channels) — and
+        # from the ANCHOR, so a cross-project memory call cannot move the
+        # presence row's project any more than it can move the seat.
+        project = _own_project()
         resp = await _client.presence_update(
             identity=identity,
             project=project,
@@ -1709,7 +1734,7 @@ async def memory_take_seat(
         )
 
     reader_identity, listen_set = compute_identity(project_dir or None)
-    project = derive_project_name(remember_project_dir(project_dir or None))
+    project = _own_project()
     seat_file = seat_file_path()
     warn = ""
     if previous_env and previous_env != seat:
@@ -2462,7 +2487,7 @@ async def memory_reply(
             reply_to = reader_to_address(raw_from)
     elif (parent.get("from_project")
           and (parent["from_project"] or "").strip().lower()
-              != derive_project_name(remember_project_dir(project_dir or None))):
+              != _own_project()):
         # O2 (reply-to-channel): a CROSS-project parent is a request from
         # another project, and the answer belongs to that project, not to
         # whichever of its sessions happened to ask — the asking seat, and
