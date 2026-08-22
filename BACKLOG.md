@@ -234,16 +234,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   `/health`, and print both. `class:absence-vs-failure` (a missing fact was
   filled by a wrong one).
 
-- **ADDR-4** `memory_send`/`memory_reply` to a PROJECT address prints
-  "⚠ <project>: last heartbeat Nh ago, watcher silent — do not expect a
-  reply" from the GROUP address's own presence row, while a live seated
-  session on that project (listening on the group address) is beating and
-  replying within seconds — measured twice 2026-08-21 (agentbeast-claude-5
-  answered a message the warning had written off). Predicate should be
-  "no seat on this project is live", not "this string's row is stale".
-  `class:absence-vs-failure` — a stale row for the group string is not
-  silence on the group.
-
 - **REG-DEATH-1** The register attaches death evidence by session_key, and a
   launcher's slot-derived key SURVIVES respawns — so a predecessor's death
   cert pins to the name's current, live holder. Measured 2026-08-18 on this
