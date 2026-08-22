@@ -946,6 +946,31 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         warnings: list[str] = []
         if relay_warning:
             warnings.append(relay_warning)
+        # HUD-ROUTE-1 (2026-08-22): the huddle relay ingests the OWNER's
+        # inbox and fans out by thread_id, so a send carrying a `huddle/<id>`
+        # thread but addressed to anyone other than the owner never enters
+        # the room — it lands as an ordinary DM and the sender gets a clean
+        # success receipt (two senders lost messages that way in one hour,
+        # one of them the ruling ABOUT this very defect). Warn, never reject
+        # (ADDR-2): a DM to a participant is a legitimate thing to want. The
+        # relay's own lifecycle letters (kickoff/close/add-participant) are
+        # addressed to participants by design and are excluded, as is any
+        # send by the owner principal itself (the relay knows the routing).
+        _hud_owner = (_settings.owner_principal_name or "").strip().lower()
+        if (_hud_owner
+                and (req.thread_id or "").startswith("huddle/")
+                and not req.huddle_lifecycle
+                and principal_name != _hud_owner):
+            for _to, _ in corrected:
+                if _to.split("@", 1)[0] != _hud_owner:
+                    warnings.append(
+                        f"A message with thread_id {req.thread_id} reaches the "
+                        f"room ONLY if it is addressed to the room owner "
+                        f"({_hud_owner}) — the relay ingests the owner's inbox "
+                        f"and fans out by thread. Addressed to {_to}, this "
+                        "message will NOT enter the room. To speak in the room, "
+                        "memory_reply to the huddle kickoff message."
+                    )
         if (req.intent or "").lower() != "fyi":
             live = await recipient_liveness([t for t, _ in corrected])
             for addr, info in live.items():
