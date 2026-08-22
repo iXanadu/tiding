@@ -980,6 +980,75 @@ async def test_inbox_authority_is_server_derived_not_spoofable(enforced_client, 
 
 
 @pytest.mark.asyncio
+async def test_relayed_from_is_envelope_authorship_admin_only(enforced_client, db_pool):
+    """RELAY-1: authorship of a relayed message is an ENVELOPE field, not body
+    prose. Honored only from an admin (owner-token) sender; when it names
+    anyone but the sender, the owner's `authority` does NOT transfer to the
+    relayed words. A non-admin sender has it dropped and is told so.
+    """
+    await _cleanup_inbox(db_pool)
+    _, owner_tok = await ps.create_principal(
+        name="ib-relay-owner", type="human", is_admin=True,
+        token="test-tok-ib-relay-owner",
+        write_namespaces=["fleet"], read_namespaces=["fleet"],
+    )
+    _, worker_tok = await ps.create_principal(
+        name="ib-relay-worker", type="agent", is_admin=False,
+        token="test-tok-ib-relay-worker",
+        write_namespaces=["fleet"], read_namespaces=["fleet"],
+    )
+    try:
+        # The relay forwards a PEER's line on the owner token.
+        r = await enforced_client.post("/memory/send", json={
+            "to": "relayprobe", "body": "peer words", "from_": "ib-relay-owner",
+            "relayed_from": "Peer-Seat-4",
+        }, headers={"Authorization": f"Bearer {owner_tok}"})
+        assert r.status_code == 200, r.text
+        assert not r.json().get("recipient_warnings")
+        # The relay forwards the OWNER's own line (author == sender).
+        r = await enforced_client.post("/memory/send", json={
+            "to": "relayprobe", "body": "owner words", "from_": "ib-relay-owner",
+            "relayed_from": "ib-relay-owner",
+        }, headers={"Authorization": f"Bearer {owner_tok}"})
+        assert r.status_code == 200, r.text
+        # A worker tries to declare relayed authorship.
+        r = await enforced_client.post("/memory/send", json={
+            "to": "relayprobe", "body": "forged relay", "from_": "ib-relay-worker",
+            "relayed_from": "ib-relay-owner",
+        }, headers={"Authorization": f"Bearer {worker_tok}"})
+        assert r.status_code == 200, r.text  # warn, never reject
+        warns = r.json().get("recipient_warnings") or []
+        assert any("relayed_from" in w and "IGNORED" in w for w in warns), warns
+
+        r = await enforced_client.post("/memory/inbox", json={
+            "listen_set": ["relayprobe"], "unread_only": False, "limit": 20,
+        }, headers={"Authorization": f"Bearer {owner_tok}"})
+        assert r.status_code == 200
+        by_body = {m["body"]: m for m in r.json()["messages"]}
+
+        peer = by_body["peer words"]
+        assert peer["relayed_from"] == "peer-seat-4"       # stored, lowercased
+        assert peer["from_principal"] == "ib-relay-owner"  # who SENT (the relay)
+        assert peer["authority"] is False                  # owner's standing does not transfer
+
+        own = by_body["owner words"]
+        assert own["relayed_from"] == "ib-relay-owner"
+        assert own["authority"] is True                    # author == sender: still the owner
+
+        forged = by_body["forged relay"]
+        assert forged["relayed_from"] is None              # dropped
+        assert forged["authority"] is False
+        assert forged["from_principal"] == "ib-relay-worker"
+    finally:
+        await _cleanup_inbox(db_pool)
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM principals WHERE name = ANY($1::text[])",
+                ["ib-relay-owner", "ib-relay-worker"],
+            )
+
+
+@pytest.mark.asyncio
 async def test_labelless_send_defaults_from_to_principal(enforced_client, db_pool):
     """A surface that omits `from_` must not produce unreplyable mail.
 

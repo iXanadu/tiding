@@ -258,10 +258,22 @@ Two sender fields ride every message, with very different trust:
 - `from_principal` + `authority` — **server-stamped from the authenticated
   token**, unforgeable by clients. `authority: true` means the sender is an
   owner (admin) principal — a human giving a directive, not a peer agent.
+- `relayed_from` — the **author**, when an intermediary (the huddle relay)
+  sent the message on their behalf. Honored only from an admin-token sender;
+  anyone else has it dropped and is told so in `recipient_warnings`. When it
+  names anyone but the sender itself, `authority` is **not** stamped — the
+  owner's token carried a peer's words, and the words keep the peer's
+  standing. Authorship is envelope data; a body line such as
+  `[huddle relay · from X]` was never a trust boundary and is now inert.
+  On wakes the same field is *declared* provenance (the relay shares the
+  service principal, so the store cannot gate it there) and is served beside
+  `from_principal`; the watcher's self-echo filter matches on it.
 
 Render surfaces show this as `✓ VERIFIED OWNER` / `peer: <principal>` /
-`unverified`. A worker holding a shared project token *cannot* forge the
-owner badge: it's derived server-side, never read from the request.
+`unverified`, or — for relayed mail — `From: <author> [via relay · sent by
+<principal>; authority: none]`. A worker holding a shared project token
+*cannot* forge the owner badge: it's derived server-side, never read from
+the request.
 
 ## Intent: what a message is, and who wakes
 
@@ -374,7 +386,8 @@ own primitive:
 
 - **`POST /memory/wake`** `{to, ref, note}` — a transient ping: "something
   happened at `ref` (e.g. a room/thread id), go look." `from_principal` is
-  server-stamped from the token. TTL ~5 minutes, then it evaporates —
+  server-stamped from the token; `relayed_from` (optional) is the declared
+  author when a relay posted it. TTL ~5 minutes, then it evaporates —
   wakes are never a record; the *conversation surface* is the record.
 - **`POST /memory/wake/poll`** `{reader}` — fetch fresh wakes without
   consuming them (dedupe client-side by id). Self-wakes are filtered.

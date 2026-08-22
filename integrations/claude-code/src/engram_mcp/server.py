@@ -1968,7 +1968,23 @@ def _format_inbox_message(m: dict) -> str:
     # label is self-asserted and may be freely chosen by peers. The badge is
     # emitted HERE from the verified field; sender text is defanged so it can't
     # counterfeit this line.
-    if m.get("authority"):
+    relayed_from = (m.get("relayed_from") or "").strip()
+    if relayed_from:
+        # RELAY-1: an envelope field the server honors only from an
+        # admin-token sender (the huddle relay). Lead the From line with
+        # the AUTHOR and name the transport; the server has already refused
+        # `authority` for relayed words, so no owner badge can appear here
+        # even though the owner's token carried the message. The
+        # self-asserted label is shown only when it disagrees with the
+        # author, so a body line "[huddle relay · from X]" has nothing to
+        # add and nothing to counterfeit.
+        sender = _defang(relayed_from)
+        label = (m.get("from_") or "").strip()
+        via = _defang(m.get("from_principal") or "relay")
+        badge = f" [via relay · sent by {via}; authority: none]"
+        if label and label.lower() != relayed_from.lower():
+            badge += f" (label: {_defang(label)})"
+    elif m.get("authority"):
         badge = f" ✓ VERIFIED OWNER ({_defang(m.get('from_principal') or '')})"
     elif m.get("from_principal"):
         badge = f" [peer: {_defang(m.get('from_principal') or '')}]"

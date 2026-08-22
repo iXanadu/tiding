@@ -134,3 +134,39 @@ async def test_self_wake_filters_bare_and_host_qualified_forms(
     async with db_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM memories WHERE scope='wake' AND user_id LIKE 'wakeprobe%'")
+
+
+@pytest.mark.asyncio
+async def test_wake_carries_relayed_from_and_self_echo_filters_on_it(client, db_pool):
+    """RELAY-1 (wake half): a relayed wake declares its AUTHOR in the envelope,
+    served beside the server-stamped from_principal; the author's own watcher
+    treats it as self-echo even when the relay's `from_` label differs."""
+    r = await client.post("/memory/wake", json={
+        "to": ["wakeprobe-r1", "wakeprobe-r2"], "ref": "huddle/relaytest",
+        "note": "author-seat: said a thing", "from_": "relay-label",
+        "relayed_from": "Author-Seat"})
+    assert r.status_code == 200, r.text
+    r = await client.post("/memory/wake/poll", json={
+        "listen_set": ["wakeprobe-r1"], "reader_identity": "wakeprobe-r1@x",
+        "timeout_seconds": 0})
+    wakes = r.json()["wakes"]
+    assert len(wakes) == 1
+    assert wakes[0]["relayed_from"] == "author-seat"
+    assert wakes[0]["from_"] == "relay-label"
+    assert "from_principal" in wakes[0]
+    # The declared author does not wake itself off its own relayed line.
+    r = await client.post("/memory/wake/poll", json={
+        "listen_set": ["wakeprobe-r2"], "reader_identity": "author-seat@x",
+        "timeout_seconds": 0})
+    assert r.json()["wakes"] == []
+    # A direct wake (no relay) serves relayed_from=None — absent, not faked.
+    r = await client.post("/memory/wake", json={
+        "to": "wakeprobe-r3", "ref": "huddle/relaytest", "from_": "direct"})
+    r = await client.post("/memory/wake/poll", json={
+        "listen_set": ["wakeprobe-r3"], "reader_identity": "wakeprobe-r3@x",
+        "timeout_seconds": 0})
+    assert r.json()["wakes"][0]["relayed_from"] is None
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope IN ('wake','inbox') "
+            "AND user_id LIKE 'wakeprobe%'")

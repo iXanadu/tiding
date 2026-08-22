@@ -663,6 +663,18 @@ class InboxSendRequest(BaseModel):
     # not proven: 10d is a regression guard within one trust domain (only
     # the owner-token relay writes this class), never a security boundary.
     huddle_lifecycle: bool = False
+    # RELAY-1: who AUTHORED this message when an intermediary (the huddle
+    # relay) sent it on their behalf. Honored only when the authenticated
+    # sender is an admin principal (the owner-token path the relay uses);
+    # any other sender has it dropped and is told so in the response. When
+    # it names anyone but the sending principal itself, `authority` is NOT
+    # stamped: the owner's token forwarded a peer's words, and the words
+    # carry the peer's standing, not the owner's. Before this field the only
+    # discriminator was a "[huddle relay · from X]" line in the BODY — prose,
+    # which was never a trust boundary; a dropped or reworded line handed a
+    # peer the owner's verified stamp (measured 2026-08-07: 4 of 7 relayed
+    # lines). The envelope now disagrees with any such prose.
+    relayed_from: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("to")
     @classmethod
@@ -719,6 +731,11 @@ class InboxMessage(BaseModel):
     # and cannot be spoofed by the client.
     from_principal: str | None = None  # which principal actually sent it (None = unverified/legacy/anon)
     authority: bool = False            # the sending principal is an owner (is_admin)
+    # RELAY-1: the AUTHOR when an admin-token relay sent this on someone's
+    # behalf. Set ⇒ `from_principal` is the relay's principal (who sent),
+    # `relayed_from` is whose words these are, and `authority` is False
+    # unless the two coincide. Renderers lead the From line with this.
+    relayed_from: str | None = None
     # Client-supplied provenance — recorded, never proof (contrast
     # `from_principal`, which is derived from the token). `machine` is which box
     # sent it; `model` is what produced it, read by the bridge from the harness's
@@ -879,6 +896,8 @@ class WakeEvent(BaseModel):
     ref: str | None = None      # what to look at, e.g. "huddle/<id>"
     from_: str | None = None            # self-asserted label
     from_principal: str | None = None   # server-stamped from the token
+    # RELAY-1: declared author when a relay posted this wake (see WakeRequest).
+    relayed_from: str | None = None
     note: str = ""
     at: str | None = None
 
@@ -894,6 +913,16 @@ class WakeRequest(BaseModel):
     ref: str = Field(max_length=MAX_ADDR)
     note: str = Field(default="", max_length=280)
     from_: str | None = Field(default=None, max_length=MAX_ADDR)
+    # RELAY-1 (wake half): who authored the utterance this wake announces,
+    # when a relay posted it. DECLARED provenance, same class as `from_`:
+    # the huddle relay rides the shared service principal, which is every
+    # bridge's token, so the store cannot gate this on "is the relay" the
+    # way it gates the letter path on an admin token. It is stored and
+    # served beside the server-stamped `from_principal` so a reader can see
+    # both "AB says X said this" and "AB is who posted it" — and the
+    # watcher's self-echo filter matches on it. Wakes carry no `authority`,
+    # so nothing escalates here; this only makes attribution explicit.
+    relayed_from: str | None = Field(default=None, max_length=MAX_ADDR)
 
 
 class WakeResponse(BaseModel):

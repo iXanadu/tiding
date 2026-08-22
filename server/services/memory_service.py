@@ -1178,6 +1178,7 @@ def _row_to_inbox_message(row: dict) -> InboxMessage:
         from_=md.get("from"),
         from_principal=md.get("from_principal"),
         authority=bool(md.get("authority", False)),
+        relayed_from=md.get("relayed_from"),
         # MSG-10 stored `machine` but never surfaced it, so a five-box fleet
         # still could not see which box a message came from — the same
         # dropped-at-the-last-step shape that item was written to fix, one layer
@@ -1225,6 +1226,7 @@ async def inbox_send(
     from_project: str | None = None,
     in_reply_to: str | None = None,
     huddle_lifecycle: bool = False,
+    relayed_from: str | None = None,
 ) -> str:
     """Create an inbox message. Returns the generated message id (memory key).
 
@@ -1246,6 +1248,11 @@ async def inbox_send(
         # project token cannot forge `authority` — only an owner principal can.
         "from_principal": from_principal,
         "authority": bool(authority),
+        # RELAY-1: the author, when an admin-token relay sent this for them.
+        # Router-gated (admin only) and already lowercased; None on direct
+        # mail. Envelope truth the render layer leads with, so a body line
+        # claiming otherwise is inert.
+        "relayed_from": relayed_from,
         # MSG-10: which BOX this was sent from. Every client has always
         # stamped X-Engram-Machine from its hostname and only `/memory/set`
         # ever read it, so mail could not be attributed to a machine after the
@@ -2803,8 +2810,10 @@ async def wake_send(
     note: str = "",
     from_: str | None = None,
     from_principal: str | None = None,
+    relayed_from: str | None = None,
 ) -> list[str]:
     """Record ephemeral wake rows for each target address. Returns ids."""
+    relayed_from = (relayed_from or "").strip().lower() or None
     targets = [t.strip().lower() for t in
                (to if isinstance(to, list) else [to]) if t and t.strip()]
     now = datetime.now(timezone.utc)
@@ -2828,6 +2837,11 @@ async def wake_send(
                             # the authenticated principal; `from` stays the
                             # self-asserted label, same split as mail.
                             "from_principal": from_principal,
+                            # RELAY-1: declared author of the relayed
+                            # utterance (the relay shares the service
+                            # principal, so this is provenance, not proof
+                            # — see WakeRequest).
+                            "relayed_from": relayed_from,
                             "created_at": now.isoformat()}),
             )
             ids.append(wid)
@@ -2877,12 +2891,18 @@ async def wake_list_fresh(
             continue
         if (md.get("from") or "").strip().lower() in own:
             continue
+        # RELAY-1: a relayed wake whose declared author is the reader is
+        # its own echo too (the relay's `from_` label and `relayed_from`
+        # are both the author today, but the filter must not depend on it).
+        if (md.get("relayed_from") or "").strip().lower() in own:
+            continue
         out.append({
             "id": r["key"],
             "to": r["user_id"],
             "ref": md.get("ref"),
             "from_": md.get("from"),
             "from_principal": md.get("from_principal"),
+            "relayed_from": md.get("relayed_from"),
             "note": r["value"],
             "at": r["created_at"].isoformat() if r["created_at"] else None,
         })

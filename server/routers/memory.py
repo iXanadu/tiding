@@ -858,6 +858,24 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     # state the render layer badges as verified. Anonymous mode (no
     # principal) keeps the old behavior — there is no truth to default to.
     sender_label = (req.from_ or "").strip() or (principal or {}).get("name")
+    # RELAY-1: relayed authorship is an ENVELOPE fact, honored only from an
+    # admin principal (the owner-token path the relay uses). Anyone else
+    # has it dropped and is told so — warn, never reject (ADDR-2 doctrine).
+    # When honored and naming someone other than the sender itself, the
+    # owner's `authority` does not transfer to the relayed words.
+    is_admin_sender = bool(principal and principal.get("is_admin"))
+    principal_name = ((principal or {}).get("name") or "").strip().lower()
+    relayed_from = (req.relayed_from or "").strip().lower() or None
+    relay_warning: str | None = None
+    if relayed_from and not is_admin_sender:
+        relay_warning = (
+            f"relayed_from='{relayed_from}' IGNORED: only an owner-token "
+            "(admin) sender may declare relayed authorship. Your message was "
+            f"stored as sent by you ({principal_name or 'anonymous'})."
+        )
+        relayed_from = None
+    authority = is_admin_sender and (
+        relayed_from is None or relayed_from == principal_name)
     if is_fanout:
         participants = _participant_set(
             [t for t, _ in corrected], sender=sender_label
@@ -879,7 +897,8 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 # (request.state), NOT the request body — a client cannot assert
                 # someone else's identity or forge owner authority (MSG-1/MSG-2).
                 from_principal=(principal or {}).get("name"),
-                authority=bool(principal and principal.get("is_admin")),
+                authority=authority,
+                relayed_from=relayed_from,
                 machine=request.headers.get("x-engram-machine"),
                 model=request.headers.get("x-engram-model"),
                 model_source=request.headers.get("x-engram-model-source"),
@@ -925,6 +944,8 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         # so `fyi` is silent by design; only a message whose purpose is
         # coordination is broken by a dead recipient.
         warnings: list[str] = []
+        if relay_warning:
+            warnings.append(relay_warning)
         if (req.intent or "").lower() != "fyi":
             live = await recipient_liveness([t for t, _ in corrected])
             for addr, info in live.items():
@@ -1190,7 +1211,8 @@ async def send_wake(req: WakeRequest, request: Request):
         principal = get_current_principal(request)
         ids = await wake_send(to=req.to, ref=req.ref, note=req.note,
                               from_=req.from_,
-                              from_principal=(principal or {}).get("name"))
+                              from_principal=(principal or {}).get("name"),
+                              relayed_from=req.relayed_from)
         return WakeResponse(status="ok", ids=ids)
     except Exception:
         logger.exception("wake_send failed")

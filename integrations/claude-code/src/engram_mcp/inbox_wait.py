@@ -285,6 +285,10 @@ def _emit_wake(w: dict) -> None:
                 "ref": w.get("ref"),
                 "from": w.get("from_") or w.get("from"),
                 "from_principal": w.get("from_principal"),
+                # RELAY-1: the declared AUTHOR when a relay posted the wake
+                # (None on a direct wake). `from` is the relay's display
+                # label; `from_principal` is who actually posted.
+                "relayed_from": w.get("relayed_from"),
                 "note": w.get("note", ""),
                 "at": w.get("at"),
             },
