@@ -262,14 +262,16 @@ async def memory_set(
             if (if_match is not None or enforce_owner)
             else _null_ctx()
         ):
-            if enforce_owner:
-                # FOR UPDATE, and inside the transaction, for the same reason
-                # if_match is: a check that releases its row before the write
-                # has the exact race it exists to close — two writers both read
-                # "owned by me", both proceed, one row survives.
-                existing_owner = await conn.fetchval(
+            # SUPERSEDE-BRICKS-KEY-1: a drained (superseded / deletion_requested)
+            # row must not reserve its unique slot. Ownership and create-only
+            # both consult this once under FOR UPDATE so the check and the
+            # write stay one transaction.
+            existing = None
+            if enforce_owner or if_match == "":
+                existing = await conn.fetchrow(
                     """
-                    SELECT owner FROM memories
+                    SELECT owner, metadata->>'status' AS lifecycle_status
+                    FROM memories
                     WHERE namespace = $1 AND key = $2 AND scope = $3
                       AND user_id IS NOT DISTINCT FROM $4
                       AND project IS NOT DISTINCT FROM $5
@@ -277,6 +279,9 @@ async def memory_set(
                     """,
                     namespace, key, scope, user_id, project,
                 )
+            if enforce_owner and existing is not None:
+                existing_owner = existing["owner"]
+                drained = existing["lifecycle_status"] in HIDDEN_STATUSES
                 # A NULL owner is a row that predates the column (12,525 of
                 # them at the time of writing). It is allowed through rather
                 # than locked away: refusing would make the legacy corpus
@@ -284,7 +289,18 @@ async def memory_set(
                 # nobody recorded. The upsert stamps `owner` on the way past,
                 # so the corpus becomes protected as it is touched instead of
                 # needing a migration.
-                if existing_owner is not None and existing_owner != owner:
+                #
+                # A drained row also passes: supersede retires what readers
+                # retrieve but used to leave the UNIQUE slot held by a
+                # foreign owner — store then 409'd forever while get returned
+                # nothing (measured mediaStudio startup/next, 2026-08-28).
+                # Hard-delete ownership is unchanged (MEM-8); only the write
+                # reclaim path opens.
+                if (
+                    existing_owner is not None
+                    and existing_owner != owner
+                    and not drained
+                ):
                     raise OwnershipConflict(existing_owner, owner)
             if if_match == "":
                 # MUST-NOT-EXIST is a different problem from must-match, and
@@ -303,6 +319,21 @@ async def memory_set(
                 # either wins outright or affects no row, and there is no
                 # window between the check and the write because they are the
                 # same statement.
+                #
+                # SUPERSEDE-BRICKS-KEY-1: a drained row is not a live occupant.
+                # Reclaim it via upsert and report created=True — the caller
+                # asked for a fresh key, and default reads already treated the
+                # slot as empty.
+                if (
+                    existing is not None
+                    and existing["lifecycle_status"] in HIDDEN_STATUSES
+                ):
+                    await _upsert_memory(
+                        conn, namespace, key, value, scope, user_id, project,
+                        tags, tags_search, embedding, search_text, expires_at,
+                        metadata_json, owner,
+                    )
+                    return key, True, compute_version(value)
                 created_row = await _insert_if_absent(
                     conn, namespace, key, value, scope, user_id, project, tags,
                     tags_search, embedding, search_text, expires_at,

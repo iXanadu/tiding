@@ -506,40 +506,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   is one partition for all boxes, so `wip/current` and `startup/next` are single
   shared rows every box overwrites and inherits. Detail in project memory.
 
-- **SUPERSEDE-BRICKS-KEY-1** *(measured and reported by a peer project's session
-  2026-08-28, with both error paths named; confirmed here by enumerating their
-  partition.)* `class:absence-vs-failure`
-  **Superseding a row leaves the key permanently occupied, and if the row is
-  controlled by someone else the key becomes unwritable by ANY session — while
-  reads of it return nothing at all.** Measured sequence on a peer project's
-  `startup/next`: the row was superseded by the current session; `memory_store`
-  to the same key then returned **409 Conflict** (the retired row still holds
-  the key), and `memory_forget` was **REFUSED** — "controlled by 'ixanadu' —
-  only its controller or an admin can hard-delete it". Net effect: the key is
-  dead. `memory_get` returns nothing, so a project's handoff slot goes silently
-  empty and every fresh session starts with no handoff.
-  WHY IT MATTERS MORE THAN IT LOOKS: supersede is the mechanism we tell agents
-  to use on another writer's stale row. If retiring a row can brick its key,
-  the safe-looking action is the one that causes the outage — and the damage is
-  invisible until someone notices sessions starting cold.
-  FIX SHAPE — PREFER THE FIRST OF THESE TWO: (a) a superseded row stops
-  reserving its key, so the next writer can take it; or (b) supersede refuses
-  when the caller could not subsequently write. The reporting session argued
-  for (a) and convinced me: (b) turns a currently-safe call into one that can
-  fail for reasons the caller cannot inspect beforehand, and the likely agent
-  response is to STOP SUPERSEDING STALE ROWS AT ALL — which is worse than the
-  bug, because the stale rows are what we were trying to retire. A fix that
-  makes the recommended action feel risky has moved the failure rather than
-  removed it.
-  Do NOT "fix" it by loosening the controller check on hard delete; the
-  ownership rule is correct and it worked here — it stopped a session
-  destroying a record that was not its own, at the cost of an inconvenience
-  that was routed around in ten minutes. That trade is right.
-  The reporting project has already routed around it (dated keys plus a prefix
-  enumeration in its startup), so this is not urgent — but it is latent on every
-  project using a fixed handoff key.
-  · Status: OPEN · Root: supersede semantics · Found: peer report 2026-08-28
-
 - **HYGIENE-IMG-1** *(2026-08-28: a screenshot carrying a real host's service
   inventory reached a public repo. It PASSED both the text scan and the
   metadata scan — the leak was rendered pixels.)*
