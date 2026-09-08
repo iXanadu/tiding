@@ -525,6 +525,20 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN · Root: the checker's scope was never stated in its own output
   · Found: tiding-website launch
 
+- **RECLAIM-CREATED-AT-1** *(residual of SUPERSEDE-BRICKS-KEY-1; reported by
+  mediaStudio 2026-09-08 after a successful reclaim on af5d20f.)*
+  `class:absence-vs-failure`
+  **Reclaiming a drained row keeps the bricked row's `created_at`, so a fresh
+  handoff reads as months old.** Upsert updates value/owner/metadata/
+  `last_used_at` but not birth time. Store reports `created=True` (slot was
+  empty to readers) while get shows the April timestamp of the corpse.
+  Anything that ages or ranks by `created_at` will treat the new note as
+  stale. FIX SHAPE: on reclaim of a HIDDEN_STATUSES occupant, set
+  `created_at = NOW()` (or only then — ordinary self-overwrites should keep
+  birth time). Cosmetic for mediaStudio; latent on every reclaimed fixed key.
+  · Status: OPEN · Root: reclaim path reuses upsert without resetting birth
+  · Found: mediaStudio confirm after SUPERSEDE-BRICKS-KEY-1 deploy
+
 - **PYVER-1** Fleet Python patch drift, measured 2026-08-18: within every
   box the server venv and bridge venv MATCH (the owner's feared skew does
   not exist), but BETWEEN boxes hostb runs 3.12.0 — the original release,
