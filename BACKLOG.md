@@ -1073,6 +1073,20 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
+- **DEATH-CERT-FENCE-1** *(pinned 2026-09-09 from SEAT-RELEASE-FENCE-1 peer
+  review; do not fold into that ship.)* `class:absence-vs-failure`
+  **A death certificate is accepted by seat name only — no process nonce.**
+  The bridge exit-notice posts `/session/death` without an incarnation id;
+  `death_certify` marks `seat/<name>` death-certified by address alone. It
+  does not free the seat or stamp presence, so it does not undo the release
+  fence — but a delayed certificate from a displaced process can still mark
+  the wrong generation's seat. Distinct from guarded release
+  (SEAT-RELEASE-FENCE-1 / `761c537`): that pass fenced Stop/release only.
+  Fix shape when named: carry the same launcher-owned nonce on death certs
+  and refuse a cert whose nonce no longer matches the seat row.
+  · Status: OPEN (owner drives) · Found: peer review 2026-09-09
+  · Detail: project memory `fix/seat-release-fence-1-2026-09-09`
+
 - **LIBRARIAN-1** *(owner opened the question 2026-08-29; discussion doc written,
   nothing decided.)* **Is the shared-lesson corpus a resource or a hoard, and
   should there be a curated encyclopedia on top of it?**
