@@ -7,6 +7,7 @@ shared ack-state, unable to wake each other.
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -24,6 +25,10 @@ async def _clear(db_pool, project=PROJ):
     async with db_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM memories WHERE scope = 'seat' AND project = $1", project
+        )
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = 'presence' AND user_id = $1",
+            project,
         )
         await conn.execute(
             "DELETE FROM memories WHERE scope = 'inbox' AND user_id LIKE $1",
@@ -244,6 +249,357 @@ async def test_never_reclaim_a_seat_holding_undelivered_mail(client, db_pool):
 
     b = (await _claim(client, "successor-2", host="otherbox")).json()
     assert b["seat"] != seat, "reclaimed a seat that still held undelivered mail"
+    await _clear(db_pool)
+
+
+
+@pytest.mark.asyncio
+async def test_stale_release_with_nonce_cannot_free_successor_seat(
+    client, db_pool
+):
+    """SEAT-RELEASE-FENCE-1: delayed Stop from a displaced process must no-op.
+
+    Claim protects with SEAT-9 newest-wins + superseded_nonces. Release used
+    to DELETE by session_key alone, so a predecessor Stop arriving after the
+    successor reclaimed the same key could wipe the live row and stamp
+    presence.released_at. The fence: when session_nonce is supplied, delete
+    only if it matches the row's current nonce.
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "fence-key", session_nonce="process-A")).json()
+    seat = a["seat"]
+    b = (await _claim(client, "fence-key", session_nonce="process-B")).json()
+    assert b["seat"] == seat
+
+    # Heartbeat presence as the successor so we can prove a rejected stale
+    # release does not stamp released_at on it.
+    pres = await client.post("/memory/presence", json={
+        "identity": seat, "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "process-B",
+    })
+    assert pres.status_code == 200
+
+    stale = await client.post("/session/release", json={
+        "session_key": "fence-key",
+        "project": PROJ,
+        "session_nonce": "process-A",
+        "evidence": "performed",
+    })
+    assert stale.status_code == 200
+    assert stale.json()["released"] is None, (
+        "stale predecessor Stop freed the successor's seat"
+    )
+
+    async with db_pool.acquire() as conn:
+        after = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = 'seat' AND project = $1 AND key = $2
+            """,
+            PROJ, f"seat/{seat}",
+        )
+        after_pres = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = 'presence' AND user_id = $1 AND key = $2
+            """,
+            PROJ, f"presence/{seat}",
+        )
+    assert after is not None, "successor seat row was deleted by stale release"
+    seat_md = after["metadata"]
+    if isinstance(seat_md, str):
+        seat_md = json.loads(seat_md)
+    pres_md = after_pres["metadata"] if after_pres else {}
+    if isinstance(pres_md, str):
+        pres_md = json.loads(pres_md)
+    assert seat_md.get("session_nonce") == "process-B"
+    assert after_pres is not None
+    assert "released_at" not in (pres_md or {}), (
+        "stale release stamped presence.released_at on the successor"
+    )
+
+    # Successor can still release itself with ITS nonce.
+    own = await client.post("/session/release", json={
+        "session_key": "fence-key",
+        "project": PROJ,
+        "session_nonce": "process-B",
+        "evidence": "performed",
+    })
+    assert own.status_code == 200
+    assert own.json()["released"] == seat
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_release_without_nonce_keeps_legacy_key_only_behavior(
+    client, db_pool
+):
+    """WIRE-1: omitting session_nonce must still free by key (unmigrated callers)."""
+    await _clear(db_pool)
+    a = (await _claim(client, "legacy-rel", session_nonce="n1")).json()
+    # Successor takes the seat under a new nonce — legacy Stop still wins
+    # until callers migrate. That is deliberate compatibility, not a bug.
+    b = (await _claim(client, "legacy-rel", session_nonce="n2")).json()
+    assert b["seat"] == a["seat"]
+    rel = await client.post("/session/release", json={
+        "session_key": "legacy-rel", "project": PROJ, "evidence": "performed",
+    })
+    assert rel.json()["released"] == a["seat"]
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_presence_stamp_skips_when_successor_already_holds_seat(
+    client, db_pool
+):
+    """SEAT-RELEASE-FENCE-1: DELETE→stamp gap must not poison a successor.
+
+    A successful matching DELETE can still race: successor claims+heartbeats
+    before the releaser's presence UPDATE. Stamp must no-op when the seat
+    row is already back.
+    """
+    from server.services.session_registry import _stamp_presence_released
+
+    await _clear(db_pool)
+    a = (await _claim(client, "stamp-race", session_nonce="process-A")).json()
+    seat = a["seat"]
+    assert (await client.post("/memory/presence", json={
+        "identity": seat, "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "process-A",
+    })).status_code == 200
+
+    # Simulate the gap after A's DELETE succeeded.
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = 'seat' AND project = $1 AND key = $2",
+            PROJ, f"seat/{seat}",
+        )
+        # Age the corpse presence so allocation does not park the name as
+        # live-no-row — we need the successor on the SAME address string.
+        await conn.execute(
+            """
+            UPDATE memories SET last_used_at = NOW() - ($1 || ' seconds')::interval
+            WHERE scope = 'presence' AND user_id = $2 AND key = $3
+            """,
+            str(SEAT_LIVE_SECONDS + 60), PROJ, f"presence/{seat}",
+        )
+
+    b = (await _claim(client, "stamp-race", session_nonce="process-B")).json()
+    assert b["seat"] == seat
+    assert (await client.post("/memory/presence", json={
+        "identity": seat, "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "process-B",
+    })).status_code == 200
+
+    async with db_pool.acquire() as conn:
+        await _stamp_presence_released(conn, seat, PROJ)
+        after_pres = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = 'presence' AND user_id = $1 AND key = $2
+            """,
+            PROJ, f"presence/{seat}",
+        )
+    pres_md = after_pres["metadata"]
+    if isinstance(pres_md, str):
+        pres_md = json.loads(pres_md)
+    assert "released_at" not in (pres_md or {}), (
+        "presence stamp landed on a successor that already held the seat"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_fenced_release_does_not_stamp_foreign_presence(
+    client, db_pool
+):
+    """B published presence on A's address before claiming — stamp must skip.
+
+    NOT EXISTS seat alone is not enough: after A deletes, the name is free,
+    but presence may already be B's. Presence stores nonces under
+    metadata.sessions (not a top-level session_nonce).
+    """
+    await _clear(db_pool)
+    a = (await _claim(client, "foreign-pres", session_nonce="process-A")).json()
+    seat = a["seat"]
+    # B heartbeats the address while A still holds the seat.
+    assert (await client.post("/memory/presence", json={
+        "identity": seat, "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "process-B",
+    })).status_code == 200
+
+    rel = await client.post("/session/release", json={
+        "session_key": "foreign-pres",
+        "project": PROJ,
+        "session_nonce": "process-A",
+        "evidence": "performed",
+    })
+    assert rel.status_code == 200
+    assert rel.json()["released"] == seat
+
+    async with db_pool.acquire() as conn:
+        after_pres = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = 'presence' AND user_id = $1 AND key = $2
+            """,
+            PROJ, f"presence/{seat}",
+        )
+        seat_gone = await conn.fetchrow(
+            """
+            SELECT 1 FROM memories
+            WHERE scope = 'seat' AND project = $1 AND key = $2
+            """,
+            PROJ, f"seat/{seat}",
+        )
+    assert seat_gone is None
+    pres_md = after_pres["metadata"]
+    if isinstance(pres_md, str):
+        pres_md = json.loads(pres_md)
+    assert "released_at" not in (pres_md or {}), (
+        "A's release stamped released_at onto B's presence"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_fenced_release_skips_stamp_on_nonce_less_presence(
+    client, db_pool
+):
+    """Empty sessions + no top-level nonce is NOT attributable — skip stamp."""
+    from server.services.session_registry import (
+        SEAT_NAMESPACE,
+        SEAT_SCOPE,
+        SEAT_USER_ID,
+        _stamp_presence_released,
+    )
+    from server.services.memory_service import PRESENCE_SCOPE
+
+    await _clear(db_pool)
+    a = (await _claim(client, "anon-pres", session_nonce="process-A")).json()
+    seat = a["seat"]
+    # Seed anonymous presence (no sessions map, no top-level nonce).
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id,
+                                  project, tags, tags_search, metadata)
+            VALUES ($1, $2, 'present', $3, $4, $5, '', '',
+                    jsonb_build_object('kind', 'presence'))
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+              SET metadata = EXCLUDED.metadata, last_used_at = NOW()
+            """,
+            SEAT_NAMESPACE, f"presence/{seat}", PRESENCE_SCOPE, PROJ, PROJ,
+        )
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = $1 AND project = $2 AND key = $3",
+            SEAT_SCOPE, PROJ, f"seat/{seat}",
+        )
+        await _stamp_presence_released(
+            conn, seat, PROJ, session_nonce="process-A",
+        )
+        after = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = $1 AND user_id = $2 AND key = $3
+            """,
+            PRESENCE_SCOPE, PROJ, f"presence/{seat}",
+        )
+    md = after["metadata"]
+    if isinstance(md, str):
+        md = json.loads(md)
+    assert "released_at" not in (md or {}), (
+        "fenced stamp accepted completely nonce-less presence"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_fenced_stamp_rejects_sessions_a_with_toplevel_b(
+    client, db_pool
+):
+    """sessions={A} plus top-level B is a contradiction — must not stamp."""
+    from server.services.session_registry import (
+        SEAT_NAMESPACE,
+        SEAT_SCOPE,
+        SEAT_USER_ID,
+        _stamp_presence_released,
+    )
+    from server.services.memory_service import PRESENCE_SCOPE
+
+    await _clear(db_pool)
+    a = (await _claim(client, "mixed-pres", session_nonce="process-A")).json()
+    seat = a["seat"]
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO memories (namespace, key, value, scope, user_id,
+                                  project, tags, tags_search, metadata)
+            VALUES ($1, $2, 'present', $3, $4, $5, '', '',
+                    jsonb_build_object(
+                        'kind', 'presence',
+                        'session_nonce', 'process-B',
+                        'sessions', jsonb_build_object('process-A',
+                            jsonb_build_object('state', 'running'))))
+            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+              SET metadata = EXCLUDED.metadata, last_used_at = NOW()
+            """,
+            SEAT_NAMESPACE, f"presence/{seat}", PRESENCE_SCOPE, PROJ, PROJ,
+        )
+        await conn.execute(
+            "DELETE FROM memories WHERE scope = $1 AND project = $2 AND key = $3",
+            SEAT_SCOPE, PROJ, f"seat/{seat}",
+        )
+        await _stamp_presence_released(
+            conn, seat, PROJ, session_nonce="process-A",
+        )
+        after = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = $1 AND user_id = $2 AND key = $3
+            """,
+            PRESENCE_SCOPE, PROJ, f"presence/{seat}",
+        )
+    md = after["metadata"]
+    if isinstance(md, str):
+        md = json.loads(md)
+    assert "released_at" not in (md or {}), (
+        "stamped despite top-level session_nonce contradicting caller"
+    )
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_fenced_release_stamps_when_presence_names_caller(
+    client, db_pool
+):
+    """Positive membership still stamps — empty-reject must not block the owner."""
+    await _clear(db_pool)
+    a = (await _claim(client, "own-pres", session_nonce="process-A")).json()
+    seat = a["seat"]
+    assert (await client.post("/memory/presence", json={
+        "identity": seat, "project": PROJ, "state": "running",
+        "provider": "claude", "session_nonce": "process-A",
+    })).status_code == 200
+    rel = await client.post("/session/release", json={
+        "session_key": "own-pres", "project": PROJ,
+        "session_nonce": "process-A", "evidence": "performed",
+    })
+    assert rel.json()["released"] == seat
+    async with db_pool.acquire() as conn:
+        after = await conn.fetchrow(
+            """
+            SELECT metadata FROM memories
+            WHERE scope = 'presence' AND user_id = $1 AND key = $2
+            """,
+            PROJ, f"presence/{seat}",
+        )
+    md = after["metadata"]
+    if isinstance(md, str):
+        md = json.loads(md)
+    assert "released_at" in (md or {}), (
+        "fenced release failed to stamp presence that named the caller"
+    )
     await _clear(db_pool)
 
 

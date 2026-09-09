@@ -51,9 +51,27 @@ _PRINCIPAL_FETCHED = False  # latches only on a DEFINITIVE answer — see _get_p
 _PRINCIPAL_RETRY_AT = 0.0  # monotonic deadline gating the next attempt after a transient failure
 PRINCIPAL_RETRY_SECONDS = 30.0
 
-# Per-process nonce: lets the server distinguish two live sessions sharing
-# one inbox identity (seat-collision detection). Regenerated per bridge start.
-_SESSION_NONCE = uuid.uuid4().hex[:12]
+def resolve_session_nonce(environ: dict | None = None) -> str:
+    """Incarnation id for claim/release fencing (SEAT-RELEASE-FENCE-1).
+
+    Launcher-injected ``ENGRAM_SESSION_NONCE`` wins so a Stop path can send
+    the same value this process claimed with. Otherwise mint a fresh uuid.
+    """
+    env = os.environ if environ is None else environ
+    injected = (env.get("ENGRAM_SESSION_NONCE") or "").strip()
+    return injected or uuid.uuid4().hex[:12]
+
+
+# Per-process nonce: seat-collision detection + SEAT-RELEASE-FENCE-1.
+# A launcher that must later release THIS incarnation (e.g. AB Stop) injects
+# ENGRAM_SESSION_NONCE at daemon launch and persists that exact value — never
+# look up the current seat row at Stop time (that would authorise a stale
+# predecessor against its successor). Absent env: mint a fresh uuid
+# (hand-launched / unmigrated). Same injected env across a bridge restart
+# retains the incarnation; a new daemon spawn without the env mints anew.
+# ENGRAM_SEAT_NONCE (watcher subprocess) is a different env: the bridge copies
+# THIS value into the watcher at spawn so claim-follows-seat stays aligned.
+_SESSION_NONCE = resolve_session_nonce()
 
 
 def _own_project() -> str:

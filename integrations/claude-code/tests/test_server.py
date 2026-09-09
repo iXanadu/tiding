@@ -785,6 +785,21 @@ async def test_heartbeat_sends_nonce_and_collision_sets_banner(respx_mock):
         srv._SEAT_COLLISION = old
 
 
+def test_session_nonce_prefers_launcher_injection():
+    """SEAT-RELEASE-FENCE-1: AB Stop must send the nonce the bridge claimed with.
+
+    Looking up the current seat row at Stop time can still be the predecessor;
+    the launcher owns the value by injecting ENGRAM_SESSION_NONCE at daemon
+    launch and persisting it. Absent env → mint (hand-launched path).
+    """
+    from engram_mcp.server import resolve_session_nonce
+    assert resolve_session_nonce({"ENGRAM_SESSION_NONCE": " ab-owned-nonce "}) == "ab-owned-nonce"
+    assert resolve_session_nonce({"ENGRAM_SESSION_NONCE": ""})  # minted
+    minted = resolve_session_nonce({})
+    assert len(minted) == 12
+    assert minted != resolve_session_nonce({})  # fresh each mint
+
+
 @respx.mock(base_url="http://localhost:8920")
 async def test_collision_clear_removes_banner(respx_mock):
     import engram_mcp.server as srv

@@ -496,12 +496,24 @@ class MemoryClient:
         session_key: str,
         project: str,
         project_dir: str | None = None,
+        evidence: str | None = None,
+        session_nonce: str | None = None,
     ) -> dict:
-        """Free this session's seat immediately (SEAT-3)."""
+        """Free this session's seat immediately (SEAT-3 / SEAT-RELEASE-FENCE-1).
+
+        ``session_nonce`` is optional (WIRE-1). When supplied it must be the
+        nonce THIS process claimed with — never a lookup of the current
+        holder — so a delayed Stop cannot free a successor's seat.
+        """
+        body: dict = {"session_key": session_key, "project": project}
+        if evidence is not None:
+            body["evidence"] = evidence
+        if session_nonce is not None:
+            body["session_nonce"] = session_nonce
         return await self._request(
             "POST",
             "/session/release",
-            json={"session_key": session_key, "project": project},
+            json=body,
             headers=self._provenance_headers(project_dir),
         )
 

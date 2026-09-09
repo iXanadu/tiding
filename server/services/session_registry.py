@@ -1400,7 +1400,8 @@ RELEASE_EVIDENCE = ("performed", "observed", "inferred")
 
 
 async def seat_release(session_key: str, project: str,
-                       evidence: str | None = None) -> str | None:
+                       evidence: str | None = None,
+                       session_nonce: str | None = None) -> str | None:
     """Release this session's seat. Returns the freed seat, or None.
 
     The clean path, always preferable to waiting out the grace period: an
@@ -1438,8 +1439,20 @@ async def seat_release(session_key: str, project: str,
     today's behaviour, and the new guard engages when a caller declares the
     one thing only it knows. Absent evidence is logged, so the migration is
     visible rather than assumed complete.
+
+    SEAT-RELEASE-FENCE-1 — WHEN ``session_nonce`` IS SET. Claim already
+    fences incarnations (SEAT-9 newest-wins + superseded_nonces). Release
+    historically matched only ``session_key``, so a delayed Stop from a
+    displaced predecessor could DELETE the successor's row. Supplying the
+    nonce the CALLER started with makes the DELETE incarnation-exact; a
+    mismatch is a quiet no-op (``released=None``) and must not stamp
+    presence. Omitting the nonce keeps the key-only path for unmigrated
+    callers — they stay unprotected until they migrate. Callers must send
+    the nonce they retained at registration, never one looked up from the
+    current holder at Stop time (that would authorise the stale caller).
     """
     project = (project or "").strip().lower()
+    nonce = (session_nonce or "").strip() or None
     declared = (evidence or "").strip().lower() or None
     if declared is None:
         # WARNING, not info (peer audit, 2026-08-23). The compatibility
@@ -1466,29 +1479,129 @@ async def seat_release(session_key: str, project: str,
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            DELETE FROM memories
-            WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND project = $4
-              AND metadata->>'session_key' = $5
-            RETURNING key
-            """,
-            SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project, session_key,
-        )
-        if row is not None and certain:
-            seat = row["key"].removeprefix("seat/")
-            await conn.execute(
-                """
-                UPDATE memories
-                   SET metadata = jsonb_set(
-                           COALESCE(metadata, '{}'::jsonb),
-                           '{released_at}', to_jsonb(NOW()::text))
-                 WHERE namespace = $1 AND scope = $2 AND user_id = $3
-                   AND key = $4
-                """,
-                SEAT_NAMESPACE, PRESENCE_SCOPE, project, f"presence/{seat}",
-            )
+        # One transaction: the DELETE→presence-stamp gap must not let a
+        # successor claim+heartbeat land between them and then inherit
+        # released_at (SEAT-RELEASE-FENCE-1 audit, 2026-09-09).
+        async with conn.transaction():
+            if nonce is None:
+                row = await conn.fetchrow(
+                    """
+                    DELETE FROM memories
+                    WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                      AND project = $4
+                      AND metadata->>'session_key' = $5
+                    RETURNING key
+                    """,
+                    SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
+                    session_key,
+                )
+            else:
+                row = await conn.fetchrow(
+                    """
+                    DELETE FROM memories
+                    WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                      AND project = $4
+                      AND metadata->>'session_key' = $5
+                      AND metadata->>'session_nonce' = $6
+                    RETURNING key
+                    """,
+                    SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
+                    session_key, nonce,
+                )
+                if row is None:
+                    # Loud enough to grep: a fenced no-op is the success path
+                    # for a stale Stop, and silence here would look like
+                    # "release never ran" when diagnosing a survivor.
+                    logger.info(
+                        "seat_release_fenced: %s (project=%s, nonce=%s) — no "
+                        "row matched; successor claim left untouched",
+                        session_key, project, nonce,
+                    )
+            if row is not None and certain:
+                seat = row["key"].removeprefix("seat/")
+                # Stamp only if the address is still free AND (when fenced)
+                # presence still looks like THIS incarnation — a peer may
+                # have published presence on the name before claiming the
+                # seat (SEAT-RELEASE-FENCE-1 audit).
+                await _stamp_presence_released(
+                    conn, seat, project, session_nonce=nonce,
+                )
     return row["key"].removeprefix("seat/") if row else None
+
+
+async def _stamp_presence_released(
+    conn, seat: str, project: str, session_nonce: str | None = None,
+) -> None:
+    """Mark presence released_at, but never on a successor's row.
+
+    Two guards (SEAT-RELEASE-FENCE-1):
+    1. NOT EXISTS seat/<seat> — successor already reclaimed the name.
+    2. When ``session_nonce`` is set — presence must POSITIVELY name that
+       incarnation (``sessions ? nonce`` or top-level ``session_nonce``)
+       and advertise no foreign sessions keys. Empty/anonymous presence
+       does NOT count as attributable — skip the stamp. Legacy (nonce
+       omitted) keeps guard (1) only.
+    """
+    nonce = (session_nonce or "").strip() or None
+    if nonce is None:
+        await conn.execute(
+            """
+            UPDATE memories
+               SET metadata = jsonb_set(
+                       COALESCE(metadata, '{}'::jsonb),
+                       '{released_at}', to_jsonb(NOW()::text))
+             WHERE namespace = $1 AND scope = $2 AND user_id = $3
+               AND key = $4
+               AND NOT EXISTS (
+                   SELECT 1 FROM memories s
+                    WHERE s.namespace = $1 AND s.scope = $5
+                      AND s.user_id = $6 AND s.project = $7
+                      AND s.key = $8
+               )
+            """,
+            SEAT_NAMESPACE, PRESENCE_SCOPE, project,
+            f"presence/{seat}",
+            SEAT_SCOPE, SEAT_USER_ID, project, f"seat/{seat}",
+        )
+        return
+    await conn.execute(
+        """
+        UPDATE memories
+           SET metadata = jsonb_set(
+                   COALESCE(metadata, '{}'::jsonb),
+                   '{released_at}', to_jsonb(NOW()::text))
+         WHERE namespace = $1 AND scope = $2 AND user_id = $3
+           AND key = $4
+           AND NOT EXISTS (
+               SELECT 1 FROM memories s
+                WHERE s.namespace = $1 AND s.scope = $5
+                  AND s.user_id = $6 AND s.project = $7
+                  AND s.key = $8
+           )
+           -- positive attribution: presence must name THIS incarnation
+           AND (
+                (metadata->'sessions' ? $9)
+                OR metadata->>'session_nonce' = $9
+           )
+           -- top-level, if present, must not contradict (sessions={A}
+           -- plus top-level B must not stamp)
+           AND (
+                metadata->>'session_nonce' IS NULL
+                OR metadata->>'session_nonce' = $9
+           )
+           -- and must not also advertise anyone else
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM jsonb_object_keys(
+                          COALESCE(metadata->'sessions', '{}'::jsonb)) AS k
+                WHERE k <> $9
+           )
+        """,
+        SEAT_NAMESPACE, PRESENCE_SCOPE, project,
+        f"presence/{seat}",
+        SEAT_SCOPE, SEAT_USER_ID, project, f"seat/{seat}",
+        nonce,
+    )
 
 
 # NOTE (2026-07-24, Rob): no role-as-address. A role is not unique and not

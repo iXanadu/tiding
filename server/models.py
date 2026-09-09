@@ -1262,6 +1262,13 @@ class SeatReleaseRequest(BaseModel):
     # assumed correct — see seat_release for why the default is the
     # permissive reading rather than the safe-sounding one.
     evidence: str | None = Field(default=None, max_length=32)
+    # SEAT-RELEASE-FENCE-1: per-PROCESS nonce that claimed this seat. When
+    # present, release deletes only if it still matches the row — a delayed
+    # Stop from a displaced predecessor cannot wipe its successor. When
+    # omitted, behaviour is unchanged (key-only) so unmigrated callers keep
+    # working; they remain unprotected until they send the nonce they
+    # started with (never the "current holder" looked up at Stop time).
+    session_nonce: str | None = Field(default=None, max_length=MAX_ADDR)
 
     @field_validator("session_key", "project", mode="before")
     @classmethod
