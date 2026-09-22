@@ -82,3 +82,21 @@ async def test_a_followup_before_the_reader_acted_is_flagged(client, db_pool):
     fourth = await _send(client, worker)
     assert not any("has not acted" in c for c in fourth), fourth
     await _clean(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_room_post_does_not_claim_to_have_woken_nobody(client, db_pool, monkeypatch):
+    """A room post goes to the owner; the relay wakes members by @-name,
+    invisible to the store. "Woke 0 agents" there was false (peer audit)."""
+    from server.config import settings
+    monkeypatch.setattr(settings, "owner_principal_name", f"{PFX}owner")
+    await _clean(db_pool)
+    r = await client.post("/memory/send", json={
+        "to": f"{PFX}owner", "subject": "s", "body": "@x hi",
+        "from_": f"{PFX}-codex-2@hosta", "thread_id": "huddle/abc",
+    })
+    assert r.status_code == 200, r.text
+    cost = r.json().get("cost_warnings") or []
+    assert cost and cost[0].startswith("Room post"), cost
+    assert not any(c.startswith("Woke") for c in cost), cost
+    await _clean(db_pool)

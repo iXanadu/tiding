@@ -1035,7 +1035,8 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         cost: list[str] = []
         try:
             cost = await send_cost_facts(
-                [t for t, _ in corrected], sender_label, req.intent, ids)
+                [t for t, _ in corrected], sender_label, req.intent, ids,
+                thread_id=req.thread_id)
         except Exception:
             logger.exception("send_cost_facts failed (advisory only)")
         # HUD-ROUTE-1 (2026-08-22): the huddle relay ingests the OWNER's

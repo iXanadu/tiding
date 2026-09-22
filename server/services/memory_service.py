@@ -2632,7 +2632,7 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
 
 async def send_cost_facts(
     recipients: list[str], sender: str | None, intent: str | None,
-    sent_ids: list[str],
+    sent_ids: list[str], thread_id: str | None = None,
 ) -> list[str]:
     """Receipt lines that show a sender what its message cost — SEND-COST-1.
 
@@ -2657,6 +2657,13 @@ async def send_cost_facts(
     recips = [r.strip().lower().split("@", 1)[0] for r in recipients if r]
     if not recips:
         return []
+    # A ROOM post is addressed to the owner; the room's relay then wakes its
+    # members by @-name, which the store never sees. Counting here would say
+    # "Woke 0" about a post that may wake the whole room — say who decides.
+    owner = (settings.owner_principal_name or "").strip().lower()
+    if (thread_id or "").startswith("huddle/") and owner and recips == [owner]:
+        return ["Room post — the room relay wakes whoever it @-names; "
+                "engram cannot count that."]
     me = (sender or "").strip().lower().split("@", 1)[0]
     now = datetime.now(timezone.utc)
     fresh_after = now - timedelta(seconds=PRESENCE_STALE_AFTER_SECONDS)
