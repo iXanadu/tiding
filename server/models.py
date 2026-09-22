@@ -1338,13 +1338,25 @@ class DeathCertRequest(BaseModel):
     # seat@% match (single-box safe).
     host: str = Field(default="", max_length=MAX_ADDR)
     died_at: datetime
+    # SEAT-13b: WHICH INCARNATION died. The session_key is stable across
+    # respawns by design (EXIT-NOTICE-2), so it identifies a chair, never an
+    # occupant — and a certificate that names only a chair can be filed by one
+    # process about a DIFFERENT process still sitting in it. Measured
+    # 2026-09-22: a throwaway probe inherited its parent's environment,
+    # claimed that session's seat, and on exit certified a LIVE session dead.
+    #
+    # The nonce is per-process, so it names the occupant. Optional because
+    # older bridges do not send it and a certificate is still worth recording
+    # without one; the allocator, not the intake, decides what a nonce-less
+    # cert is allowed to do.
+    session_nonce: str = Field(default="", max_length=MAX_ADDR)
     # Canonical: stop | reconcile | spawn-failed. Other short strings are
     # stored verbatim — the vocabulary belongs to the certifier.
     cause: str = Field(default="", max_length=64)
     graceful: bool | None = None
 
     @field_validator("session_key", "seat", "lane", "project", "provider",
-                     "host", mode="before")
+                     "host", "session_nonce", mode="before")
     @classmethod
     def death_normalize(cls, v):
         return v.strip().lower() if isinstance(v, str) else v

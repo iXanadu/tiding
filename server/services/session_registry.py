@@ -473,12 +473,46 @@ def _cert_is_for_this_occupant(row) -> bool:
     about somebody else. Rows stamped before this field existed carry no time
     and are treated as uncertified — the conservative reading, and the one
     that cannot evict anybody.
+
+    ⚠️ SEAT-13b — AND POSTDATING IS NOT ENOUGH EITHER. The rule above only
+    rejects a cert for a PREDECESSOR. It cannot see the opposite case, which
+    is worse: a certificate filed by a DIFFERENT PROCESS about a session that
+    is still sitting here. Such a cert postdates the row by construction, so
+    it sails through and frees an occupied chair.
+
+    This is not hypothetical. Measured 2026-09-22, in production: a throwaway
+    probe inherited its parent's environment, resolved to that parent's seat,
+    and on exit filed a death certificate naming a LIVE session. With the
+    time rule alone, that session's chair was free for the taking while it
+    was sitting in it — the exact failure this whole change exists to
+    prevent, reintroduced by the fix for it.
+
+    The session_key cannot distinguish them: it is STABLE across respawns by
+    design (EXIT-NOTICE-2), so it names a chair, never an occupant. The
+    process nonce does name the occupant. So when BOTH sides carry one, they
+    must MATCH — a cert from some other process is testimony about somebody
+    else, whatever its timestamp says.
+
+    When either side lacks a nonce we fall back to the time rule alone. That
+    is deliberate and it is a known, narrower hole: an older bridge files
+    nonce-less certs, and refusing them outright would break the very
+    restart case SEAT-13 exists to fix. The fallback is no worse than the
+    behaviour that shipped; the match is strictly better where it applies.
     """
     if row is None:
         return False
     md = _md(row)
     if not md.get("death_certified"):
         return False
+
+    # The occupant test, when both sides can name an incarnation. Checked
+    # BEFORE the clock: a mismatch is disqualifying at any timestamp, and
+    # that is the whole point — the bad cert's timestamp always looks good.
+    cert_nonce = (md.get("death_certified_nonce") or "").strip()
+    row_nonce = (md.get("session_nonce") or "").strip()
+    if cert_nonce and row_nonce and cert_nonce != row_nonce:
+        return False
+
     stamped = md.get("death_certified_at")
     created = row["created_at"] if "created_at" in row.keys() else None
     if not stamped or created is None:
@@ -1166,7 +1200,14 @@ async def seat_claim(
             # a second gate silently undoing the first, which is how a fix
             # ships and changes nothing. Certified chairs take over at any
             # age; everything else keeps the original cutoff exactly.
-            takeover_cutoff = (now if prior.get("death_certified")
+            #
+            # SEAT-13b: the same guard as the ladder, not the raw flag. The
+            # flag alone says "a cert names this seat"; the guard says "the
+            # cert is about the session sitting here". Reading the flag here
+            # while the ladder reads the guard would leave the second gate
+            # wider than the first — and this is the gate that actually
+            # performs the eviction.
+            takeover_cutoff = (now if _cert_is_for_this_occupant(row)
                                else live_cutoff)
             if await _try_takeover(conn, seat, project, meta,
                                    older_than=takeover_cutoff):
@@ -1203,6 +1244,7 @@ async def death_certify(
     cause: str,
     graceful: bool | None,
     certified_by: str | None,
+    session_nonce: str | None = None,
 ) -> dict:
     """LANE-4: record a spawner's death certificate and feed the lane cursor.
 
@@ -1248,6 +1290,7 @@ async def death_certify(
         "cause": cause,
         "graceful": graceful,
         "certified_by": certified_by,
+        "session_nonce": (session_nonce or "").strip() or None,
         "received_at": datetime.now(timezone.utc).isoformat(),
     }
     pool = await get_pool()
@@ -1279,12 +1322,13 @@ async def death_certify(
                 UPDATE memories
                 SET metadata = metadata
                     || jsonb_build_object('death_certified', true,
-                                          'death_certified_at', $6::text)
+                                          'death_certified_at', $6::text,
+                                          'death_certified_nonce', $7::text)
                 WHERE namespace = $1 AND scope = $2 AND user_id = $3
                   AND project = $4 AND key = $5
                 """,
                 SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
-                f"seat/{seat}", meta["died_at"],
+                f"seat/{seat}", meta["died_at"], meta["session_nonce"],
             )
 
         cursor_updated = False

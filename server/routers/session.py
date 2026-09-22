@@ -173,6 +173,7 @@ async def certify_death(req: DeathCertRequest, request: Request):
             project=req.project,
             provider=req.provider,
             host=req.host,
+            session_nonce=req.session_nonce,
             died_at=req.died_at,
             cause=req.cause,
             graceful=req.graceful,

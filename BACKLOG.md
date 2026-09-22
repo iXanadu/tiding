@@ -219,6 +219,38 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
+- **SEAT-13b** *(found 2026-09-22 by the author of SEAT-13, an hour after
+  deploying it, by demonstrating it live on his own seat.)*
+  `class:a-record-that-outlives-what-it-describes`
+  **A death certificate names a CHAIR, not an OCCUPANT — so one process can
+  certify another one's live session dead.** The `session_key` is stable
+  across respawns by design (EXIT-NOTICE-2), so two processes can hold the
+  same key at once and the store cannot tell them apart by it.
+  MEASURED INSTANCE: a throwaway bridge probe inherited its parent's
+  environment, resolved to that parent's seat, and on exit filed
+  `death/claude-ab-engram-engram` naming a session that was still running.
+  With SEAT-13's rung live, that chair was free for the taking while it was
+  occupied. Cleaned up inside a minute; no other session was ever named.
+  SHIPPED HALF: the certificate now carries `session_nonce`, the seat row
+  records `death_certified_nonce`, and the guard refuses a cert whose nonce
+  disagrees with the row's — checked BEFORE the clock, because the bad
+  cert's timestamp always looks good. Closes late and foreign certificates.
+  Nonce-less certs (older bridges) still fall back to the time rule: a
+  deliberate, narrower hole, since refusing them would break the restart
+  case SEAT-13 exists to fix.
+  ⚠️ **RESIDUAL, AND IT IS THE INCIDENT ITSELF.** The intruder CLAIMS before
+  it certifies, and a same-key claim rewrites the seat row's `session_nonce`
+  — so by the time the cert arrives the row already names the intruder and
+  the nonces match. **The certificate is the wrong place to fix this.** The
+  CLAIM path must refuse to silently displace a live occupant that shares
+  its key. Sibling of SEAT-DISPLACE-LIVE-1 below, and probably the same fix.
+  Pinned as an `xfail(strict)` in `tests/test_seat13b_cert_names_the_occupant.py`
+  — it fails the day someone closes it, so a green suite cannot imply it is
+  already closed.
+  · Status: OPEN (shipped half deployed; residual open) · Root: claim path
+  lets a second process become the recorded occupant · Found: the author's
+  own probe, in production
+
 - **SEAT-DISPLACE-LIVE-1** *(measured 2026-09-22 from the live seat rows;
   supersedes this session's two earlier wrong explanations. Owner ordered it
   fixed by name, which lifts the freeze on it.)*
@@ -516,34 +548,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 
 ## Blocking-ish — ops gaps that cost live sessions today
-
-- **LAST-SPOKE-IS-THE-WATCHER-1** *(found 2026-09-22 the hard way: I used it
-  to give the owner a false all-clear on agents he had twice called
-  critical, and he disproved it from a screenshot.)*
-  `class:two-columns-one-source`
-  **The roster prints "last spoke" and "watcher beat" side by side as though
-  they corroborate each other. They do not: the watcher's heartbeat refreshes
-  the same `last_used_at` that "last spoke" reads.** The docstring says so
-  plainly — *"It DOES refresh last_used_at on both presence and seat rows"* —
-  and it is deliberate (SEAT-7, so an agent head-down on a long build is not
-  reclaimed mid-work). The cost is that the field named for AGENT activity
-  reports WATCHER liveness, and a reader who sees both columns fresh believes
-  two independent facts agree when one is derived from the other.
-  MEASURED INSTANCE: five agents whose last turn failed at 07:42 with
-  "usage limit exceeded" and which had done nothing for ten hours all read
-  "spoke 5-27s ago". Their watchers were healthy; the agents were inert. The
-  reader (me) had written the lesson naming this exact distinction earlier
-  the same day, quoted it to the owner two hours before, and still read the
-  label rather than the mechanism — which is the measure of how convincing
-  the display is.
-  FIX: keep the refresh (reclaim-protection is legitimate) but stop one
-  field serving two questions. Record and render agent-turn activity
-  separately from watcher liveness, and never let a watcher write the field
-  a human reads as "this agent is working". A column that cannot be false
-  when the thing it names is dead is not evidence.
-  · Status: OPEN · Root: watcher beat writes the seat/presence activity stamp
-  · Found: a false all-clear given to the owner, corrected by his screenshot
-
 
 - **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
   own fleet; the wrong answer was built and discarded before sending.)*
