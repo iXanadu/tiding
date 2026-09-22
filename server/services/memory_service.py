@@ -1987,6 +1987,23 @@ async def presence_update(
             "host": (None if identity in SEAT_EXEMPT_IDENTITIES
                      else host or prior_md.get("host")),
             "sessions": sessions,
+            # LAST-SPOKE-IS-THE-WATCHER-1. `last_used_at` is written by BOTH
+            # this beat and the watcher's (presence_watcher_beat refreshes it
+            # deliberately, so a session head-down on long work is not aged
+            # out). The consequence is that the column a reader takes for
+            # AGENT activity also reports WATCHER liveness, and the two are
+            # indistinguishable afterwards.
+            #
+            # That cost something real on 2026-09-22: five agents whose last
+            # turn had failed ten hours earlier all read "spoke seconds ago",
+            # and I used it to tell the owner his stalled team was fine. He
+            # disproved it from a screenshot of the agent's own failed turn.
+            #
+            # This field is written ONLY here — on a real tool call, by the
+            # agent's own bridge. The watcher's beat merges a single key with
+            # jsonb_set and cannot touch it. So it answers the question the
+            # other column only appears to: when did this AGENT last act.
+            "agent_last_active": now.isoformat(),
         }
         # MSG-9: this write REPLACES metadata wholesale, so any field owned by
         # another writer must be carried forward explicitly or it is destroyed.
@@ -2464,6 +2481,14 @@ async def roster_list(
             "hosts_seen": sorted({i.get("host") for i in fresh.values() if i.get("host")}) if fresh else [],
             "watcher_alive": watcher_alive,
             "watcher_last_seen": watcher_seen,
+            # LAST-SPOKE-IS-THE-WATCHER-1: the honest sibling of `last_seen`.
+            # `last_seen` / `last_used_at` is refreshed by the WATCHER as well
+            # as the agent, so a dead session reads "spoke seconds ago" for as
+            # long as its watcher keeps beating — which is how a reader (me,
+            # 2026-09-22) told the owner a team that had not acted in ten
+            # hours was fine. This one is stamped only on a real tool call by
+            # the agent's own bridge. None means no basis, never "dead".
+            "agent_last_active": md.get("agent_last_active"),
             # WATCH-RENDER-1: whether a watcher OWNS this seat's wake stream,
             # which `watcher_alive` does not say — it reports one beat, and a
             # watcher can beat forever without ever claiming.
