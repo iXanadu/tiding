@@ -506,6 +506,26 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
+  own fleet; the wrong answer was built and discarded before sending.)*
+  `class:enough-to-bill-not-enough-to-diagnose`
+  **The request log records the PROVIDER and the PROJECT that made each call,
+  but not the SEAT — so every per-agent operational question is unanswerable,
+  and worse, answerable-looking.** Several sessions on one project collapse
+  into one series: "was an agent beating in this window" silently becomes
+  "was ANY agent on this project beating", which is a different question with
+  a plausible answer. Asked for the historical split of agent-with-watcher /
+  agent-without / watcher-without-agent, this produced a clean three-column
+  table whose orphan rate was 0% — contradicted by a peer's process-level
+  count of roughly two dozen a day. The zero was the only reason the table
+  was checked rather than sent. Add the resolved seat to the request log
+  (it is known at the point of logging) or state in the schema that the log
+  cannot support per-seat analysis. Sibling of MODEL-ATTRIB-1: the same
+  record is rich enough for accounting and too coarse for diagnosis.
+  · Status: OPEN · Root: request_log identity columns stop at provider+project
+  · Found: owner fleet question, answered wrongly then withdrawn
+
+
 
 - **MODEL-ATTRIB-1** *(measured 2026-09-22 during an overnight usage study,
   across 1,562 live messages.)* `class:field-exists-but-is-never-populated`
