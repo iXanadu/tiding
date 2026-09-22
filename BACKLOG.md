@@ -219,39 +219,37 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
-- **WATCH-DISPLACE-ORPHAN-1** *(reported 2026-09-22 by a peer seat with its
-  own watcher log; corroborated by the roster, a live status read, and a
-  message-timing census. FROZEN — messaging.)*
-  `class:handoff-assumes-a-survivor`
-  ⚠️ **CAUSE CORRECTED 2026-09-22 after the owner rejected the first
-  explanation.** The displacing party was first assumed to be a second,
-  rival session. Measured: there was none. The two seats never overlap —
-  the earlier one's last utterance and the later one's first are 90 seconds
-  apart, and only one session of that kind existed all day. **A session was
-  therefore displaced from its own chair, most likely by its own
-  reconnecting bridge finding its previous claim still held and being
-  issued the next ordinal.** (The reconnect itself is inferred from the
-  timing and a concurrent service restart, not read from a log.) That makes
-  the ordinals climb on every reconnect rather than on every rival, and it
-  means the displacement path runs in the ordinary case, not the rare one.
-  A reconnecting bridge must be recognised as the incumbent returning, not
-  as a rival.
-  **When a seat is displaced, the outgoing watcher exits "for supervisor
-  respawn" — but if the bridge that owned it is already gone, nothing
-  respawns under the new seat, and the displacing session is deaf from
-  birth.** The displaced watcher records the handoff correctly and exits
-  cleanly; the assumption it encodes is that a supervisor outlives it. When
-  the bridge process is gone (observed `ppid 1`), that assumption is false
-  and no writer is ever attached to the new seat's FIFO. The new session
-  then does everything right — attaches a reader as instructed — and still
-  reads `NOT COVERED (state=unheld)` indefinitely, because a reader without
-  a writer is not coverage. Effect is latency, not loss: mail queues and is
-  read on the next explicit call, and the session can still follow a room by
-  fetching the transcript. Exit-for-respawn must either verify a supervisor
-  exists before exiting, or the displacing bridge must claim and start a
-  watcher for the seat it took.
-  · Status: OPEN (frozen) · Root: watcher displacement handoff
-  · Found: peer report during a live seat displacement
+- **SEAT-DISPLACE-LIVE-1** *(measured 2026-09-22 from the live seat rows;
+  supersedes this session's two earlier wrong explanations. Owner ordered it
+  fixed by name, which lifts the freeze on it.)*
+  `class:recency-mistaken-for-authority`
+  **A live session can be renamed out of its own seat, because newest-wins
+  treats nonce recency as authority and the one-way door then mints the
+  displaced process a NEW ordinal.** Evidence, one project, one stable
+  (non-generated) session_key, two seat rows:
+  `-10` holds nonce A and lists nonce B as superseded; `-11` holds nonce B.
+  **The superseded nonce is the one still beating** — `-11` beat for ~1h45m
+  after `-10` went quiet. So B, the genuinely live process, was superseded by
+  a transient A, hit the closed door on its next claim, and was allocated a
+  fresh ordinal; its watcher then logged `seat changed -10 -> -11` and the
+  session's address moved under it mid-life.
+  **The door's stated purpose is to make a DYING predecessor's last heartbeat
+  harmless. Here it fired on the survivor.** Recency of nonce is not liveness,
+  and the door cannot tell the two apart.
+  Compounding it: the bridge hands its own nonce to the watcher it spawns, so
+  one logical session has two claimants and a bridge restart leaves the older
+  one claiming with a nonce that is about to be superseded.
+  ⚠️ **THE FIX NEEDS A RULING, NOT A PATCH.** Minting a new seat for a
+  displaced claimant is what creates the phantom identity — a process that has
+  been superseded needs to be told to stand down, not handed a name. But
+  refusing changes the claim contract, and deciding "who is really alive" is
+  the liveness problem this registry deliberately refuses to guess at. Pick
+  one: (a) door-closed returns a refusal and the caller stands down, (b) the
+  watcher stops claiming under the bridge's nonce so there is one claimant per
+  session, or (c) displacement requires positive evidence the loser is gone.
+  · Status: OPEN (diagnosed, unfixed — needs an owner/design ruling)
+  · Root: newest-wins + one-way door, nonce recency as proxy for liveness
+  · Found: owner-reported seat churn, traced to the live seat rows
 
 
 - **REPLY-TARGET-1** *(reported 2026-09-18; reproduced from the current
