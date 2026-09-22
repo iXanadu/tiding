@@ -38,6 +38,7 @@ import httpx
 
 from engram_mcp.client import MemoryClient
 from engram_mcp.config import settings
+from engram_mcp.fence import _fence_body
 from engram_mcp.identity import (
     compute_identity,
     derive_project_name,
@@ -347,8 +348,19 @@ def _emit_wake(w: dict) -> None:
     )
 
 
+# WAKE-BODY-1: the wake carries the message itself, so the reader does not
+# spend a whole extra model call fetching its inbox to see what it was woken
+# for. Measured 2026-09-22: inbox reads were ~33% of Codex messaging cost,
+# about two per wake. The cap only bites on outliers (overnight mail: median
+# 574 chars, 99% under 2,700, 6 of 1,257 over 4,000); a capped body says so,
+# and then — only then — the inbox is where the rest lives.
+WAKE_BODY_CAP = 4000
+
+
 def _emit(msg: dict) -> None:
     """Print one compact JSON line per new message (Monitor → one wake each)."""
+    raw = msg.get("body") or ""
+    truncated = len(raw) > WAKE_BODY_CAP
     _out(
         json.dumps(
             {
@@ -357,6 +369,12 @@ def _emit(msg: dict) -> None:
                 "subject": msg.get("subject", ""),
                 "thread_id": msg.get("thread_id"),
                 "created_at": msg.get("created_at"),
+                "intent": msg.get("intent"),
+                # Fenced as DATA: a body is the sender's words, and a wake line
+                # lands in the reader's context — unfenced, one agent's orders
+                # to a third party read as the reader's own (CURSOR-ROOMBLIND-1).
+                "body": _fence_body(raw[:WAKE_BODY_CAP]),
+                "body_truncated": truncated,
             },
             separators=(",", ":"),
         ),
