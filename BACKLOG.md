@@ -307,6 +307,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   reader's next wake).
   · Status: OPEN · Root: design · Found: building the owner's nag fix
 
+- **PAUSED-PARK-1** *(measured 2026-09-22; deliberately NOT built.)* Park
+  mail wakes for a seat that is out of provider allowance until its reset.
+  The launcher now publishes per-seat state (working / idle /
+  out_of_allowance + reset time). Value measured on one busy night: 15 waking
+  mails to exhausted seats of 1,091 — about 1%. Cost: engram would have to
+  poll an external feed (config, not a hardcoded peer) AND re-emit held mail
+  at reset, or a parked seat wakes deaf — the HOLD-REPEAT-1 hazard again.
+  Build only if a measured night shows it matters.
+  · Status: OPEN · Root: design · Found: owner-ordered waste study
+
 - **SEAT-RECYCLE-1** *(reported 2026-09-16; sender's consumer-side mitigation
   shipped, store residual remains frozen.)* `class:stale-binding`
   **When a seat name is re-granted to a new session key, the prior key's grant
