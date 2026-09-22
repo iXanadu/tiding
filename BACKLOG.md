@@ -25,6 +25,13 @@
 > PAGE-INTENT-1. Everything that shipped that evening was Projalpha's tree,
 > not ours — do NOT read "comms are working now" as "the freeze ended". Only
 > the owner lifts it, by name.
+>
+> **PARTIAL LIFT (owner, 2026-09-22 ~21:55Z: "Code it up").** Lifted ONLY for
+> the messaging-waste fixes agreed that day, all now shipped and deployed:
+> REPLY-TARGET-1, WAKE-BODY-1, AGENT-ACTIVE-1, SEND-COST-1 (story:
+> `fix/messaging-waste-round-1-2026-09-22`). Everything else below is STILL
+> frozen. The same day the owner ruled that every room post must name its
+> recipient (`@all` for everyone) — the launcher enforces it now.
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
@@ -964,33 +971,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   TOLD it is uncovered between wakes. Fix shape: per beat, probe the FIFO
   with `open(O_WRONLY|O_NONBLOCK)` — succeeds only when a reader holds it,
   ENXIO otherwise — and report `expired` on ENXIO. `class:absence-vs-failure`.
-
-- **WAKE-NOISE-1** 42% of huddle wakes (142/338 joined to transcripts,
-  48h) violate the room's own @mention rule — each forces a full model
-  turn whose correct output is "not for me" (~70 wasted turns/day, worse
-  at heavy context). Proposal sent 2026-08-20: owner posts wake all;
-  @mentioned wake now; everyone else gets ONE coalesced digest wake per
-  room per ~15min. Split: AB parses mentions and tags wakes; engram
-  coalesces deferred wakes server-side. ⛔ Waits on the OWNER's confirm
-  that an unaddressed peer post may wake nobody immediately — his rooms,
-  his call.
-  ⛔ **AND HE HAS NOW ANSWERED, AGAINST THIS ITEM'S PREMISE (2026-08-23
-  17:57Z).** *"A huddle message is ALWAYS broadcast to the team. Where this
-  has been helpful, dozens of times, is corrections."* The 42% figure is
-  real; calling all of it waste was wrong. A correction landing on every
-  seat at once is the room working — and it is precisely an unmentioned
-  broadcast, so the coalescing proposal above would delay or drop the most
-  valuable class of message in the room. Measured the same day: three
-  agents corrected each other repeatedly, every correction reached all four
-  seats, and several changed what another agent was about to build.
-  **DO NOT BUILD THE COALESCER.** If the number ever needs to come down, it
-  must come from making an IRRELEVANT turn cheap, never from making a
-  RELEVANT one arrive late. Reducing broadcast trades a cost he is willing
-  to pay for a benefit he has counted dozens of times.
-  `class:measurement-right-meaning-wrong` — the count was sound and the
-  conclusion drawn from it was not. Second instance in ten minutes from the
-  same author; see also PAGE-INTENT-1, where 55-of-57 was real but was NOT
-  the cause of the pushes it was cited for.
 
 - **CTX-1-SWEEP** The once-per-session banner/guidance bridge (afcc010,
   2026-08-21) is live on hosta only; spokes run the ec39872 bridge until
