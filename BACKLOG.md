@@ -324,6 +324,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Build only if a measured night shows it matters.
   · Status: OPEN · Root: design · Found: owner-ordered waste study
 
+- **SIBLING-WARN-SUPERSEDED-1** *(found 2026-09-22 at wrapup.)* The
+  store-time advisory "'<key>' ALSO exists in this project under writer X …
+  both now rank in search" (`server/routers/memory.py` ~253) fires for
+  writers whose row is already SUPERSEDED — which do not rank in search.
+  Measured: storing `startup/next` warned about the cursor and grok rows;
+  both had been retired (09-08 and 09-22), so the prescribed
+  memory_supersede call just reports "already superseded". Costs a
+  wrapping session a pointless investigation. Fix: exclude drained rows
+  (the same HIDDEN_STATUSES the search uses) from the sibling probe.
+  `class:absence-vs-failure` · Status: OPEN · Root: sibling probe ·
+  Found: wrapup
+
 - **SEAT-RECYCLE-1** *(reported 2026-09-16; sender's consumer-side mitigation
   shipped, store residual remains frozen.)* `class:stale-binding`
   **When a seat name is re-granted to a new session key, the prior key's grant
