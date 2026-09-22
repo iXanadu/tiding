@@ -1,0 +1,13 @@
+# Hygiene exceptions — TRACKED ON PURPOSE, unlike the denylists.
+#
+# A denylist is box-wide and cannot know that a name is in a file BECAUSE it
+# belongs there. Without this file, such a name makes the check fail forever,
+# and a check that can never pass gets bypassed — which is worse than the name.
+# Exceptions are tracked so they are reviewable: adding one is a visible act.
+#
+# Format:  <file-path-prefix>:<extended-regex>   # why it is deliberate
+# BOTH must match a finding for it to be excused. Never a bare pattern:
+# an exception must name the file it applies to, or it is a hole.
+
+NOTICE:[Hh]omedog\.com                  # legal attribution — the copyright holder must be named
+README.md:[Hh]omedog\.com               # same notice, restated in the licence history section

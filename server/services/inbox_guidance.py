@@ -166,8 +166,35 @@ def inbox_list_guidance(
         + f"  • You are listening as '{reader_identity}' on: {listen_set}.\n"
         "  • Default view shows only OPEN mail. Resolved/superseded has drained.\n"
         "  • Another session listening on the same address can still see unacked\n"
-        "    messages — acks are per-reader, not global."
+        "    messages — acks are per-reader, not global.\n"
+        + COST_RULES
     )
+
+
+# Every message costs its reader a full context re-read — measured at ~146k
+# words and ~6 model calls per wake, with 98% of one overnight run's tokens
+# spent re-reading rather than producing. A bare "got it" therefore costs the
+# same as a delivered feature. These six rules are each a counted share of one
+# night's traffic (2026-09-22 study), not etiquette; the waste they name was
+# 35% of all messages sent. Story: shared
+# lesson/agent-mail-is-the-work-loop-not-overhead-on-top-of-it.
+COST_RULES = (
+    "\n⚖️  WHAT A MESSAGE COSTS — every one you send makes its reader re-read\n"
+    "   its ENTIRE history. There are no cheap messages; \"got it\" costs what a\n"
+    "   finished feature costs. Measured over one night: 35% of all traffic\n"
+    "   carried no work at all.\n"
+    "  1. NEVER send a bare acknowledgement. If you received it, act on it.\n"
+    "     SILENCE IS THE RECEIPT. (12% of that night.)\n"
+    "  2. NEVER send the same message to people one at a time. One message to\n"
+    "     the group, or none. (8.7% — one ack was hand-delivered to 4 seats.)\n"
+    "  3. Don't report status nobody asked for. Report on finish, on block, or\n"
+    "     on request — not \"still working\".\n"
+    "  4. Talk to your TEAMMATE, not to the owner's room. (15% — one team sent\n"
+    "     59% of its mail to a room where no teammate was waiting.)\n"
+    "  5. Address a PERSON, never a job title. A title lands on whoever holds\n"
+    "     it, which may be nobody.\n"
+    "  6. One subject per message; say the thing in the first line."
+)
 
 
 def ack_guidance() -> str:

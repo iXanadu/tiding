@@ -116,7 +116,8 @@ watch" read off the claims table; existing doubles converge at next beat.
    (Owner tests cursor/grok live.)
 3. Only then cut the prose (startup skill 4b, AGENTS.md auto-watch, tonight's
    broadcast recipe) in one pass, superseding not deleting. Removing prose
-   before step 2 passes re-opens the tagApp hole by documentation (I1).
+   before step 2 passes re-opens the same-name-different-project hole by
+   documentation (I1).
 
 ## Explicit questions for the adversarial reviewer
 

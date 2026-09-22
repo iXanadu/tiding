@@ -53,13 +53,37 @@ N_TRACKED=$(printf '%s' "$FILES_TRACKED" | grep -c . || true)
 N_NEW=$(printf '%s' "$FILES_NEW" | grep -c . || true)
 scan_files() { printf '%s\n%s\n' "$FILES_TRACKED" "$FILES_NEW" | grep -v '^$'; }
 
+# HYGIENE-BASELINE-1: a denylist is box-wide and cannot know that a name sits
+# in a file BECAUSE it belongs there — a copyright holder must be named in the
+# NOTICE. Left unexcused, such a name fails the check forever, and a check that
+# can never pass gets bypassed, which is worse than the name. Exceptions live
+# in a TRACKED file so adding one is a visible, reviewable act (the denylists
+# themselves are deliberately untracked). Each rule must name BOTH a file and a
+# pattern: a bare pattern would be a hole, not an exception.
+apply_allowfile() { # stdin: grep hits -> stdout: hits minus excused ones
+  if [ ! -f .hygiene-allow ]; then cat; return; fi
+  local out rule path pat
+  out=$(cat)
+  while IFS= read -r rule; do
+    case "$rule" in ''|\#*) continue;; esac
+    rule="${rule%%#*}"                       # strip trailing reason comment
+    rule="$(printf '%s' "$rule" | sed -E 's/[[:space:]]+$//')"
+    case "$rule" in *:*) ;; *) continue;; esac
+    path="${rule%%:*}"; pat="${rule#*:}"
+    [ -n "$path" ] && [ -n "$pat" ] || continue
+    out=$(printf '%s' "$out" | grep -vE "^${path}[^:]*:[0-9]+:.*${pat}" || true)
+  done < .hygiene-allow
+  printf '%s' "$out"
+}
+
 scan() { # scan <label> <extended-regex> [extra grep args...]
   local label="$1" pattern="$2"; shift 2
   local hits n
   hits=$(scan_files | tr '\n' '\0' \
     | xargs -0 grep -InE "$@" -- "$pattern" 2>/dev/null \
     | grep -vE '(^|/)repo-hygiene-check\.sh:' \
-    | grep -vE "$ALLOW" || true)
+    | grep -vE "$ALLOW" \
+    | apply_allowfile || true)
   if [ -n "$hits" ]; then
     fail=1
     echo "✗ $label"

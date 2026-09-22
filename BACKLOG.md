@@ -219,6 +219,76 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
+- **WATCH-DISPLACE-ORPHAN-1** *(reported 2026-09-22 by a peer seat with its
+  own watcher log; corroborated by the roster, a live status read, and a
+  message-timing census. FROZEN — messaging.)*
+  `class:handoff-assumes-a-survivor`
+  ⚠️ **CAUSE CORRECTED 2026-09-22 after the owner rejected the first
+  explanation.** The displacing party was first assumed to be a second,
+  rival session. Measured: there was none. The two seats never overlap —
+  the earlier one's last utterance and the later one's first are 90 seconds
+  apart, and only one session of that kind existed all day. **A session was
+  therefore displaced from its own chair, most likely by its own
+  reconnecting bridge finding its previous claim still held and being
+  issued the next ordinal.** (The reconnect itself is inferred from the
+  timing and a concurrent service restart, not read from a log.) That makes
+  the ordinals climb on every reconnect rather than on every rival, and it
+  means the displacement path runs in the ordinary case, not the rare one.
+  A reconnecting bridge must be recognised as the incumbent returning, not
+  as a rival.
+  **When a seat is displaced, the outgoing watcher exits "for supervisor
+  respawn" — but if the bridge that owned it is already gone, nothing
+  respawns under the new seat, and the displacing session is deaf from
+  birth.** The displaced watcher records the handoff correctly and exits
+  cleanly; the assumption it encodes is that a supervisor outlives it. When
+  the bridge process is gone (observed `ppid 1`), that assumption is false
+  and no writer is ever attached to the new seat's FIFO. The new session
+  then does everything right — attaches a reader as instructed — and still
+  reads `NOT COVERED (state=unheld)` indefinitely, because a reader without
+  a writer is not coverage. Effect is latency, not loss: mail queues and is
+  read on the next explicit call, and the session can still follow a room by
+  fetching the transcript. Exit-for-respawn must either verify a supervisor
+  exists before exiting, or the displacing bridge must claim and start a
+  watcher for the seat it took.
+  · Status: OPEN (frozen) · Root: watcher displacement handoff
+  · Found: peer report during a live seat displacement
+
+
+- **REPLY-TARGET-1** *(reported 2026-09-18; reproduced from the current
+  bridge route, not fixed — frozen.)* `class:contract-disagrees-with-code`
+  **A direct `memory_reply` to an ordinal-seat sender routes to the sender's
+  immortal lane, while the tool contract says it replies to the sender.** If
+  another live occupant holds that lane, the reply reaches that occupant and
+  reads as a wrong-seat delivery. This is the designed LANE-5 default, not a
+  suffix parser bug: exact-seat replies were explicitly left as an unbuilt
+  opt-in. The public contract and the observed behavior cannot both stand.
+  Owner must choose whether direct replies remain lane-durable by default or
+  gain an explicit mortal-seat flag; until then, send explicitly to the full
+  seat when the recipient must be that incarnation.
+  · Status: OPEN (frozen) · Root: LANE-5 reply routing
+  · Found: peer report with a live two-occupant lane
+
+- **SEAT-RECYCLE-1** *(reported 2026-09-16; sender's consumer-side mitigation
+  shipped, store residual remains frozen.)* `class:stale-binding`
+  **When a seat name is re-granted to a new session key, the prior key's grant
+  row can remain live-looking, leaving two keys bound to one seat.** A consumer
+  that joins death certificates to grants by seat can then let the stale row
+  hide the live occupant. Re-grant must retire or release the prior binding,
+  with an explicit compatibility decision for grant-history readers.
+  · Status: OPEN (frozen) · Root: session registry re-grant lifecycle
+  · Found: live `/session/seats` duplicate binding
+
+- **WATCH-GRANT-CONSISTENCY-1** *(reported 2026-09-15; launcher retry storm
+  mitigated externally, store/bridge mismatch remains frozen.)*
+  `class:two-validations-disagree`
+  **The bridge can grant a seat whose name is outside the caller's project
+  prefix, then the watcher refuses that same seat as contradictory to the
+  project directory.** Either allocation must preserve the watcher's project
+  invariant or WATCH-1 must accept a server grant tied to the same session
+  key. Today a valid grant can produce a mail-deaf session.
+  · Status: OPEN (frozen) · Root: allocator/watch identity contract
+  · Found: live granted-seat watcher refusal
+
 - **HUDDLE-ATTACH-1** *(reported 2026-08-28 by a peer seat on another project;
   reproduced by the reporter on two seats, not by us.)*
   `class:absence-vs-failure`
@@ -438,6 +508,37 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+
+- **MODEL-ATTRIB-1** *(measured 2026-09-22 during an overnight usage study,
+  across 1,562 live messages.)* `class:field-exists-but-is-never-populated`
+  **Messages carry a `model` field that is blank for every sender except two
+  providers, so stored traffic cannot be attributed to a model.** Records show
+  the model only where a transcript can be read or the client declares it;
+  for the other providers it is null with `model_source=unknown` on 100% of
+  rows. The consequence is not cosmetic: a seat whose model is switched
+  mid-session produces an unbroken, indistinguishable record, so any
+  per-model comparison built on stored traffic is unsound, and the agent's
+  own self-report — already observed to be wrong once — becomes the only
+  source. Either populate the field at ingest for every provider, or stop
+  publishing a field that is empty for most senders and say so in the
+  contract.
+  · Status: OPEN · Root: model capture at message ingest
+  · Found: usage/subscription study asking a per-model question
+
+
+
+- **FLEET-OWNER-TOKEN-1** *(fleet census 2026-09-19; operator decision and
+  secret provisioning required.)* `class:partial-provisioning`
+  **The local service box has the owner credential, while every active remote
+  spoke lacks it.** Owner messaging and guarded seat release are dark there;
+  one dependent service retries the permanent configuration failure once per
+  second, flooding logs. Decide whether spokes should hold this authority. If
+  yes, mint/distribute per-spoke credentials and verify both features; if no,
+  disable the dependent loops rather than retrying forever. Do not copy one
+  shared secret fleet-wide.
+  · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
+  · Found: peer incident report, then full live-fleet presence census
+
 - **WATCH-ADMIN-SEAT-1** *(measured 2026-08-29 on two boxes plus a live store
   query; reported by an admin session that had been deaf for 2.5h. FROZEN —
   messaging. Owner has NOT ruled on this one.)* `class:absence-vs-failure`
@@ -475,6 +576,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   WRITTEN to the FIFO — "wakes flow", not "a claim exists and a reader is
   attached". Independent of WATCH-ADMIN-SEAT-1: fixing the key restores wakes,
   fixing this makes the next such failure visible in minutes instead of hours.
+  **NEW 2026-09-19:** the opposite stale state is also live: after a timed-out
+  consumer reattached, the replacement reader delivered a queued wake while
+  `memory_status` still reported `NOT COVERED (state=expired)` for more than
+  two minutes. Status is not only capable of false health; it can stay falsely
+  unhealthy after delivery resumes. Recovery must re-assert or directly
+  observe attachment state instead of waiting for an unrelated later event.
 
 - **ADMIN-ADDR-1 (phases b–d)** *(server + bridge halves SHIPPED; enforcement is
   gated OFF until the fleet is swept. Owner ruled the item outside the messaging
@@ -821,6 +928,26 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   let it become permanent clutter.
 
 ## Needs-decision
+
+- **HOSTED-CHAT-AUTH-1** *(owner deferred 2026-09-19: useful, but the pain may
+  not justify the leverage yet.)* Three vendor-hosted chat surfaces could gain
+  useful project context through restricted Engram principals: read shared
+  project/fleet memory, write only to a private per-surface namespace, and no
+  admin or messaging tools. First-party bots already use dedicated static
+  bearer credentials safely because their server runtime is under operator
+  control. Hosted connectors move credential custody to vendor infrastructure;
+  OAuth is the common integration shape and still delivers bearer access
+  tokens, but adds consent, expiry, refresh, revocation, client registration,
+  and a public remote-MCP/OAuth gateway to operate.
+  DECISION: do not build this yet. Revisit when cross-chat memory context is
+  valuable enough to justify that gateway and its security/operations burden.
+  A restricted static token may be an interim option on providers that support
+  custom authorization headers, but it is not a uniform three-provider design.
+  Before implementation, separately resolve tool exposure: fleet READ currently
+  admits protocol operations such as mail, so namespace permissions alone do
+  not produce a memory-only client.
+  · Status: OPEN (owner, deferred) · Root: hosted chat connector expansion
+  · Detail: `decision/hosted-chat-auth-deferred-2026-09-19` in project memory
 
 - **WAL-RETENTION-1** *(measured by an admin session 2026-08-28: 3,703 files /
   2.5 GB in the WAL archive under the dump dir, oldest 2026-08-11, growing

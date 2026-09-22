@@ -25,6 +25,7 @@ act on it.)
 
 import argparse
 import asyncio
+import datetime as _dt
 import os
 import json
 import shlex
@@ -160,6 +161,46 @@ _FIFO_FD: int | None = None  # the write end _out targets (tests point it at a p
 _MIRROR_TO_STDOUT = True  # dup2 the FIFO onto fd 1 so stray prints ride it too
 
 
+class _StampedStderr:
+    """LOG-NO-CLOCK-1: put a UTC clock on every log line.
+
+    This log had no timestamps at all — it recorded WHAT happened and in
+    what order, never WHEN. Investigating a live seat displacement, the
+    moment had to be reconstructed from message records in another store,
+    and a wrong explanation survived longer than it should have because the
+    log could not date its own events. A log is evidence; evidence without a
+    clock cannot be correlated with anything else.
+
+    Wrapping the stream rather than editing ~20 call sites means no line can
+    be added later that forgets the stamp. Buffers until a newline so a
+    print()'s text and its separate "\\n" are not stamped as two lines.
+    """
+
+    def __init__(self, stream) -> None:
+        self._s = stream
+        self._buf = ""
+
+    def write(self, text: str) -> int:
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._s.write(f"{ts} {line}\n")
+        return len(text)
+
+    def flush(self) -> None:
+        self._s.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+def _install_log_clock() -> None:
+    """Idempotent: wrapping twice would stamp twice."""
+    if not isinstance(sys.stderr, _StampedStderr):
+        sys.stderr = _StampedStderr(sys.stderr)
+
+
 def _fifo_mode() -> bool:
     return bool(_FIFO_PATH)
 
@@ -198,7 +239,16 @@ def _out(line: str, *, block_on_detach: bool = True) -> None:
     `block_on_detach=False` is for last words (the dying gasp): if nobody is
     listening there is nobody to block for.
     """
-    if not _fifo_mode():
+    # GASP-FD-CRASH-1: stream mode is decided by the PATH but the write needs
+    # the DESCRIPTOR, and they are set at different moments. In the window
+    # between them (and after a failed re-attach) the descriptor is None, and
+    # os.write(None, ...) raises TypeError — which killed the dying gasp, the
+    # one message whose job is to explain a death. Fall back to stderr, which
+    # is where the log already goes, rather than taking the process down.
+    if not _fifo_mode() or _FIFO_FD is None:
+        if _FIFO_FD is None and _fifo_mode():
+            print(f"inbox-wait: (stream not open) {line}", file=sys.stderr, flush=True)
+            return
         print(line, flush=True)
         return
     data = (line + "\n").encode("utf-8", "replace")
@@ -811,8 +861,25 @@ class _WatchClaimState:
                 print("inbox-wait: watch beat recovered — emission resumed",
                       file=sys.stderr, flush=True)
             return "holder"
+        # WATCH-DISPLACE-ORPHAN-1: "exiting for supervisor respawn" states an
+        # ASSUMPTION — that a supervisor is alive to respawn us. When the
+        # bridge is already gone we are re-parented to pid 1, nothing will
+        # respawn anything, and this exit hands the seat to nobody. That case
+        # cost a live session its wake stream and read, from outside, as an
+        # agent ignoring its owner. We cannot fix it from here (we do not hold
+        # the claim and must still go) — but it must never again be silent or
+        # require forensics to reconstruct.
+        if _orphaned():
+            print("inbox-wait: ⛔ DISPLACED WHILE ORPHANED — another watcher "
+                  "holds this seat AND our bridge is gone (ppid 1), so NOTHING "
+                  "WILL RESPAWN A WATCHER. The seat that displaced us is very "
+                  "likely UNCOVERED: mail will queue there but will not "
+                  "interrupt it. Whatever supervises the displacing session "
+                  "must start its watcher.", file=sys.stderr, flush=True)
+            return "displaced"
         print("inbox-wait: DISPLACED — another watcher holds this seat; "
-              "exiting for supervisor respawn", file=sys.stderr, flush=True)
+              "exiting for supervisor respawn (our bridge is alive, so a "
+              "respawn is expected)", file=sys.stderr, flush=True)
         return "displaced"
 
 
@@ -1334,6 +1401,7 @@ def _install_signal_handlers() -> None:
 
 
 def main() -> None:
+    _install_log_clock()  # LOG-NO-CLOCK-1 — before anything can log
     p = argparse.ArgumentParser(
         prog="engram-inbox-wait",
         description="Watch the engram inbox and emit on new mail (wakes a dormant session).",
