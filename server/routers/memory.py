@@ -1474,6 +1474,7 @@ async def update_presence(req: PresenceUpdateRequest, request: Request):
             channels=req.channels,
             session_nonce=req.session_nonce,
             host=req.host,
+            activity=req.activity,
         )
         return PresenceUpdateResponse(
             status="ok", identity=req.identity, state=req.state, collision=collision

@@ -576,6 +576,7 @@ _client = MemoryClient(settings.memory_api_url, settings.memory_api_token)
 # Fire-and-forget: a failed beat must never break the tool call that drove it.
 _HEARTBEAT_EVERY_SECONDS = 120.0
 _last_heartbeat = 0.0
+_last_activity_beat = 0.0  # AGENT-ACTIVE-1: last beat that rode a real tool call
 
 
 # SEAT-3: has this session claimed its allocated address yet?
@@ -1099,12 +1100,22 @@ def _wake_stream_banner() -> str:
     )
 
 
-async def _heartbeat(project_dir: str | None) -> None:
-    global _last_heartbeat
+async def _heartbeat(project_dir: str | None, activity: bool = True) -> None:
+    """``activity=False`` is the keep-alive TIMER: it proves the bridge is up,
+    not that the agent did anything, and must not stamp agent_last_active
+    (AGENT-ACTIVE-1). A tool call (activity=True) beats if EITHER throttle has
+    elapsed, so a timer beat just before it cannot hide real activity for two
+    minutes."""
+    global _last_heartbeat, _last_activity_beat
     now = time.monotonic()
-    if now - _last_heartbeat < _HEARTBEAT_EVERY_SECONDS:
+    due = now - _last_heartbeat >= _HEARTBEAT_EVERY_SECONDS
+    if activity:
+        due = due or now - _last_activity_beat >= _HEARTBEAT_EVERY_SECONDS
+    if not due:
         return
     _last_heartbeat = now
+    if activity:
+        _last_activity_beat = now
     # watch-claim v2: the bridge, not the agent, owns the watcher. Lazily
     # started here because the event loop is guaranteed live on a tool call.
     _ensure_watcher_supervisor(project_dir)
@@ -1135,6 +1146,7 @@ async def _heartbeat(project_dir: str | None) -> None:
             # PRES-2: the machine axis, stamped at the source. This is what
             # lets the roster say WHICH box an admin session is on.
             host=hostname(),
+            activity=activity,
         )
         global _SEAT_COLLISION
         _SEAT_COLLISION = resp.get("collision")  # dict when colliding, None clears
@@ -2841,7 +2853,7 @@ async def _background_beat() -> None:
     # before its first tool call, not two minutes after.
     while True:
         try:
-            await _heartbeat(None)
+            await _heartbeat(None, activity=False)
         except Exception:
             pass  # presence is best-effort; the loop must outlive any blip
         await asyncio.sleep(_HEARTBEAT_EVERY_SECONDS)

@@ -1898,6 +1898,7 @@ async def presence_update(
     channels: list[str] | None = None,
     session_nonce: str | None = None,
     host: str | None = None,
+    activity: bool = True,
 ) -> dict | None:
     """Upsert this identity's presence row (self-reported heartbeat).
 
@@ -2003,7 +2004,14 @@ async def presence_update(
             # agent's own bridge. The watcher's beat merges a single key with
             # jsonb_set and cannot touch it. So it answers the question the
             # other column only appears to: when did this AGENT last act.
-            "agent_last_active": now.isoformat(),
+            #
+            # AGENT-ACTIVE-1 (same day): the watcher was not the only forger.
+            # The BRIDGE's own keep-alive timer beats here every 120s, so an
+            # idle agent — even one out of allowance — read "active 1 min ago"
+            # forever. Only a beat riding a real tool call (activity=True)
+            # stamps it; a timer beat carries the prior value forward.
+            "agent_last_active": (now.isoformat() if activity
+                                  else prior_md.get("agent_last_active")),
         }
         # MSG-9: this write REPLACES metadata wholesale, so any field owned by
         # another writer must be carried forward explicitly or it is destroyed.

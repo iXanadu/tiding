@@ -1285,9 +1285,11 @@ async def test_background_beat_fires_without_any_tool_call(monkeypatch):
     from engram_mcp import server as _srv
 
     calls = []
+    activities = []
 
-    async def fake_heartbeat(project_dir):
+    async def fake_heartbeat(project_dir, activity=True):
         calls.append(project_dir)
+        activities.append(activity)
 
     monkeypatch.setattr(_srv, "_heartbeat", fake_heartbeat)
     monkeypatch.setattr(_srv, "_HEARTBEAT_EVERY_SECONDS", 0.01)
@@ -1303,6 +1305,11 @@ async def test_background_beat_fires_without_any_tool_call(monkeypatch):
     assert len(calls) >= 2, "the beat must fire repeatedly with zero tool calls"
     assert all(pd is None for pd in calls), (
         "timer beats must anchor to the session's own project (ROST-2)"
+    )
+    # AGENT-ACTIVE-1: a timer beat proves the bridge is up, not that the
+    # agent acted — it must never stamp agent_last_active.
+    assert activities and not any(activities), (
+        "timer beats must be sent with activity=False"
     )
 
 

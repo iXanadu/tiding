@@ -129,3 +129,46 @@ async def test_the_two_facts_are_separable_after_the_fact(services):
         )
     finally:
         await _cleanup()
+
+
+async def test_the_bridges_keepalive_timer_does_not_make_an_agent_look_busy(services):
+    """AGENT-ACTIVE-1, same day, same failure by a second route. The BRIDGE
+    also beats on a 120s timer so an idle session stays on the picker — and
+    that beat went through the agent path, so every idle agent (even one out
+    of allowance) read "active a minute ago" forever. Measured live: four
+    exhausted Codex seats all stamped within 30s of each other.
+
+    A timer beat (activity=False) must carry the stamp forward untouched; a
+    real tool-call beat (activity=True, the default) must advance it.
+    """
+    await _cleanup()
+    try:
+        await presence_update(
+            identity=IDENT, project=PROJECT, state="running",
+            provider="claude", host="testhost", session_nonce="n1",
+        )
+        md0, _ = await _row_md()
+        stamp = md0.get("agent_last_active")
+        assert stamp
+
+        await asyncio.sleep(1.1)
+        await presence_update(
+            identity=IDENT, project=PROJECT, state="running",
+            provider="claude", host="testhost", session_nonce="n1",
+            activity=False,
+        )
+        md1, _ = await _row_md()
+        assert md1.get("agent_last_active") == stamp, (
+            "a keep-alive timer beat must NOT advance the agent's activity"
+        )
+
+        await presence_update(
+            identity=IDENT, project=PROJECT, state="running",
+            provider="claude", host="testhost", session_nonce="n1",
+        )
+        md2, _ = await _row_md()
+        assert md2.get("agent_last_active") > stamp, (
+            "a real tool-call beat must advance it"
+        )
+    finally:
+        await _cleanup()

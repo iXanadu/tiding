@@ -400,6 +400,7 @@ class MemoryClient:
         project_dir: str | None = None,
         watcher: bool = False,
         host: str | None = None,
+        activity: bool = True,
     ) -> dict:
         """Self-reported liveness heartbeat (MSG-4).
 
@@ -425,6 +426,8 @@ class MemoryClient:
                 "session_nonce": session_nonce,
                 "watcher": watcher,
                 "host": host,
+                # AGENT-ACTIVE-1: False on the bridge's keep-alive timer.
+                "activity": activity,
             },
             headers=self._provenance_headers(project_dir),
         )

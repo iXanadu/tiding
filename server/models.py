@@ -969,6 +969,11 @@ class PresenceUpdateRequest(BaseModel):
     # axis the doctrine calls automatic). BACKUP axis only: a spawner's own
     # registry stays the primary source; nothing gates on this field.
     host: str | None = Field(default=None, max_length=MAX_ADDR)
+    # AGENT-ACTIVE-1: True = this beat rides a real tool call by the agent;
+    # False = the bridge's own keep-alive TIMER. Only True stamps
+    # `agent_last_active`. Defaults True so a pre-flag bridge behaves exactly
+    # as before (its timer still over-reports until the box is swept).
+    activity: bool = True
     # MSG-5: this beat came from the inbox WATCHER, not the session itself.
     # Routed to a narrow write that records only "an ear is alive here" — it
     # carries no state and joins no nonce map, because the watcher shares its
