@@ -99,6 +99,7 @@ from server.services.memory_service import (
     presence_update,
     presence_watcher_beat,
     recipient_liveness,
+    reply_seat_retarget,
     roster_list,
 )
 
@@ -828,6 +829,22 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 + ", ".join(_hash_targets[:8])
             ),
         )
+    # REPLY-TARGET-1: a reply aimed at the parent sender's LANE goes to the
+    # sender's own seat while that seat is live — otherwise every seat on the
+    # lane is woken by mail meant for one. Dead/absent seat → lane, as before.
+    reply_retarget_note: str | None = None
+    if req.in_reply_to and len(corrected) == 1:
+        try:
+            _seat = await reply_seat_retarget(req.in_reply_to, corrected[0][0])
+        except Exception:
+            logger.exception("reply_seat_retarget failed (lane kept)")
+            _seat = None
+        if _seat:
+            reply_retarget_note = (
+                f"Reply delivered to {_seat} (the sender's live seat), not "
+                f"its lane {corrected[0][0]} — a lane wakes every seat on it."
+            )
+            corrected = [(_seat, None)]
     # ADMIN-ADDR-1: the BARE shared role is refused at the door — it cannot
     # say which machine it means. Same shape as the #channels rip above:
     # refusal, not a silent rewrite, because a sender who meant one box must
@@ -1010,6 +1027,8 @@ async def send_inbox(req: InboxSendRequest, request: Request):
         warnings: list[str] = []
         if relay_warning:
             warnings.append(relay_warning)
+        if reply_retarget_note:
+            warnings.append(reply_retarget_note)
         # HUD-ROUTE-1 (2026-08-22): the huddle relay ingests the OWNER's
         # inbox and fans out by thread_id, so a send carrying a `huddle/<id>`
         # thread but addressed to anyone other than the owner never enters

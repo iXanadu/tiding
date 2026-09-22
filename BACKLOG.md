@@ -295,20 +295,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Found: owner-reported seat churn, traced to the live seat rows
 
 
-- **REPLY-TARGET-1** *(reported 2026-09-18; reproduced from the current
-  bridge route, not fixed — frozen.)* `class:contract-disagrees-with-code`
-  **A direct `memory_reply` to an ordinal-seat sender routes to the sender's
-  immortal lane, while the tool contract says it replies to the sender.** If
-  another live occupant holds that lane, the reply reaches that occupant and
-  reads as a wrong-seat delivery. This is the designed LANE-5 default, not a
-  suffix parser bug: exact-seat replies were explicitly left as an unbuilt
-  opt-in. The public contract and the observed behavior cannot both stand.
-  Owner must choose whether direct replies remain lane-durable by default or
-  gain an explicit mortal-seat flag; until then, send explicitly to the full
-  seat when the recipient must be that incarnation.
-  · Status: OPEN (frozen) · Root: LANE-5 reply routing
-  · Found: peer report with a live two-occupant lane
-
 - **SEAT-RECYCLE-1** *(reported 2026-09-16; sender's consumer-side mitigation
   shipped, store residual remains frozen.)* `class:stale-binding`
   **When a seat name is re-granted to a new session key, the prior key's grant

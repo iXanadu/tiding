@@ -2622,6 +2622,56 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
     return out
 
 
+async def reply_seat_retarget(in_reply_to: str | None, to: str) -> str | None:
+    """REPLY-TARGET-1: the seat a lane-addressed reply should go to, or None.
+
+    LANE-5 routes every reply to the sender's LANE (``retc-codex``) so it
+    survives the sender's death. But every seat of that provider on the
+    project listens on the lane, so a reply meant for ONE agent wakes ALL of
+    them. Measured 2026-09-22 overnight: 147 replies went to a lane, 94 of
+    117 checked were read by all four Codex seats — 353 of 1,444 waking
+    deliveries were this fan-out and nothing else.
+
+    So: when a reply targets the parent sender's lane and that sender's own
+    seat is still LIVE, deliver to the seat. When the seat is gone (stale,
+    farewelled, certified dead) or has no presence row at all, keep the lane —
+    that is exactly the case LANE-5 exists for. Server-side on purpose: every
+    running bridge is fixed by one deploy, with no fleet sweep.
+
+    Returns the seat address to use, or None to leave ``to`` unchanged.
+    """
+    if not in_reply_to or not to:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT metadata FROM memories"
+            " WHERE namespace = $1 AND scope = $2 AND key = $3 LIMIT 1",
+            INBOX_NAMESPACE, INBOX_SCOPE, in_reply_to,
+        )
+    if row is None:
+        return None
+    md = row["metadata"] or {}
+    if isinstance(md, str):
+        md = json.loads(md)
+    lane = (md.get("from_lane") or "").strip().lower()
+    target = to.strip().lower()
+    # Only a reply aimed at the parent's lane is retargeted. Anything else —
+    # a channel, a project, an explicit seat — is the caller's choice.
+    if not lane or target.split("@", 1)[0] != lane:
+        return None
+    seat = (md.get("from") or "").strip().lower().split("@", 1)[0]
+    if not seat or seat == lane:
+        return None
+    info = (await recipient_liveness([seat])).get(seat)
+    # ABSENT IS NOT LIVE here: with no presence row we cannot show the seat
+    # is listening, and the lane is the safe (pre-fix) behaviour.
+    if (info is None or info["is_stale"] or info.get("farewell_at")
+            or info.get("death")):
+        return None
+    return seat
+
+
 async def inbox_unread_count(
     listen_set: list[str],
     reader_identity: str | None,
