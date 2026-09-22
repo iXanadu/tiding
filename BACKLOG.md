@@ -247,6 +247,17 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   one: (a) door-closed returns a refusal and the caller stands down, (b) the
   watcher stops claiming under the bridge's nonce so there is one claimant per
   session, or (c) displacement requires positive evidence the loser is gone.
+  ⚠️ **AND IT MANUFACTURES A SILENT MAIL SINK (measured 2026-09-22, same
+  seats).** A displaced chair is never certified dead — nobody died, so no
+  exit notice and no farewell is ever filed. It simply stops beating. At
+  send time it is therefore indistinguishable from a session that has not
+  started yet, and the store queues mail to it forever with a clean success
+  receipt. Two real messages landed in one this afternoon. This kills the
+  obvious fix: warning senders about EXITED chairs cannot see this class,
+  because the class is never marked EXITED. The eviction fault and the
+  misdelivery fault are one fault — every rename creates an address that
+  silently swallows mail, so removing the rename removes the sink with no
+  send-time check needed.
   · Status: OPEN (diagnosed, unfixed — needs an owner/design ruling)
   · Root: newest-wins + one-way door, nonce recency as proxy for liveness
   · Found: owner-reported seat churn, traced to the live seat rows
