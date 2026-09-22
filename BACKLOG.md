@@ -517,6 +517,34 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **LAST-SPOKE-IS-THE-WATCHER-1** *(found 2026-09-22 the hard way: I used it
+  to give the owner a false all-clear on agents he had twice called
+  critical, and he disproved it from a screenshot.)*
+  `class:two-columns-one-source`
+  **The roster prints "last spoke" and "watcher beat" side by side as though
+  they corroborate each other. They do not: the watcher's heartbeat refreshes
+  the same `last_used_at` that "last spoke" reads.** The docstring says so
+  plainly — *"It DOES refresh last_used_at on both presence and seat rows"* —
+  and it is deliberate (SEAT-7, so an agent head-down on a long build is not
+  reclaimed mid-work). The cost is that the field named for AGENT activity
+  reports WATCHER liveness, and a reader who sees both columns fresh believes
+  two independent facts agree when one is derived from the other.
+  MEASURED INSTANCE: five agents whose last turn failed at 07:42 with
+  "usage limit exceeded" and which had done nothing for ten hours all read
+  "spoke 5-27s ago". Their watchers were healthy; the agents were inert. The
+  reader (me) had written the lesson naming this exact distinction earlier
+  the same day, quoted it to the owner two hours before, and still read the
+  label rather than the mechanism — which is the measure of how convincing
+  the display is.
+  FIX: keep the refresh (reclaim-protection is legitimate) but stop one
+  field serving two questions. Record and render agent-turn activity
+  separately from watcher liveness, and never let a watcher write the field
+  a human reads as "this agent is working". A column that cannot be false
+  when the thing it names is dead is not evidence.
+  · Status: OPEN · Root: watcher beat writes the seat/presence activity stamp
+  · Found: a false all-clear given to the owner, corrected by his screenshot
+
+
 - **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
   own fleet; the wrong answer was built and discarded before sending.)*
   `class:enough-to-bill-not-enough-to-diagnose`
