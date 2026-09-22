@@ -995,6 +995,40 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
+- **OWNER-RULINGS-UNEXECUTED** *(opened 2026-09-22 after the owner asked why
+  the same conversation recurs. It recurs because of THIS.)*
+  `class:decided-but-never-tracked`
+  **Four owner rulings on seat identity were made, written to memory, and
+  never carried out. None of them was ever a ledger line — so the file that
+  is force-loaded every session has never mentioned them, and each new
+  session rediscovers the problem from scratch.** The standard says if it is
+  not in the ledger it is not tracked; these were tracked in the journal,
+  which is where stories go, not work. That is the mechanism of the recurrence,
+  and it is fixed by listing them here.
+  · **2026-08-01** `decision/ab-owns-session-lifecycle-engram-is-a-message-bus`
+    — engram is a MESSAGE BUS, the orchestrator is the SESSION REGISTRY;
+    remove presence, liveness and seats-as-registry from engram. The note
+    lists the files. **In the seven weeks after it, engram shipped three more
+    pieces of exactly that code (22 Aug, 23 Aug, 9 Sep) — and the 22 Aug one
+    evicted a live session on 2026-09-22.**
+  · **2026-08-05** `decision/address-project-not-seat` — address
+    `<project>-<provider>`, not numbered seats. Measured 2026-09-22: roughly
+    300 messages in one overnight run went to role names, the rest to
+    numbered seats. Almost none went where this says.
+  · **2026-09-09** `decision/seat-architecture-review-2026-09-09` — mail
+    routing uses reusable seat strings; immutable recipient IDs behind
+    readable aliases proposed; explicitly NOT authorised.
+  · **2026-09-22** `decision/seats-are-assigned-not-claimed-2026-09-22` —
+    agents are ASSIGNED a seat, never claim one; project mail is a letter and
+    seat mail is a phone call. Agreed in-huddle by owner, engram and the
+    orchestrator. Not implemented; step 1 belongs to the orchestrator.
+  **What to do with this item: nothing, until the owner names one.** It exists
+  so the next session cannot fail to know they are outstanding — which is the
+  one failure this list is designed to prevent.
+  · Status: OPEN (owner's to sequence) · Root: rulings journalled, never ledgered
+  · Found: the owner asking why the same conversation keeps happening
+
+
 - **HOSTED-CHAT-AUTH-1** *(owner deferred 2026-09-19: useful, but the pain may
   not justify the leverage yet.)* Three vendor-hosted chat surfaces could gain
   useful project context through restricted Engram principals: read shared
