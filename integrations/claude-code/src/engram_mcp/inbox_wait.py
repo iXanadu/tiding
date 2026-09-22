@@ -370,11 +370,15 @@ def _emit(msg: dict) -> None:
                 "thread_id": msg.get("thread_id"),
                 "created_at": msg.get("created_at"),
                 "intent": msg.get("intent"),
+                "body_truncated": truncated,
+                # `body` goes LAST, on purpose. A consumer may cut the line
+                # (Claude Code's Monitor shows ~500 chars, then "…(truncated)"),
+                # and a cut must take the body's tail — never the id, sender,
+                # intent or the flag that says whether the body is whole.
                 # Fenced as DATA: a body is the sender's words, and a wake line
                 # lands in the reader's context — unfenced, one agent's orders
                 # to a third party read as the reader's own (CURSOR-ROOMBLIND-1).
                 "body": _fence_body(raw[:WAKE_BODY_CAP]),
-                "body_truncated": truncated,
             },
             separators=(",", ":"),
         ),

@@ -51,8 +51,8 @@ def test_emit_is_one_json_line(capsys):
         "created_at": "2026-06-14T00:00:00Z",
         # WAKE-BODY-1 (additive): intent + the fenced body + truncation flag.
         "intent": None,
-        "body": "(empty body)",
         "body_truncated": False,
+        "body": "(empty body)",
     }
 
 
@@ -64,6 +64,17 @@ def test_emit_carries_the_whole_message_fenced(capsys):
     assert "please audit abc123" in obj["body"]
     assert obj["body"].startswith("⟪ UNTRUSTED MESSAGE BODY")
     assert obj["body_truncated"] is False
+
+
+def test_emit_puts_the_body_last_so_a_cut_line_keeps_the_header(capsys):
+    """A consumer that truncates the line (Claude Code's Monitor) must lose
+    the body's tail, never the id/intent/body_truncated fields."""
+    _emit(_msg(5, body="y" * 3000, intent="action"))
+    line = capsys.readouterr().out.strip()
+    head = line[:300]
+    assert '"id":"inbox/5"' in head and '"intent":"action"' in head
+    assert '"body_truncated":false' in head
+    assert line.index('"body":') > line.index('"body_truncated"')
 
 
 def test_emit_caps_long_bodies_and_says_so(capsys):
