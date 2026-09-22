@@ -225,8 +225,18 @@ async def test_death_certificate_attaches_by_session_key(client, db_pool):
 
     reg = await _register(client)
     entry = reg[seat]
-    # The row is seconds old — it LOOKS live — and the cert still rides.
-    assert entry["allocation"]["reason"] == "live-holder"
+    # ⚠️ CONTRACT CHANGED BY SEAT-13 (2026-09-22), owner-authorised. This
+    # assertion used to read `live-holder`: the row is seconds old, so it
+    # LOOKED live and the cert rode alongside without affecting allocation.
+    # That is exactly the behaviour the owner reported as a daily problem —
+    # exit cleanly, come back two minutes later, get an ordinal, because the
+    # store still believed the session it had just been told about was
+    # working. Testimony now outranks the heartbeat at this rung, so a
+    # GENUINE cert (one that postdates the row it names) frees the chair.
+    # The stale-cert case is unchanged and is pinned by
+    # test_reused_key_successor_is_not_pinned_with_its_predecessors_cert.
+    assert entry["allocation"]["would_skip"] is False
+    assert entry["allocation"]["reason"] is None
     assert entry["death_certified"] is True
     assert entry["death"]["cause"] == "stop"
     assert entry["death"]["graceful"] is True

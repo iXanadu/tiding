@@ -192,7 +192,8 @@ def is_reserved_root(seat: str, project: str) -> bool:
 def allocation_decision(*, root: bool, lane: bool, age: float | None,
                         holds_mail: bool, presence_fresh: bool,
                         last_used_at=None,
-                        live_at_address: bool = False) -> dict:
+                        live_at_address: bool = False,
+                        certified_dead: bool = False) -> dict:
     """THE skip ladder — the single copy (ADDR-REG-1).
 
     Consulted by BOTH seat_claim (which gathers facts per candidate and
@@ -226,6 +227,26 @@ def allocation_decision(*, root: bool, lane: bool, age: float | None,
     if lane:
         return {"would_skip": True, "reason": "reserved-lane",
                 "grace_expires_at": None}
+    # SEAT-13. A certificate is TESTIMONY and it outranks a heartbeat —
+    # "a heartbeat can outlive a kill; it can never observe one" is this
+    # codebase's own rule, stated in DeathCertRequest and applied everywhere
+    # EXCEPT here, which is why a clean exit still waited out the backstop.
+    #
+    # Placed above `live-holder` deliberately: at 120s a cleanly-exited chair
+    # answers `live-holder`, not `grace-window` (measured 2026-09-22 — and it
+    # corrected the author, who had told the owner otherwise). Both of those
+    # rungs read `age`, and `age` is time since `last_used_at`, the field a
+    # WATCHER refreshes. So a dead session looks alive for ten minutes on its
+    # own watcher's dying beats. A rung below those two would never fire for
+    # the case it exists to serve.
+    #
+    # `and not holds_mail` is the whole safety story: this can only ever free
+    # a name with nothing waiting in it. A certified-dead chair still holding
+    # mail falls through and parks exactly as before, so a successor can never
+    # inherit a corpse's inbox (AB's SEAT-RECYCLE-1, and the silent mail sink
+    # measured the same day).
+    if certified_dead and not holds_mail:
+        return {"would_skip": False, "reason": None, "grace_expires_at": None}
     if age is None:
         if holds_mail:
             return {"would_skip": True, "reason": "mail-parked",
@@ -432,6 +453,43 @@ async def _presence_is_fresh(conn, seat: str, project: str) -> bool:
         return False
     age = (datetime.now(timezone.utc) - row["last_used_at"]).total_seconds()
     return age < SEAT_LIVE_SECONDS
+
+
+def _cert_is_for_this_occupant(row) -> bool:
+    """SEAT-13 + REG-DEATH-1: is the death certificate about the session
+    sitting here NOW, or about a predecessor who shared its name?
+
+    ⚠️ THE FLAG ALONE IS NOT SAFE, and a test caught me using it that way.
+    `death_certify` stamps the seat row whenever a cert names that seat —
+    including a LATE cert for a previous incarnation, because launcher-derived
+    session keys survive respawns. Freeing on the flag alone re-creates the
+    defect recorded on the orchestrator side as SEAT-RECYCLE-1: a
+    certificate written
+    against a NAME burying the name's next occupant. That is the failure this
+    whole change exists to avoid, and I walked straight into it.
+
+    So the cert must POSTDATE the row it is about. A chair created after the
+    death it is accused of is a successor, and the cert is inert testimony
+    about somebody else. Rows stamped before this field existed carry no time
+    and are treated as uncertified — the conservative reading, and the one
+    that cannot evict anybody.
+    """
+    if row is None:
+        return False
+    md = _md(row)
+    if not md.get("death_certified"):
+        return False
+    stamped = md.get("death_certified_at")
+    created = row["created_at"] if "created_at" in row.keys() else None
+    if not stamped or created is None:
+        return False
+    try:
+        died = datetime.fromisoformat(stamped)
+    except (TypeError, ValueError):
+        return False
+    if died.tzinfo is None:
+        died = died.replace(tzinfo=timezone.utc)
+    return died >= created
 
 
 async def _breathing_at(conn, seats: list[str], project: str,
@@ -1042,7 +1100,7 @@ async def seat_claim(
             # one it replaced.
             row = await conn.fetchrow(
                 """
-                SELECT metadata, last_used_at FROM memories
+                SELECT metadata, last_used_at, created_at FROM memories
                 WHERE namespace = $1 AND scope = $2 AND user_id = $3
                   AND project = $4 AND key = $5
                 """,
@@ -1062,6 +1120,11 @@ async def seat_claim(
                 presence_fresh=presence_fresh,
                 last_used_at=row["last_used_at"] if row is not None else None,
                 live_at_address=(seat in breathing),
+                # SEAT-13: death_certify already stamps this on the seat row
+                # ("a FACT consumers may weigh") and a fresh claim rewrites
+                # metadata without it, so it clears itself on re-occupation.
+                # No extra query: the row is already in hand.
+                certified_dead=_cert_is_for_this_occupant(row),
             )
             if d["reason"] == "live-no-row":
                 # A wrong release just proved itself. Loud by design: this
@@ -1096,8 +1159,17 @@ async def seat_claim(
                 # re-read and parked it at the live rung; next candidate.
                 continue
             prior = _md(row)
+            # SEAT-13. The takeover's own age guard exists to stop us evicting
+            # a holder that heartbeats between our read and our write. A chair
+            # whose session filed a death certificate has no such holder, and
+            # the guard would otherwise veto what the ladder just allowed —
+            # a second gate silently undoing the first, which is how a fix
+            # ships and changes nothing. Certified chairs take over at any
+            # age; everything else keeps the original cutoff exactly.
+            takeover_cutoff = (now if prior.get("death_certified")
+                               else live_cutoff)
             if await _try_takeover(conn, seat, project, meta,
-                                   older_than=live_cutoff):
+                                   older_than=takeover_cutoff):
                 await _apply_lane_inheritance(conn, seat, project, provider,
                                               host, session_key)
                 return {
@@ -1205,12 +1277,14 @@ async def death_certify(
             await conn.execute(
                 """
                 UPDATE memories
-                SET metadata = metadata || '{"death_certified": true}'::jsonb
+                SET metadata = metadata
+                    || jsonb_build_object('death_certified', true,
+                                          'death_certified_at', $6::text)
                 WHERE namespace = $1 AND scope = $2 AND user_id = $3
                   AND project = $4 AND key = $5
                 """,
                 SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
-                f"seat/{seat}",
+                f"seat/{seat}", meta["died_at"],
             )
 
         cursor_updated = False
@@ -1749,6 +1823,7 @@ async def address_register(project: str | None = None) -> list[dict]:
         seat_rows = await conn.fetch(
             """
             SELECT s.key, s.project, s.metadata, s.last_used_at,
+                   s.created_at,
                    p.metadata AS presence_metadata,
                    p.last_used_at AS presence_last_used_at
             FROM memories s
@@ -1886,7 +1961,8 @@ async def address_register(project: str | None = None) -> list[dict]:
                     presence_age: float | None,
                     last_used_at, *, lane: bool = False,
                     root: bool = False,
-                    fixed_reason: str | None = None) -> dict:
+                    fixed_reason: str | None = None,
+                    certified_dead: bool = False) -> dict:
         # Names allocation NEVER touches get their own label instead of
         # "mail-parked" noise: an exempt role (admin — seat_claim returns
         # before its ladder even runs) and a person's address (a human
@@ -1917,6 +1993,12 @@ async def address_register(project: str | None = None) -> list[dict]:
             presence_fresh=(presence_age is not None
                             and presence_age < SEAT_LIVE_SECONDS),
             last_used_at=last_used_at,
+            # ADDR-REG-1: the allocator reads `death_certified` off the seat
+            # row, so the register must read the SAME field off the SAME row.
+            # Leaving it out here is precisely the drift this item exists to
+            # prevent — the register would report a chair parked that the
+            # allocator would hand out on the next claim.
+            certified_dead=certified_dead,
         )
 
     out = []
@@ -1944,7 +2026,8 @@ async def address_register(project: str | None = None) -> list[dict]:
                                  r["last_used_at"],
                                  lane=is_reserved_lane(seat, r["project"]),
                                  root=_is_root(seat),
-                                 fixed_reason=_fixed_reason(seat))
+                                 fixed_reason=_fixed_reason(seat),
+                                 certified_dead=_cert_is_for_this_occupant(r))
         # REG-DEATH-1: EVIDENCE OF LIFE AFTER died_at voids a cert — the
         # farewell rule, applied. By-key attachment assumed keys are
         # per-session; a launcher's slot-derived key survives respawns, so
