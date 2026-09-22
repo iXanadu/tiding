@@ -580,6 +580,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   two minutes. Status is not only capable of false health; it can stay falsely
   unhealthy after delivery resumes. Recovery must re-assert or directly
   observe attachment state instead of waiting for an unrelated later event.
+  **BOUND MEASURED 2026-09-22:** a session read `NOT COVERED` on every call
+  for ~2h40m while its reader delivered ~60 wakes without a miss, and the
+  line flipped to `COVERED` only after an unrelated service restart —
+  confirming the "unrelated later event" above is, in practice, a restart.
+  So the false-unhealthy state does not self-heal on any timescale a session
+  will sit through, and the standing instruction it contradicts is the one
+  telling agents to re-attach. A second reporter reached the retired
+  hand-arm ritual over exactly this. Until fixed: a delivered wake is ground
+  truth, the status line is advisory.
 
 - **ADMIN-ADDR-1 (phases b–d)** *(server + bridge halves SHIPPED; enforcement is
   gated OFF until the fleet is swept. Owner ruled the item outside the messaging
