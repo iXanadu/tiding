@@ -2630,6 +2630,105 @@ async def recipient_liveness(addresses: list[str]) -> dict[str, dict]:
     return out
 
 
+async def send_cost_facts(
+    recipients: list[str], sender: str | None, intent: str | None,
+    sent_ids: list[str],
+) -> list[str]:
+    """Receipt lines that show a sender what its message cost — SEND-COST-1.
+
+    Owner, 2026-09-22: a PM "might be helpful if they understood the cost —
+    message sent to 7 agents". Two facts, both read from what the store
+    already holds, neither blocking the send:
+
+    1. How many live agents this message wakes. `fyi` wakes nobody (MSG-3).
+       A seat is one agent; a lane (`proj-codex`) or project address is every
+       fresh session listening on it — the fan-out a sender cannot see.
+    2. For each seat recipient: whether that agent has ACTED since this
+       sender's previous message to it arrived. If not, this one queues
+       behind the last — the overnight RETC PM sent 89 follow-ups before the
+       worker had answered, and was never told.
+
+    Deliberately a FACT on the receipt, not a held wake. Holding mail until
+    the reader "picks it up" would deafen a reader that gets the whole message
+    in its wake and never opens its inbox (WAKE-BODY-1). `agent_last_active`
+    is honest only on AGENT-ACTIVE-1 bridges; an old bridge's timer still
+    over-reports, which errs toward NOT flagging — the safe direction.
+    """
+    recips = [r.strip().lower().split("@", 1)[0] for r in recipients if r]
+    if not recips:
+        return []
+    me = (sender or "").strip().lower().split("@", 1)[0]
+    now = datetime.now(timezone.utc)
+    fresh_after = now - timedelta(seconds=PRESENCE_STALE_AFTER_SECONDS)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT key, user_id, metadata FROM memories
+            WHERE namespace = $1 AND scope = $2 AND last_used_at >= $3
+            """,
+            PRESENCE_NAMESPACE, PRESENCE_SCOPE, fresh_after,
+        )
+        live: dict[str, dict] = {}
+        for r in rows:
+            md = r["metadata"] or {}
+            if isinstance(md, str):
+                md = json.loads(md)
+            if md.get("state") == "done" or md.get("farewell_at"):
+                continue
+            live[r["key"].removeprefix("presence/")] = {
+                "project": (r["user_id"] or "").lower(),
+                "agent_last_active": md.get("agent_last_active"),
+            }
+        woken: set[str] = set()
+        for addr in recips:
+            for ident, info in live.items():
+                if ident == me:
+                    continue
+                if (ident == addr or info["project"] == addr
+                        or re.fullmatch(re.escape(addr) + r"-\d+", ident)):
+                    woken.add(ident)
+        out: list[str] = []
+        if (intent or "").lower() == "fyi":
+            out.append("Woke 0 agents (fyi) — delivered for their next turn.")
+        else:
+            out.append(
+                f"Woke {len(woken)} agent{'s' if len(woken) != 1 else ''}"
+                + (f": {', '.join(sorted(woken))}." if 0 < len(woken) <= 8
+                   else ".")
+            )
+        if not me:
+            return out
+        for addr in recips:
+            info = live.get(addr)
+            if not info or not info.get("agent_last_active"):
+                continue
+            prev = await conn.fetchrow(
+                """
+                SELECT created_at FROM memories
+                WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                  AND split_part(lower(metadata->>'from'), '@', 1) = $4
+                  AND NOT (key = ANY($5::text[]))
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                INBOX_NAMESPACE, INBOX_SCOPE, addr, me, sent_ids,
+            )
+            if prev is None:
+                continue
+            try:
+                acted = datetime.fromisoformat(info["agent_last_active"])
+            except ValueError:
+                continue
+            if acted < prev["created_at"]:
+                mins = int((now - prev["created_at"]).total_seconds() // 60)
+                out.append(
+                    f"{addr} has not acted since your previous message "
+                    f"({mins} min ago) — this one queues behind it. Sending "
+                    "more will not reach it sooner."
+                )
+    return out
+
+
 async def reply_seat_retarget(in_reply_to: str | None, to: str) -> str | None:
     """REPLY-TARGET-1: the seat a lane-addressed reply should go to, or None.
 

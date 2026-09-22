@@ -295,6 +295,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Found: owner-reported seat churn, traced to the live seat rows
 
 
+- **HOLD-REPEAT-1** *(deferred 2026-09-22 while building SEND-COST-1.)*
+  Owner asked for a structural stop to nagging: a follow-up sent before the
+  reader picked up the last one should not wake it again. Built as a RECEIPT
+  fact instead ("X has not acted since your previous message") because
+  holding the wake is unsafe once WAKE-BODY-1 lands: a reader that gets the
+  whole message in its wake never opens its inbox, so a hold keyed on
+  "picked up" would silence that sender forever. Revisit only after
+  measuring whether the receipt alone cuts follow-ups, and only with a
+  release condition that cannot deadlock (e.g. the held mail rides the
+  reader's next wake).
+  · Status: OPEN · Root: design · Found: building the owner's nag fix
+
 - **SEAT-RECYCLE-1** *(reported 2026-09-16; sender's consumer-side mitigation
   shipped, store residual remains frozen.)* `class:stale-binding`
   **When a seat name is re-granted to a new session key, the prior key's grant

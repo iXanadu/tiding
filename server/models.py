@@ -817,6 +817,11 @@ class InboxSendResponse(BaseModel):
     # this is a warning, never an error. Empty/absent when every recipient
     # looks live or has no presence row at all (absent is not dead).
     recipient_warnings: list[str] | None = None
+    # SEND-COST-1: what this message cost — agents woken, and whether a seat
+    # recipient has acted since the sender's previous message. Named with the
+    # `_warnings` suffix on purpose: every deployed bridge already renders any
+    # `*_warnings` field, so this reaches senders with no fleet sweep.
+    cost_warnings: list[str] | None = None
 
 
 class InboxListRequest(BaseModel):

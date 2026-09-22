@@ -100,6 +100,7 @@ from server.services.memory_service import (
     presence_watcher_beat,
     recipient_liveness,
     reply_seat_retarget,
+    send_cost_facts,
     roster_list,
 )
 
@@ -1029,6 +1030,14 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             warnings.append(relay_warning)
         if reply_retarget_note:
             warnings.append(reply_retarget_note)
+        # SEND-COST-1: what this message cost, on the receipt — advisory only,
+        # in its own field so recipient_warnings keeps meaning "problem".
+        cost: list[str] = []
+        try:
+            cost = await send_cost_facts(
+                [t for t, _ in corrected], sender_label, req.intent, ids)
+        except Exception:
+            logger.exception("send_cost_facts failed (advisory only)")
         # HUD-ROUTE-1 (2026-08-22): the huddle relay ingests the OWNER's
         # inbox and fans out by thread_id, so a send carrying a `huddle/<id>`
         # thread but addressed to anyone other than the owner never enters
@@ -1112,6 +1121,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             corrected_from=first_corrected,
             guidance=guidance,
             recipient_warnings=warnings or None,
+            cost_warnings=cost or None,
         )
     except Exception as e:
         logger.exception("inbox_send failed")
