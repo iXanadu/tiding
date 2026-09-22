@@ -4,7 +4,7 @@
 Owner, 2026-09-22: "measure improvements, and document message overhead,
 without introducing message overhead." Nothing here sends mail or wakes
 anyone; it reads rows engram already keeps. Pair with the launcher's own
-turn/token logs for cost (AgentBeast: scripts/wake-baseline.py).
+turn/token logs for cost (the launcher's own wake-baseline script).
 
     scripts/messaging-cost-report.py 2026-09-22T04:04Z 2026-09-22T11:30Z [prefix ...]
 
