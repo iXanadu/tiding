@@ -41,7 +41,7 @@ async def main(start: str, end: str, prefixes: list[str]) -> None:
     conn = await asyncpg.connect(_dsn())
     rows = await conn.fetch(
         """
-        SELECT key, created_at, user_id, metadata
+        SELECT key, created_at, user_id, metadata, value
         FROM memories
         WHERE scope = 'inbox' AND key LIKE 'inbox/%'
           AND created_at >= $1::timestamptz AND created_at < $2::timestamptz
@@ -66,6 +66,8 @@ async def main(start: str, end: str, prefixes: list[str]) -> None:
             "readers": len(md.get("read_by") or []),
             "reply": bool(md.get("in_reply_to")),
             "key": r["key"], "parent": md.get("in_reply_to"),
+            "group": bool(md.get("participants")),
+            "body": r["value"] or "",
         })
     waking = [m for m in msgs if m["intent"] != "fyi"]
     seats = {m["from"] for m in msgs}
@@ -96,14 +98,37 @@ async def main(start: str, end: str, prefixes: list[str]) -> None:
                 followups += max(0, run - 1)
                 run = 0
         followups += max(0, run - 1)
+    # A send to a list stores one row PER RECIPIENT (participants set), so
+    # rows overstate what agents sent. Collapse same-sender, same-body group
+    # rows within a few seconds into one send.
+    sends = 0
+    last: dict[tuple, datetime] = {}
+    for m in msgs:
+        k = (m["from"], m["body"][:400])
+        if m["group"] and k in last and (m["at"] - last[k]).total_seconds() < 5:
+            continue
+        last[k] = m["at"]
+        sends += 1
+    # Receipts: short replies that only say the work was received. Every one
+    # wakes its reader and the finished result sends a second message anyway.
+    receipt = re.compile(r"^(received|queued|noted|acknowledged|accepted|understood|"
+                         r"got it|confirmed|on it|will do|thanks|ack|taking|starting|"
+                         r"started|correction received)\b", re.I)
+    receipts = sum(
+        1 for m in msgs
+        if len(m["body"]) < 600
+        and receipt.match(re.sub(r"^\S+@\w+\s*[—:-]\s*", "", m["body"].strip())))
     print(f"window            {start} → {end}")
-    print(f"direct messages   {len(msgs)}")
+    print(f"sends             {sends}  (what agents sent; a group send counts once)")
+    print(f"delivered copies  {len(msgs)}  ({len(msgs) - sends} extra from group sends)")
     print(f"  waking          {len(waking)}  ({len(msgs) - len(waking)} fyi)")
     print(f"  replies         {sum(m['reply'] for m in msgs)}")
     print(f"wake deliveries   {deliveries}  (lane messages counted per reader)")
     print(f"  lane fan-out    {len(lane)} messages → "
           f"{sum(max(1, m['readers']) for m in lane)} deliveries")
-    print(f"follow-ups sent before an answer  {followups}")
+    print(f"back-to-back to one peer, no reply between  {followups}"
+          "  (NOT re-asks: includes new work and group copies)")
+    print(f"receipts ('received/queued/noted…')  {receipts}")
     print("top senders       " + ", ".join(
         f"{k} {v}" for k, v in Counter(m["from"] for m in msgs).most_common(6)))
 
