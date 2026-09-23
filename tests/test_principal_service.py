@@ -168,6 +168,81 @@ async def test_deactivated_token_rejected(db_pool):
         await _cleanup_principal("test-token-inactive")
 
 
+# --- AUTH-BCRYPT-1: the bcrypt verdict is cached, the row is not ---
+
+@pytest.fixture
+def count_checkpw(monkeypatch):
+    ps.reset_verified_cache()
+    calls = {"n": 0}
+    real = ps.bcrypt.checkpw
+
+    def counting(*a):
+        calls["n"] += 1
+        return real(*a)
+
+    monkeypatch.setattr(ps.bcrypt, "checkpw", counting)
+    yield calls
+    ps.reset_verified_cache()
+
+
+@pytest.mark.asyncio
+async def test_repeat_token_skips_bcrypt(db_pool, count_checkpw):
+    try:
+        _, raw_token = await ps.create_principal(name="test-token-cache", type="agent")
+        for _ in range(3):
+            assert (await ps.get_principal_by_token(raw_token))["name"] == "test-token-cache"
+        assert count_checkpw["n"] == 1
+    finally:
+        await _cleanup_principal("test-token-cache")
+
+
+@pytest.mark.asyncio
+async def test_cached_token_dies_on_deactivate(db_pool, count_checkpw):
+    try:
+        _, raw_token = await ps.create_principal(name="test-token-cache-deact", type="agent")
+        assert await ps.get_principal_by_token(raw_token) is not None
+        await ps.deactivate_principal("test-token-cache-deact")
+        assert await ps.get_principal_by_token(raw_token) is None
+    finally:
+        await _cleanup_principal("test-token-cache-deact")
+
+
+@pytest.mark.asyncio
+async def test_cached_token_dies_on_rotation(db_pool, count_checkpw):
+    try:
+        _, old = await ps.create_principal(name="test-token-cache-rot", type="agent")
+        assert await ps.get_principal_by_token(old) is not None
+        new, _ = await ps.generate_token()
+        await ps.update_principal("test-token-cache-rot", token=new)
+        assert await ps.get_principal_by_token(old) is None
+        assert (await ps.get_principal_by_token(new))["name"] == "test-token-cache-rot"
+    finally:
+        await _cleanup_principal("test-token-cache-rot")
+
+
+@pytest.mark.asyncio
+async def test_cached_token_sees_permission_edits(db_pool, count_checkpw):
+    try:
+        _, raw_token = await ps.create_principal(name="test-token-cache-perm", type="agent")
+        assert (await ps.get_principal_by_token(raw_token))["is_admin"] is False
+        await ps.update_principal("test-token-cache-perm", is_admin=True)
+        assert (await ps.get_principal_by_token(raw_token))["is_admin"] is True
+    finally:
+        await _cleanup_principal("test-token-cache-perm")
+
+
+@pytest.mark.asyncio
+async def test_same_hash_wrong_token_still_checked(db_pool, count_checkpw):
+    """A cache entry is keyed by the token's own digest, so a different
+    token can never ride another token's verdict."""
+    try:
+        _, raw_token = await ps.create_principal(name="test-token-cache-wrong", type="agent")
+        assert await ps.get_principal_by_token(raw_token) is not None
+        assert await ps.get_principal_by_token(raw_token + "x") is None
+    finally:
+        await _cleanup_principal("test-token-cache-wrong")
+
+
 # --- Password auth ---
 
 @pytest.mark.asyncio

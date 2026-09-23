@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import secrets
+import time
 from uuid import UUID
 
 import bcrypt
@@ -136,6 +137,36 @@ async def get_principal_by_id(principal_id: UUID) -> dict | None:
     return _principal_dict(row) if row else None
 
 
+# AUTH-BCRYPT-1 (2026-09-23). Every authenticated request paid a full bcrypt
+# check (cost 12): ~200 ms idle, ~420 ms on a loaded host, at ~2.6 req/s —
+# about half a core spent re-proving tokens the server had proved seconds
+# earlier, and the floor under every response time.
+#
+# What is cached is only the bcrypt VERDICT: "this token matched this exact
+# stored hash". The principal row is still read on every request, so
+# deactivation (row no longer found), rotation (token_hash changes) and
+# permission edits all take effect on the next call with no invalidation
+# plumbing. Keyed by the SHA-256 lookup, never the raw token.
+_VERIFIED_TTL_SECONDS = 300.0
+_VERIFIED_MAX = 1024
+_verified: dict[str, tuple[str, float]] = {}
+
+
+def _verified_recently(lookup: str, token_hash: str) -> bool:
+    hit = _verified.get(lookup)
+    return bool(hit) and hit[0] == token_hash and hit[1] > time.monotonic()
+
+
+def _remember_verified(lookup: str, token_hash: str) -> None:
+    if len(_verified) >= _VERIFIED_MAX:
+        _verified.clear()
+    _verified[lookup] = (token_hash, time.monotonic() + _VERIFIED_TTL_SECONDS)
+
+
+def reset_verified_cache() -> None:
+    _verified.clear()
+
+
 async def get_principal_by_token(raw_token: str) -> dict | None:
     """Resolve a token to its principal.
 
@@ -156,9 +187,13 @@ async def get_principal_by_token(raw_token: str) -> dict | None:
             lookup,
         )
     if row:
+        if _verified_recently(lookup, row["token_hash"]):
+            return _principal_dict(row)
         match = await asyncio.to_thread(
             bcrypt.checkpw, _bcrypt_input(raw_token), row["token_hash"].encode()
         )
+        if match:
+            _remember_verified(lookup, row["token_hash"])
         return _principal_dict(row) if match else None
 
     # Legacy rows (no lookup key yet): bcrypt-scan, backfill on match.
