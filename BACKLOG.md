@@ -18,8 +18,8 @@
 > also start only when the owner names them ("let me drive"). Context:
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
-> **⛔ FREEZE ON TOP OF THAT (owner, 2026-08-23 18:09Z, NOT lifted as of
-> 2026-08-24).** After an afternoon where each messaging fix produced the next
+> **⛔ FREEZE ON TOP OF THAT (owner, 2026-08-23 18:09Z, still in force as of
+> 2026-09-24 except the partial lift below).** After an afternoon where each messaging fix produced the next
 > symptom, the owner froze engram-side messaging/huddle work outright. This is
 > STRICTER than no-scab: it also covers items he had already named, including
 > PAGE-INTENT-1. Everything that shipped that evening was Projalpha's tree,
@@ -312,6 +312,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   measuring whether the receipt alone cuts follow-ups, and only with a
   release condition that cannot deadlock (e.g. the held mail rides the
   reader's next wake).
+  ⓘ *Measured 2026-09-23: the premise is weak.* The "follow-ups sent before
+  an answer" count this item leaned on was NOT re-asks — it counted any
+  second A→B message with no reply between (new work, group-send copies).
+  Real chasers on 09-23's night: ~0 of 297. Candidate for WONTFIX; owner's
+  call (`finding/followups-metric-is-not-reasks-2026-09-23`).
   · Status: OPEN · Root: design · Found: building the owner's nag fix
 
 - **PAUSED-PARK-1** *(measured 2026-09-22; deliberately NOT built.)* Park
@@ -322,6 +327,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   poll an external feed (config, not a hardcoded peer) AND re-emit held mail
   at reset, or a parked seat wakes deaf — the HOLD-REPEAT-1 hazard again.
   Build only if a measured night shows it matters.
+  ⓘ *Overtaken in part 2026-09-23:* the owner approved launcher-side stall
+  handling — on a usage-cap stop the launcher tells the PM (switch work or
+  DM the owner) and unparks the seat at reset
+  (`decision/harness-stall-handling-2026-09-23`). The PM stops sending, so
+  engram-side parking has even less to catch.
   · Status: OPEN · Root: design · Found: owner-ordered waste study
 
 - **SIBLING-WARN-SUPERSEDED-1** *(found 2026-09-22 at wrapup.)* The
