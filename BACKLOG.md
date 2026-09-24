@@ -1024,6 +1024,26 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
+- **INBOX-ESTATE-1** *(measured 2026-09-24; frozen messaging logic, so the
+  owner decides)* `class:absence-vs-failure` One project's open mail reached
+  5,555 rows in five days; 5,499 were hand-drained (resolver marker
+  `system:<project>-estate-drain-2026-09-24`, reversible). Why it piles up,
+  measured on those rows:
+  (1) **Unread mail to a dead seat is never drained** — 2,730 rows (49%).
+  The stale sweep only resolves mail that someone has READ, on purpose, so
+  undelivered mail is never hidden. A seat that dies with mail it never read
+  keeps that mail open forever.
+  (2) **The 72h sweep window is longer than a seat lives** — 2,823 read rows
+  (51%) younger than 72h. Sessions read and ack but do not resolve, and seats
+  turn over daily.
+  (3) **A recycled seat inherits its predecessor's mail.** The address is the
+  seat name, with no occupancy epoch: a session re-seated as `<p>-codex-2`
+  today opened with ~780 rows written to the previous occupant.
+  (A shared role alias contributes little: ~240 rows.) Fix shapes: when a
+  seat is certified dead, resolve its mail with a system marker; shorten the
+  read-mail window to about a day; show a new occupant only mail sent after
+  its claim.
+
 - **OWNER-RULINGS-UNEXECUTED** *(opened 2026-09-22 after the owner asked why
   the same conversation recurs. It recurs because of THIS.)*
   `class:decided-but-never-tracked`
