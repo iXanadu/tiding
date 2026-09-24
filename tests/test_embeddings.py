@@ -56,3 +56,10 @@ async def test_encode_releases_mps_cache(services, monkeypatch):
     await embed("one")
     await embeddings.embed_batch(["two", "three"])
     assert len(calls) == 2
+
+
+def test_embedder_defaults_to_cpu():
+    """MPS compiles and keeps a graph per input length, so the heap grows
+    without bound in a long-lived server; CPU is the default (2026-09-24)."""
+    from server.config import Settings
+    assert Settings.model_fields["embed_device"].default == "cpu"

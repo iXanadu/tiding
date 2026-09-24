@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # trusts whatever the hub serves for 'main' — with trust_remote_code that
     # means arbitrary code. Empty string = unpinned (deliberate upgrades only).
     embed_model_revision: str = "e9b6763023c676ca8431644204f50c2b100d9aab"
+    # Where the embedder runs. CPU by default, measured 2026-09-24: on Apple
+    # silicon's MPS every distinct input length compiles and keeps its own
+    # graph, so the heap grows ~0.5 GB/hour in prod and never levels off
+    # (plus ~1 GB of GPU memory held for the model). On CPU, footprint stayed
+    # flat at ~1 GB over 800 random-length encodes at the same per-encode
+    # latency (115-290 ms vs 140-250 ms on MPS). "" = let torch pick.
+    embed_device: str = "cpu"
 
     # Server
     # SEC-1 secure-by-default: bind loopback unless the operator deliberately

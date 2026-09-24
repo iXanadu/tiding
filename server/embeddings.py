@@ -27,9 +27,10 @@ _encode_lock = asyncio.Lock()
 
 
 def _encode(inputs):
-    """Encode, then hand the GPU's cached blocks back.
+    """Encode, then hand the GPU's cached blocks back when running on MPS.
 
-    On Apple silicon the model runs on MPS, and PyTorch's MPS allocator keeps
+    Prod runs on CPU now (``embed_device``, 2026-09-24). This guard stays
+    for anyone who opts back into MPS: there, PyTorch's MPS allocator keeps
     every block it frees for reuse. Input lengths vary per call, so the cache
     keeps finding no block the right size and grows: prod reached a 29 GB
     footprint in 28h (26 GB of it GPU memory) and pushed the host 24 GB into
@@ -51,6 +52,7 @@ async def init_client() -> None:
             settings.embed_model,
             trust_remote_code=True,
             revision=settings.embed_model_revision or None,
+            device=settings.embed_device or None,
         )
     )
 
