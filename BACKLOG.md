@@ -1001,6 +1001,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   TOLD it is uncovered between wakes. Fix shape: per beat, probe the FIFO
   with `open(O_WRONLY|O_NONBLOCK)` — succeeds only when a reader holds it,
   ENXIO otherwise — and report `expired` on ENXIO. `class:absence-vs-failure`.
+  Re-observed 2026-09-24 ~02:01Z on a second seat (reader stopped ~01:52Z,
+  status still COVERED 9 min later). The mirror image, same day ~01:11Z:
+  after a late re-attach the status read `NOT COVERED (state=expired)` for
+  ~4 min with a live reader delivering wakes — the claim came back on the
+  next watch beat, not at attach. Same fix covers both: re-assert the claim
+  on attach and probe the FIFO per beat. Trigger in practice: the harness
+  Monitor expires every 30 min, so late re-attaches are routine.
 
 - **CTX-1-SWEEP** The once-per-session banner/guidance bridge (afcc010,
   2026-08-21) is live on hosta only; spokes run the ec39872 bridge until
