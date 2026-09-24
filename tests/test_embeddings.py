@@ -40,3 +40,19 @@ async def test_unrelated_concepts_low_similarity(services):
     vec2 = await embed("quantum mechanics wave function collapse")
     sim = cosine_sim(vec1, vec2)
     assert sim < 0.5, f"Expected < 0.5 for unrelated, got {sim}"
+
+
+@pytest.mark.asyncio
+async def test_encode_releases_mps_cache(services, monkeypatch):
+    """Each encode hands the MPS allocator's cache back (prod grew to 29 GB
+    of cached GPU blocks without it). Skipped where the model is not on MPS."""
+    import torch
+    from server import embeddings
+    if embeddings._model.device.type != "mps":
+        pytest.skip("model not on MPS")
+    calls = []
+    real = torch.mps.empty_cache
+    monkeypatch.setattr(torch.mps, "empty_cache", lambda: (calls.append(1), real())[1])
+    await embed("one")
+    await embeddings.embed_batch(["two", "three"])
+    assert len(calls) == 2

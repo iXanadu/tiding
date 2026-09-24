@@ -1,7 +1,7 @@
 import asyncio
-import functools
 
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from server.config import settings
@@ -24,6 +24,24 @@ _model: SentenceTransformer | None = None
 # was never silent corruption, but a memory service that randomly refuses
 # concurrent writes is still broken.
 _encode_lock = asyncio.Lock()
+
+
+def _encode(inputs):
+    """Encode, then hand the GPU's cached blocks back.
+
+    On Apple silicon the model runs on MPS, and PyTorch's MPS allocator keeps
+    every block it frees for reuse. Input lengths vary per call, so the cache
+    keeps finding no block the right size and grows: prod reached a 29 GB
+    footprint in 28h (26 GB of it GPU memory) and pushed the host 24 GB into
+    swap, while the model itself needed ~0.5 GB. Measured on 600 random-length
+    encodes: driver memory 6.2 GB without the release, ~2 GB with it; the
+    allocated tensors stayed at ~540 MB either way. Runs inside the encode lock,
+    so no other encode can be holding a block while the cache is emptied.
+    """
+    result = _model.encode(inputs, show_progress_bar=False)
+    if _model.device.type == "mps":
+        torch.mps.empty_cache()
+    return result
 
 
 async def init_client() -> None:
@@ -55,9 +73,7 @@ async def embed(text: str) -> np.ndarray:
         # bar conveys nothing. It buried the uvicorn lifecycle lines badly enough
         # that finding a restart's shutdown/startup pair took a targeted grep.
         # A log nobody can read is a log nobody reads.
-        result = await asyncio.to_thread(
-            functools.partial(_model.encode, show_progress_bar=False), text
-        )
+        result = await asyncio.to_thread(_encode, text)
     return np.array(result, dtype=np.float32)
 
 
@@ -69,9 +85,7 @@ async def embed_batch(texts: list[str]) -> list[np.ndarray]:
         # Batch keeps the bar suppressed too: this runs in a server process
         # whose stderr is a log file, never a terminal, so there is no reader
         # for whom a progress bar is the useful form.
-        results = await asyncio.to_thread(
-            functools.partial(_model.encode, show_progress_bar=False), texts
-        )
+        results = await asyncio.to_thread(_encode, texts)
     return [np.array(v, dtype=np.float32) for v in results]
 
 
