@@ -939,6 +939,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (b) CODEX: daemon-scoped bridge is not 1:1 — shared bridge must claim one
   watch per seat it serves, or one-watch-per-seat is false on codex from
   day one. Named hole, not silent deferral.
+  (f) *(measured 2026-09-23)* (b)'s visible cost: every launcher-hosted Codex
+  seat reads `NOT COVERED (state=unheld)` although the launcher delivers its
+  wakes, and the global instructions tell a harness without a stream tool to
+  "report it to engram" — so every Codex startup mails engram a false alarm
+  (8 from 5 seats that day, each one a wake). Two fixes: the status counts
+  launcher delivery as coverage (frozen — owner lifts), or the global
+  instructions say NOT COVERED is expected for launcher-hosted Codex (owner's
+  file; asked 2026-09-23, unanswered).
   (c) CURSOR: *(reworded THREE times in 24h — 2026-08-23 twice, 2026-08-24
   once. That churn IS the lesson: this line has described a moving target and
   each rewrite was overtaken within hours. State what is MEASURED and when.)*
