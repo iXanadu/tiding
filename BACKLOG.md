@@ -586,6 +586,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
+  Postgres instance with other projects' test databases: 141 of them (2.5 GB),
+  137 with nobody connected. The instance allows 100 connections in total and
+  no tenant login has a cap, so a runaway test suite can take them all and
+  starve the store. Fix: `ALTER ROLE ... CONNECTION LIMIT` per tenant login,
+  or a reserved pool for the store's own role. Dropping the leftover test
+  databases is their owners' call. Same day: the store's own embedder ran the
+  host into swap until MPS-CACHE-1 (5450460). `class:absence-vs-failure`.
+
 - **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
   own fleet; the wrong answer was built and discarded before sending.)*
   `class:enough-to-bill-not-enough-to-diagnose`
