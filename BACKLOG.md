@@ -586,6 +586,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **HEAP-GROWTH-1** *(measured 2026-09-24)* After MPS-CACHE-1 the GPU share
+  is flat (1,084 MB from start through 36 min), but ordinary heap memory
+  (MALLOC_SMALL) keeps growing: 738 MB at 36 min uptime. Before that fix it had
+  reached 3.2 GB at 28h, so roughly 3 GB/day if it never levels off. Check it
+  at 24h uptime with `footprint <pid>`. If it is still climbing, suspect an
+  in-process cache with no bound (auth verdict cache, request log, embedder
+  internals) and cap it.
+
 - **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
   Postgres instance with other projects' test databases: 141 of them (2.5 GB),
   137 with nobody connected. The instance allows 100 connections in total and
