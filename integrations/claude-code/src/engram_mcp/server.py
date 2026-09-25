@@ -2431,7 +2431,9 @@ async def memory_send(
         thread_id: Optional thread id to group a back-and-forth
         intent: Optional message intent — one of fyi | action | proceed |
             escalate | authority-directive. 'fyi' will NOT wake a dormant
-            recipient (informational); others wake. Omit for default (wakes).
+            recipient (informational); others wake. Omitted, a message to ONE
+            recipient wakes, but a comma-separated GROUP send defaults to
+            'fyi' — pass 'action' when someone in the group must answer.
         supersedes: Optional id of YOUR earlier message this one replaces
             (e.g. a corrected spec). The old message flips to 'superseded'
             and drains from default views — latest wins, no stale double-read.
@@ -2514,23 +2516,46 @@ async def memory_ack(
     message_id: str,
     project_dir: str = "",
 ) -> str:
-    """Mark an inbox message as read by this session. Response includes
-    per-reader vs archive semantics — read it.
+    """Mark one or more inbox messages as read by this session. Response
+    includes per-reader vs archive semantics — read it.
+
+    Acking a batch is ONE call: pass every id you have handled, separated
+    by commas ("inbox/a, inbox/b, inbox/c"). One ack call per message cost
+    2,748 tool calls in one measured sprint (2026-09-24); a batch marks
+    exactly the same messages read, it just stops paying per message.
 
     Args:
-        message_id: The inbox message id (e.g. "inbox/abc-123")
+        message_id: The inbox message id (e.g. "inbox/abc-123"), or a
+            comma-separated list of ids to ack together
         project_dir: Your working directory path (required for identity)
     """
     reader_identity, _ = compute_identity(project_dir or None)
-    try:
-        result = await _client.inbox_ack(
-            message_id=message_id,
-            reader_identity=reader_identity,
-            project_dir=project_dir or None,
-        )
-    except Exception as e:
-        return f"Ack failed: {e}"
-    head = f"Acked {result['id']} as {reader_identity}"
+    ids: list[str] = []
+    for raw in (message_id or "").replace("\n", ",").split(","):
+        mid = raw.strip()
+        if mid and mid not in ids:
+            ids.append(mid)
+    if not ids:
+        return "Error: 'message_id' is required."
+    acked: list[str] = []
+    failed: list[str] = []
+    result: dict = {}
+    for mid in ids:
+        try:
+            result = await _client.inbox_ack(
+                message_id=mid,
+                reader_identity=reader_identity,
+                project_dir=project_dir or None,
+            )
+            acked.append(result.get("id") or mid)
+        except Exception as e:
+            failed.append(f"{mid}: {e}")
+    if not acked:
+        return "Ack failed: " + "; ".join(failed)
+    head = f"Acked {', '.join(acked)} as {reader_identity}"
+    if failed:
+        head += (f"\n⚠️  {len(failed)} of {len(ids)} NOT acked (still unread):\n  "
+                 + "\n  ".join(failed))
     return _append_guidance(head, result)
 
 
@@ -2559,8 +2584,9 @@ async def memory_reply(
     relaying — so you do not need to know who else is in it. Membership is
     read from the PARENT MESSAGE, not frozen at thread creation: if a later
     send widened the thread, replying to the newer message reaches the wider
-    set and replying to an older one reaches the original set. These replies
-    keep the waking default: the group is small and was convened deliberately.
+    set and replying to an older one reaches the original set. Like any group
+    send these default to fyi (no wake); a reply that answers an ask goes as
+    'action', and you can pass intent='action' when the group must act.
 
     CROSS-PROJECT: if the parent came from a DIFFERENT project, the reply
     goes to that project's CHANNEL (its bare project name) — the answer
@@ -2620,10 +2646,9 @@ async def memory_reply(
         # has to relay by hand: slow, and every relayed line arrives under the
         # relayer's stamp rather than its author's.
         #
-        # Unlike a #channel reply this keeps the waking default. A channel is
-        # broad and unbounded, so quiet replies are the courteous default;
-        # a participant set was chosen deliberately and is small, and the
-        # reason to convene one is that these specific peers need to act.
+        # GROUP-FYI-1 (2026-09-25): no intent is set here, so the server's
+        # group default (fyi) applies — unless this answers an ask, where the
+        # Step 12 rule below sends action so the ask reads HANDLED.
         me = {reader_identity.strip().lower(), reader_to_address(reader_identity).strip().lower()}
         reply_to = [p for p in participants if p.strip().lower() not in me]
         effective_intent = intent

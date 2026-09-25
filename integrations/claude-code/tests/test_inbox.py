@@ -401,6 +401,45 @@ async def test_memory_ack(respx_mock):
     assert "engram@hosta" in result
 
 
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_ack_batch_is_one_call(respx_mock):
+    """ACK-BATCH-1: a comma-separated list acks every id in one tool call,
+    de-duplicated, each through the same per-message endpoint."""
+    routes = {
+        mid: respx_mock.post(f"/memory/inbox/{mid}/ack").mock(
+            return_value=httpx.Response(200, json={"status": "ok", "id": mid}))
+        for mid in ("inbox/m1", "inbox/m2", "inbox/m3")
+    }
+    with patch.dict("os.environ", {"HOME": "/Users/dev"}), \
+         patch("engram_mcp.identity.hostname", return_value="hosta"):
+        result = await memory_ack(
+            message_id="inbox/m1, inbox/m2,inbox/m3, inbox/m1",
+            project_dir="/Users/dev/projects/engram",
+        )
+    assert "Acked inbox/m1, inbox/m2, inbox/m3" in result
+    assert all(r.call_count == 1 for r in routes.values())
+    assert "NOT acked" not in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_ack_batch_names_the_ids_it_could_not_ack(respx_mock):
+    """A partial failure must say WHICH ids stayed unread — a batch that
+    reports only its successes would let a lost ack pass as handled."""
+    respx_mock.post("/memory/inbox/inbox/m1/ack").mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": "inbox/m1"}))
+    respx_mock.post("/memory/inbox/inbox/gone/ack").mock(
+        return_value=httpx.Response(404, json={"detail": "not found"}))
+    with patch.dict("os.environ", {"HOME": "/Users/dev"}), \
+         patch("engram_mcp.identity.hostname", return_value="hosta"):
+        result = await memory_ack(
+            message_id="inbox/m1, inbox/gone",
+            project_dir="/Users/dev/projects/engram",
+        )
+    assert "Acked inbox/m1" in result
+    assert "1 of 2 NOT acked" in result
+    assert "inbox/gone" in result
+
+
 # --- memory_reply ---
 
 @respx.mock(base_url="http://localhost:8920")

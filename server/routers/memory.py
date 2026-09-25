@@ -963,6 +963,18 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             [t for t, _ in corrected], sender=sender_label
         )
         thread_id = thread_id or f"inbox/{uuid.uuid4()}"
+    # GROUP-FYI-1 (owner GO 2026-09-25): group mail is fyi by default; the
+    # sender passes intent=action when someone must answer. Measured
+    # 2026-09-24: of 1,648 group copies 20% drew a reply but 89% woke their
+    # reader. Only an OMITTED intent changes — an explicit one always wins.
+    # Exempt: the owner's own sends (his words wake) and the relay's huddle
+    # lifecycle letters (a kickoff must reach a dormant participant).
+    group_fyi_defaulted = False
+    if (is_fanout and not (req.intent or "").strip()
+            and not req.huddle_lifecycle
+            and not (_owner_name and principal_name == _owner_name)):
+        req.intent = "fyi"
+        group_fyi_defaulted = True
     try:
         ids: list[str] = []
         for to, _orig in corrected:
@@ -1039,6 +1051,12 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 thread_id=req.thread_id)
         except Exception:
             logger.exception("send_cost_facts failed (advisory only)")
+        if group_fyi_defaulted:
+            cost.insert(0,
+                f"Group send to {len(corrected)} recipients went as intent=fyi "
+                "(the group default): it woke NO ONE; each reads it on their "
+                "next inbox call. When someone must answer, pass "
+                "intent='action' and name them.")
         # HUD-ROUTE-1 (2026-08-22): the huddle relay ingests the OWNER's
         # inbox and fans out by thread_id, so a send carrying a `huddle/<id>`
         # thread but addressed to anyone other than the owner never enters

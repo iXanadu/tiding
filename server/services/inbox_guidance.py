@@ -160,6 +160,8 @@ def inbox_list_guidance(
         "              from the default view (kept, retrievable via include_resolved).\n"
         "              Either party may resolve once the loop is closed.\n"
         "  • Ack:      memory_ack(message_id)          — mark as read without replying.\n"
+        "              Batch it: memory_ack(\"inbox/a, inbox/b, ...\") acks\n"
+        "              every handled message in ONE call.\n"
         "  • Archive:  memory_inbox_archive(message_id) — global hard-hide; prefer\n"
         "              resolve for finished threads (archive is for noise/mistakes).\n"
         + stale_note
