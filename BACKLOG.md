@@ -19,7 +19,7 @@
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
 > **⛔ FREEZE ON TOP OF THAT (owner, 2026-08-23 18:09Z, still in force as of
-> 2026-09-24 except the partial lift below).** After an afternoon where each messaging fix produced the next
+> 2026-09-25 except the partial lifts below).** After an afternoon where each messaging fix produced the next
 > symptom, the owner froze engram-side messaging/huddle work outright. This is
 > STRICTER than no-scab: it also covers items he had already named, including
 > PAGE-INTENT-1. Everything that shipped that evening was Projalpha's tree,
@@ -32,6 +32,11 @@
 > `fix/messaging-waste-round-1-2026-09-22`). Everything else below is STILL
 > frozen. The same day the owner ruled that every room post must name its
 > recipient (`@all` for everyone) — the launcher enforces it now.
+>
+> **SECOND PARTIAL LIFT (owner, 2026-09-25 16:31Z: "Agreed - GO").** Lifted
+> ONLY for ACK-BATCH-1 and GROUP-FYI-1, both shipped and deployed (story:
+> `fix/ack-batch-and-group-fyi-2026-09-25`). GROUP-WAKE-1 below is the
+> follow-up and still needs its own go.
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
@@ -965,7 +970,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (8 from 5 seats that day, each one a wake). Two fixes: the status counts
   launcher delivery as coverage (frozen — owner lifts), or the global
   instructions say NOT COVERED is expected for launcher-hosted Codex (owner's
-  file; asked 2026-09-23, unanswered).
+  file; asked 2026-09-23, unanswered). *(2026-09-25: confirmed benign for
+  delivery — the launcher's Codex manager delivers mail itself (its log:
+  619 mail wakes over 09-24/25, measured by the launcher's owner), and every
+  Codex bridge watcher waited the whole 09-24 sprint
+  with no FIFO consumer. The false-alarm mail is the only remaining cost.)*
   (c) CURSOR: *(reworded THREE times in 24h — 2026-08-23 twice, 2026-08-24
   once. That churn IS the lesson: this line has described a moving target and
   each rewrite was overtaken within hours. State what is MEASURED and when.)*
@@ -1032,6 +1041,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   let it become permanent clutter.
 
 ## Needs-decision
+
+- **GROUP-WAKE-1** *(measured 2026-09-25; frozen messaging, owner asked
+  19:53Z for go A / go B / no)* GROUP-FYI-1 only defaults an OMITTED intent,
+  and senders now pass `intent=action` on ~90% of group copies (sample
+  16:37–19:52Z, two team projects: 289 of 320 group copies woke their
+  reader; zero went out without an intent). Proposal: on a group send,
+  `action` wakes only the recipients @-named in line 1; everyone else gets
+  it as fyi. Of 292 waking group copies: 78 name their recipient in line 1,
+  47 name someone else, 167 name no one. **A** (strict, like the room rule:
+  no @ in line 1 → nobody wakes, receipt says so) cuts 214 (73%). **B**
+  (soft: no @ → all wake) cuts 47 (16%). Recommended A. Data:
+  `finding/go1-go2-effect-sample-2026-09-25`.
+  · Status: OPEN · Root: design (GROUP-FYI-1) · Found: owner-ordered sample
 
 - **INBOX-ESTATE-1** *(measured 2026-09-24; frozen messaging logic, so the
   owner decides)* `class:absence-vs-failure` One project's open mail reached
