@@ -1686,3 +1686,51 @@ async def test_live_colleague_blocks_inheritance(client, db_pool):
     seat = r.json()["seat"]
     rb = await _read_by(db_pool, "inbox/p4")
     assert f"{seat}@hosta" not in rb, "live colleague must block inheritance"
+
+
+async def _shift_one_with_mail(client, name):
+    a = (await _claim(client, "shift-1", preferred_seat=name)).json()
+    assert a["seat"] == name
+    send = await client.post("/memory/send", json={
+        "to": name, "subject": "for the next shift", "body": "handover",
+    })
+    assert send.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_shift_change_after_release_keeps_the_name_and_mail(
+    client, db_pool
+):
+    """SEAT-DEAD-HOLDER-1, the owner's daily case: take a team down at end of
+    shift and spin the next one up seconds later under the same names."""
+    await _clear(db_pool)
+    name = f"{PROJ}-pm-claude"
+    await _shift_one_with_mail(client, name)
+    await client.post("/session/release", json={
+        "session_key": "shift-1", "project": PROJ,
+    })
+    b = (await _claim(client, "shift-2", preferred_seat=name)).json()
+    assert b["seat"] == name, b
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_shift_change_after_death_certificate_keeps_the_name_and_mail(
+    client, db_pool
+):
+    """Same, when the launcher certifies the stop instead of releasing:
+    the row is seconds old and holds mail."""
+    from datetime import datetime, timedelta, timezone
+    await _clear(db_pool)
+    name = f"{PROJ}-pm-claude"
+    await _shift_one_with_mail(client, name)
+    r = await client.post("/session/death", json={
+        "session_key": "shift-1", "seat": name, "project": PROJ,
+        "provider": "claude", "cause": "stop", "graceful": True,
+        "died_at": (datetime.now(timezone.utc)
+                    + timedelta(seconds=2)).isoformat(),
+    })
+    assert r.status_code == 200
+    b = (await _claim(client, "shift-2", preferred_seat=name)).json()
+    assert b["seat"] == name, b
+    await _clear(db_pool)

@@ -1173,13 +1173,23 @@ async def seat_claim(
             # fresh presence — the declared successor gets the chair and its
             # mail. Runtime picks (memory_take_seat) and ordinal allocation
             # keep R8 unchanged.
+            #
+            # Shift change is the common case: the launcher stops a team and
+            # starts the next one seconds later. The stopped holder's row is
+            # then fresh (`live-holder`) and its last beat may still read as
+            # breathing — so a certificate for THIS occupant (SEAT-13b guard)
+            # outranks both, exactly as SEAT-13 already rules for a chair
+            # with no mail. Without a cert, breathing still parks.
             if (d["would_skip"] and seat == distinct_preferred
-                    and not runtime_seat and seat not in breathing
-                    and d["reason"] in ("mail-parked", "grace-window")):
+                    and not runtime_seat
+                    and d["reason"] in ("mail-parked", "grace-window",
+                                        "live-holder")):
                 certified = _cert_is_for_this_occupant(row)
-                if row is None:
+                if certified:
                     holder_gone = True
-                elif certified:
+                elif seat in breathing or d["reason"] == "live-holder":
+                    holder_gone = False
+                elif row is None:
                     holder_gone = True
                 elif age is not None and age >= SEAT_GRACE_SECONDS:
                     holder_gone = not await _presence_is_fresh(
