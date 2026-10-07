@@ -36,9 +36,25 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def settings_target(field: str) -> str:
+    """The DB target the scratch server must use: the test instance when
+    configured (TEST-PG-1), else the ordinary db_* setting."""
+    from server.config import settings
+    val = getattr(settings, f"test_db_{field}")
+    if val is None:
+        val = getattr(settings, f"db_{field}")
+    return str(val)
+
+
 async def _ensure_db():
     sys.path.insert(0, str(REPO_ROOT))
     from server.config import settings
+    # TEST-PG-1: the scratch DB lives on the non-archived test instance when
+    # configured, and the spawned server inherits the same target below.
+    for field in ("host", "port", "user", "password"):
+        val = getattr(settings, f"test_db_{field}")
+        if val is not None:
+            setattr(settings, f"db_{field}", val)
 
     admin_dsn = (
         f"postgresql://{settings.db_user}"
@@ -78,6 +94,10 @@ def accept_server():
     env = {
         **os.environ,
         "ENGRAM_DB_NAME": ACCEPT_DB,
+        "ENGRAM_DB_HOST": settings_target("host"),
+        "ENGRAM_DB_PORT": settings_target("port"),
+        "ENGRAM_DB_USER": settings_target("user"),
+        "ENGRAM_DB_PASSWORD": settings_target("password"),
         # PROD-SHAPED, not merely convenient: require_auth=true makes the
         # server bootstrap a '_bootstrap' admin principal from
         # ENGRAM_API_TOKEN. Legacy-token mode looked simpler but 401s on

@@ -621,6 +621,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   declared seat's queued mail in the granted seat's inbox. Frozen messaging:
   needs the owner's word.
 
+- **ACCEPT-HF-1** *(found 2026-10-07; pre-existing, not caused by TEST-PG-1)*
+  `scripts/accept.sh` errors on all 16 rows: the spawned scratch server
+  fails to load the embedding model (huggingface RepositoryNotFound on the
+  metadata HEAD). The unit suites are unaffected. Likely the spawned env lacks
+  the offline/cache settings prod uses.
+
 - **SWEEP-MACBOOK-1** The bridge sweep for af8f1b5 skipped one remote box
   (offline at sweep time). Pull + install-mcp-wrapper.sh there when it's up.
 

@@ -119,6 +119,11 @@ async def services():
     real data if pointed at prod — see lesson/tests-shared-db-destructive.
     The assertion below is a hard safety rail.
     """
+    # TEST-PG-1: run against the non-archived test instance when configured.
+    for field in ("host", "port", "user", "password"):
+        val = getattr(settings, f"test_db_{field}")
+        if val is not None:
+            setattr(settings, f"db_{field}", val)
     if settings.db_name != TEST_DB_NAME:
         await _ensure_test_db_exists()
         settings.db_name = TEST_DB_NAME

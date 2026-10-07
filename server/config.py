@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     db_name: str = "engram"
     db_user: str = "engram"
     db_password: str = "engram"
+    # Where the TEST suite puts engram_test. Tests create, clone and drop
+    # databases; on an instance that archives WAL for PITR that churn lands in
+    # the backup archive (measured 2026-10-07: test churn filled a backup
+    # volume). Point these at a separate, non-archived instance. Unset = the
+    # db_* values above. Read only by tests/conftest.py.
+    test_db_host: str | None = None
+    test_db_port: int | None = None
+    test_db_user: str | None = None
+    test_db_password: str | None = None
 
     # Embeddings
     embed_model: str = "nomic-ai/nomic-embed-text-v1.5"
