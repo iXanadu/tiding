@@ -613,18 +613,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Store-side follow-up: prune `request_log` (never pruned) and drop its
   unused indexes.
 
-- **SEAT-DEAD-HOLDER-1** *(owner lifted 2026-10-07 as a critical; built,
-  awaiting adversarial review before deploy)* A launch-declared seat whose
-  holder was gone was still parked by open mail (R8), so the restart was
-  exiled to an ordinal and mail addressed to the declared name sat unread.
-  Fix: a launch-declared distinctive preference whose holder is provably gone
-  is granted with its mail, loudly (`inherited_parked_mail`). Runtime picks
-  and ordinal allocation keep R8.
+- **SEAT-DEAD-HOLDER-2** *(the rest of a 2026-10-06 incident report; part 1
+  shipped 2026-10-07)* (b) A send to a seat whose holder is certified dead
+  succeeds silently. Return a recipient warning that names the project lane
+  as the live alternative. (c) A seat rename at launch is announced once.
+  Keep it in every status/inbox banner until resolved, and show the
+  declared seat's queued mail in the granted seat's inbox. Frozen messaging:
+  needs the owner's word.
 
-- **CODEX-WAKE-NOISE-1** *(built, ships with the next deploy)* Launcher-hosted
-  sessions whose wakes the launcher delivers read NOT COVERED and mailed the
-  store a report each (58 in 11 days). The launcher sets
-  `ENGRAM_WAKE_BY_LAUNCHER=1`; memory_status then reads COVERED BY LAUNCHER.
+- **SWEEP-MACBOOK-1** The bridge sweep for af8f1b5 skipped one remote box
+  (offline at sweep time). Pull + install-mcp-wrapper.sh there when it's up.
 
 - **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
   Postgres instance with other projects' test databases: 141 of them (2.5 GB),
