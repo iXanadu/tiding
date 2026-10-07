@@ -214,12 +214,13 @@ def _attach_command() -> str:
     return f"while true; do cat {_FIFO_PATH} 2>/dev/null; sleep 1; done"
 
 
-def _reattach_fifo() -> None:
-    """Consumer gone (EPIPE on emit): block until a new one attaches, then
-    point fd 1 at it again. Beats stop while we block — the claim expiring
-    meanwhile is the design's honest answer to 'nobody is listening'."""
+def _reattach_fifo(reason: str = "EPIPE on emit") -> None:
+    """Consumer gone (EPIPE on emit, or the reader probe found none): block
+    until a new one attaches, then point fd 1 at it again. Beats stop while we
+    block — the claim expiring meanwhile is the design's honest answer to
+    'nobody is listening'."""
     global _FIFO_FILE, _FIFO_FD
-    print("inbox-wait: wake consumer DETACHED (EPIPE on emit) — blocking until "
+    print(f"inbox-wait: wake consumer DETACHED ({reason}) — blocking until "
           "a new consumer attaches; the claim expires meanwhile and is "
           "re-asserted on attach", file=sys.stderr, flush=True)
     f = _open_fifo_for_write(_FIFO_PATH)
@@ -227,6 +228,31 @@ def _reattach_fifo() -> None:
         os.dup2(f.fileno(), 1)
     _FIFO_FILE = f
     _FIFO_FD = f.fileno()
+
+
+def _fifo_has_reader(path: str | None) -> bool:
+    """FALSE-COVERED-1 (2026-10-07): is anyone reading the wake FIFO NOW?
+
+    The watcher only learned a reader was gone when an emit hit EPIPE, so a
+    quiet seat kept beating `covered` for as long as no mail arrived — the
+    session deaf and told it was fine (three field reports, two confirmed
+    with process listings). A non-blocking open-for-write answers directly:
+    POSIX fails it with ENXIO when the FIFO has no reader. Our own write end
+    does not count, and closing the probe does not EOF the reader, because
+    the watcher still holds its long-lived write end.
+
+    Any other error is not evidence of absence: report True and let the
+    EPIPE path stay the backstop.
+    """
+    import errno as _errno
+    if not path:
+        return True
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError as e:
+        return e.errno != _errno.ENXIO
+    os.close(fd)
+    return True
 
 
 def _out(line: str, *, block_on_detach: bool = True) -> None:
@@ -1195,6 +1221,12 @@ async def _run(args) -> int:
                     except Exception:
                         pass
                 return 0
+            # FALSE-COVERED-1: stop beating `covered` the moment the reader
+            # is gone, not at the next emit. Same path as EPIPE: block until
+            # a consumer re-attaches; the claim expires meanwhile, so status
+            # and the bridge banner tell the session to re-attach.
+            if _fifo_mode() and not _fifo_has_reader(_FIFO_PATH):
+                _reattach_fifo(reason="no reader on the FIFO (probe)")
             if claim_state is not None:
                 wv = await claim_state.beat(client)
                 if wv == "displaced":

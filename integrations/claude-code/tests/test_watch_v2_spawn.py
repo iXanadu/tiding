@@ -361,3 +361,25 @@ def test_wake_by_launcher_flag_reads_env(monkeypatch):
     for v in ("", "0", "false", "off"):
         monkeypatch.setenv("ENGRAM_WAKE_BY_LAUNCHER", v)
         assert srv._wake_by_launcher() is False
+
+
+def test_fifo_reader_probe_sees_absence_and_presence(tmp_path):
+    """FALSE-COVERED-1: the watcher must learn a reader is gone WITHOUT
+    waiting for an emit to EPIPE — a quiet seat otherwise beats `covered`
+    while deaf. The probe must not EOF a live reader either."""
+    from engram_mcp.inbox_wait import _fifo_has_reader
+    fifo = str(tmp_path / "wake.fifo")
+    os.mkfifo(fifo, 0o600)
+    assert _fifo_has_reader(fifo) is False          # nobody reading
+    r = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)  # a reader attaches
+    w = os.open(fifo, os.O_WRONLY)                  # the watcher's write end
+    try:
+        assert _fifo_has_reader(fifo) is True
+        assert _fifo_has_reader(fifo) is True       # probing twice is harmless
+        os.write(w, b"wake\n")
+        assert os.read(r, 64) == b"wake\n"          # reader not EOF'd by probes
+    finally:
+        os.close(w)
+        os.close(r)
+    assert _fifo_has_reader(fifo) is False          # reader gone again
+    assert _fifo_has_reader(None) is True           # not in FIFO mode
