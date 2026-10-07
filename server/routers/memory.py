@@ -1083,7 +1083,18 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                         "memory_reply to the huddle kickoff message."
                     )
         if (req.intent or "").lower() != "fyi":
-            live = await recipient_liveness([t for t, _ in corrected])
+            # OWNER-LIVENESS-1 (2026-10-07): the owner is a PERSON who reads
+            # through the launcher's DM surface, never through a seat, so no
+            # presence row can speak for that address. But the owner's name
+            # can also be a project name, and recipient_liveness lets a
+            # project's seats speak for the bare project address — so every
+            # action DM to the owner was stamped "freshest listener
+            # <project>-claude-2: last heartbeat 142h ago — do not expect a
+            # reply", and agents concluded the owner was unreachable.
+            live = await recipient_liveness([
+                t for t, _ in corrected
+                if not (_hud_owner and t.split("@", 1)[0] == _hud_owner)
+            ])
             for addr, info in live.items():
                 # Facts, not verdicts (the store attests, consumers judge):
                 # warn on a stale heartbeat or a watcher that beat and then
