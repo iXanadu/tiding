@@ -627,6 +627,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   metadata HEAD). The unit suites are unaffected. Likely the spawned env lacks
   the offline/cache settings prod uses.
 
+- **REPLY-ADMIN-1** *(found 2026-10-07)* `memory_reply` to mail from
+  `admin@<host>` addresses the reply to the bare `admin` role, which the store
+  refuses with 409 (bare admin is ambiguous by design). The reply must keep the
+  sender's host axis. Workaround: `memory_send` to `admin@<host>` with the
+  thread id.
+
 - **SWEEP-MACBOOK-1** The bridge sweep for af8f1b5 skipped one remote box
   (offline at sweep time). Pull + install-mcp-wrapper.sh there when it's up.
 
