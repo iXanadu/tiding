@@ -692,10 +692,12 @@ async def test_parking_a_distinctive_preferred_name_is_loud(client, db_pool):
 
     The field chain, twice live (2026-08-16 "two Beast Chats", 2026-08-17
     "AB vs AB-App"): a launcher injects a distinctive preferred seat, the name
-    holds open mail, R8 parks it, and the claim fell to a project-lane ordinal
-    with warning:null — the team's session lost the only string that
-    distinguished it and nobody was told. The parking stays (R8 is correct);
-    the grant must now NAME the parked address, the reason, and the drain path.
+    is parked, and the claim fell to a project-lane ordinal with warning:null.
+    The grant must NAME the parked address, the reason, and what was granted.
+
+    Since SEAT-DEAD-HOLDER-1 a launch-declared name whose holder is provably
+    gone is no longer parked (next test), so this one parks on a holder that
+    is NOT provably gone: idle past the live window, inside grace, no cert.
     """
     await _clear(db_pool)
     name = f"{PROJ}-app-claude"
@@ -705,17 +707,66 @@ async def test_parking_a_distinctive_preferred_name_is_loud(client, db_pool):
         "to": name, "subject": "work order", "body": "parked with the name",
     })
     assert send.status_code == 200
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET last_used_at = NOW() - INTERVAL '1 hour' "
+            "WHERE scope = 'seat' AND key = $1", f"seat/{name}")
+
+    b = (await _claim(client, "app-session-2", preferred_seat=name)).json()
+    assert b["seat"] != name  # the holder may still be alive: parking holds
+    warning = b["warning"] or ""
+    assert "preferred_seat_parked" in warning
+    assert name in warning          # names the parked address
+    assert b["seat"] in warning     # names what was granted instead
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_launch_declared_successor_inherits_a_gone_holders_name_and_mail(
+    client, db_pool
+):
+    """SEAT-DEAD-HOLDER-1: the launcher restarting a chair is not a stranger.
+
+    Measured 2026-10-05: the declared seat's holder was gone, its open mail
+    parked the name, and the restart was exiled to an ordinal while three
+    owner requests addressed to the declared name sat unread ~7h. When the
+    launch names the seat and nothing holds it, grant it — mail included —
+    and say so on the warning channel.
+    """
+    await _clear(db_pool)
+    name = f"{PROJ}-app-claude"
+    a = (await _claim(client, "app-session-1", preferred_seat=name)).json()
+    assert a["seat"] == name
+    send = await client.post("/memory/send", json={
+        "to": name, "subject": "work order", "body": "for the chair",
+    })
+    assert send.status_code == 200
     await client.post("/session/release", json={
         "session_key": "app-session-1", "project": PROJ,
     })
 
     b = (await _claim(client, "app-session-2", preferred_seat=name)).json()
-    assert b["seat"] != name  # R8 held — that is not the defect
-    warning = b["warning"] or ""
-    assert "preferred_seat_parked" in warning
-    assert name in warning          # names the parked address
-    assert "open mail" in warning   # names the reason
-    assert b["seat"] in warning     # names what was granted instead
+    assert b["seat"] == name
+    assert "inherited_parked_mail" in (b["warning"] or "")
+    await _clear(db_pool)
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_pick_does_not_inherit_parked_mail(client, db_pool):
+    """The exemption is for LAUNCH declarations only. A mid-session
+    memory_take_seat of someone else's parked name keeps R8."""
+    await _clear(db_pool)
+    name = f"{PROJ}-app-claude"
+    await _claim(client, "app-session-1", preferred_seat=name)
+    await client.post("/memory/send", json={
+        "to": name, "subject": "work order", "body": "not yours",
+    })
+    await client.post("/session/release", json={
+        "session_key": "app-session-1", "project": PROJ,
+    })
+    b = (await _claim(client, "picker", preferred_seat=name,
+                      runtime_seat=True)).json()
+    assert b["seat"] != name
     await _clear(db_pool)
 
 

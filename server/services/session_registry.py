@@ -1160,6 +1160,42 @@ async def seat_claim(
                 # No extra query: the row is already in hand.
                 certified_dead=_cert_is_for_this_occupant(row),
             )
+            # SEAT-DEAD-HOLDER-1 (2026-10-07). R8 parks a name with open mail
+            # so a STRANGER allocated the same ordinal never reads it. A
+            # launch-declared distinctive preference is not a stranger: the
+            # launcher is restarting that chair, and the owner's labels and
+            # peers still address it. Parking it exiled the restart to an
+            # ordinal while the mail meant for it sat unread (three owner
+            # requests for ~7h, 2026-10-05; this project's own launch the
+            # same week). So when the launcher names the seat and its holder
+            # is provably gone — no row and nothing breathing at the address,
+            # a death certificate, or past the full grace window with no
+            # fresh presence — the declared successor gets the chair and its
+            # mail. Runtime picks (memory_take_seat) and ordinal allocation
+            # keep R8 unchanged.
+            if (d["would_skip"] and seat == distinct_preferred
+                    and not runtime_seat and seat not in breathing
+                    and d["reason"] in ("mail-parked", "grace-window")):
+                certified = _cert_is_for_this_occupant(row)
+                if row is None:
+                    holder_gone = True
+                elif certified:
+                    holder_gone = True
+                elif age is not None and age >= SEAT_GRACE_SECONDS:
+                    holder_gone = not await _presence_is_fresh(
+                        conn, seat, project)
+                else:
+                    holder_gone = False
+                if holder_gone:
+                    d = {"would_skip": False, "reason": None,
+                         "grace_expires_at": None}
+                    inherited = (
+                        f"inherited_parked_mail: {seat!r} was parked holding "
+                        f"open mail; its holder is gone and the launch named "
+                        f"this seat, so it was granted with that mail — read "
+                        f"your inbox."
+                    )
+                    warning = f"{warning}; {inherited}" if warning else inherited
             if d["reason"] == "live-no-row":
                 # A wrong release just proved itself. Loud by design: this
                 # can only happen when something inferred a death that had

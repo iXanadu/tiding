@@ -838,6 +838,14 @@ def _wake_state_dir() -> str:
     return d
 
 
+def _wake_by_launcher() -> bool:
+    """True when the launcher declared it delivers this session's wakes
+    (ENGRAM_WAKE_BY_LAUNCHER=1, set by AB's Codex manager). The bridge's own
+    FIFO then never gets a reader, by design."""
+    return os.environ.get("ENGRAM_WAKE_BY_LAUNCHER", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def _watcher_attach_command() -> str | None:
     """The exact Monitor command for this session's wake stream, or None
     while no supervised watcher exists.
@@ -1948,6 +1956,18 @@ async def memory_status() -> str:
                     f"  wake stream: COVERED (seat {_WATCH_STATE.get('seat')}, "
                     f"reader attached, last beat {_WATCH_STATE.get('last_beat')}) "
                     f"— consumer: {attach}  (log: {_WATCHER_SUP.get('log')})"
+                )
+            elif _wake_by_launcher():
+                # CODEX-WAKE-NOISE-1 (2026-10-07): a launcher that delivers
+                # wakes itself (AB's Codex manager) never attaches this FIFO,
+                # so the store honestly reads it unheld. Printing NOT COVERED
+                # here made every such session follow the global rule and
+                # mail engram — 58 identical reports in 11 days. State the
+                # store's measurement, and that it is expected.
+                lines.append(
+                    f"  wake stream: COVERED BY LAUNCHER (bridge stream "
+                    f"state={st} is expected — the launcher delivers wakes; "
+                    f"nothing to attach, nothing to report)"
                 )
             else:
                 lines.append(

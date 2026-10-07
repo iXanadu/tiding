@@ -591,6 +591,41 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **OWN-BYPASS-1** *(BLOCKING, data integrity; measured 2026-10-07 from
+  the audit trail of a 2026-09-30 incident)* A non-admin principal wrote a
+  project key in ANOTHER writer's partition while that writer's row was live
+  (written 6 minutes earlier), the write succeeded, ownership flipped to the
+  intruder, and the original author then got 409 `ownership_conflict` on its
+  own handoff key. The existing test (`test_live_foreign_owner_still_409s`)
+  says this cannot happen, so some path skips the OWN-1 check. Not yet
+  reproduced. Detail in project memory `backlog/OWN-BYPASS-1`. Next: an
+  adversarial review to find the path, then a regression test.
+
+- **WAL-TESTDB-1** *(critical ops, measured 2026-10-07; extends SHARED-PG-1)*
+  Archiving covers the whole Postgres cluster, so other projects' test
+  databases (one CREATE DATABASE per run; PG15+ WAL-logs every copy) fill the
+  store's PITR archive: 38 of 42 sampled segments from one day belonged to
+  dropped test databases, 4 to the store. The archive reached ~119 GB and
+  filled an onsite backup volume. Done 2026-10-07: max_wal_size 8GB,
+  checkpoint_timeout 15min, wal_compression lz4 (reload, live). Needs owner
+  decision: move dev/test databases to a separate, non-archived instance
+  (interim: STRATEGY FILE_COPY in the test runner, drop orphaned test DBs).
+  Store-side follow-up: prune `request_log` (never pruned) and drop its
+  unused indexes.
+
+- **SEAT-DEAD-HOLDER-1** *(owner lifted 2026-10-07 as a critical; built,
+  awaiting adversarial review before deploy)* A launch-declared seat whose
+  holder was gone was still parked by open mail (R8), so the restart was
+  exiled to an ordinal and mail addressed to the declared name sat unread.
+  Fix: a launch-declared distinctive preference whose holder is provably gone
+  is granted with its mail, loudly (`inherited_parked_mail`). Runtime picks
+  and ordinal allocation keep R8.
+
+- **CODEX-WAKE-NOISE-1** *(built, ships with the next deploy)* Launcher-hosted
+  sessions whose wakes the launcher delivers read NOT COVERED and mailed the
+  store a report each (58 in 11 days). The launcher sets
+  `ENGRAM_WAKE_BY_LAUNCHER=1`; memory_status then reads COVERED BY LAUNCHER.
+
 - **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
   Postgres instance with other projects' test databases: 141 of them (2.5 GB),
   137 with nobody connected. The instance allows 100 connections in total and

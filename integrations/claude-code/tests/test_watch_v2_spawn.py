@@ -346,3 +346,18 @@ def test_spawned_watcher_env_carries_the_bridge_seat_nonce(monkeypatch, tmp_path
     # at the session's process group cannot take it down before it observes
     # and reports the exit. Graceful stop still terminates it by PID.
     assert captured["start_new_session"] is True
+
+
+def test_wake_by_launcher_flag_reads_env(monkeypatch):
+    """CODEX-WAKE-NOISE-1: a launcher that delivers wakes itself sets
+    ENGRAM_WAKE_BY_LAUNCHER, and memory_status then says COVERED BY LAUNCHER
+    instead of NOT COVERED (which sent 58 identical reports to engram)."""
+    from engram_mcp import server as srv
+    monkeypatch.delenv("ENGRAM_WAKE_BY_LAUNCHER", raising=False)
+    assert srv._wake_by_launcher() is False
+    for v in ("1", "true", "YES", " on "):
+        monkeypatch.setenv("ENGRAM_WAKE_BY_LAUNCHER", v)
+        assert srv._wake_by_launcher() is True
+    for v in ("", "0", "false", "off"):
+        monkeypatch.setenv("ENGRAM_WAKE_BY_LAUNCHER", v)
+        assert srv._wake_by_launcher() is False
