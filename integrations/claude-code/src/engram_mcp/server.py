@@ -2670,7 +2670,10 @@ async def memory_reply(
         # group default (fyi) applies — unless this answers an ask, where the
         # Step 12 rule below sends action so the ask reads HANDLED.
         me = {reader_identity.strip().lower(), reader_to_address(reader_identity).strip().lower()}
-        reply_to = [p for p in participants if p.strip().lower() not in me]
+        # REPLY-ADMIN-1: rows stored before the server fix list an admin
+        # convener as bare `admin`, which the store refuses; keep its host.
+        reply_to = [qualify_admin_target(p, raw_from) for p in participants
+                    if p.strip().lower() not in me]
         effective_intent = intent
         if not reply_to:
             # Degenerate: we are the only listed participant. Fall back to the

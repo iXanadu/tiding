@@ -768,6 +768,12 @@ def _participant_set(recipients: list[str], sender: str | None) -> list[str]:
     out: list[str] = []
     for addr in [*recipients, sender]:
         loose = _loose_address(addr)
+        # REPLY-ADMIN-1 (2026-10-07): the loose form of `admin@<host>` is the
+        # bare shared role, which the send path refuses (ADMIN-ADDR-1). A
+        # group convened by an admin session stored bare `admin`, so every
+        # participant's reply 409'd. Keep the host for admin.
+        if loose and is_unqualified_admin(loose) and addr and "@" in addr:
+            loose = addr.strip().lower()
         if loose and loose not in out:
             out.append(loose)
     return out

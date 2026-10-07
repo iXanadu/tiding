@@ -1383,3 +1383,15 @@ async def test_channel_reply_keeps_quiet_fyi_despite_ask_parent(respx_mock):
     sent = json.loads(send_route.calls.last.request.content)
     assert sent["intent"] == "fyi"
     assert sent["in_reply_to"] == "inbox/S2"
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_group_reply_to_an_admin_convener_keeps_its_host(respx_mock):
+    """REPLY-ADMIN-1: rows stored before the server fix list an admin
+    convener as bare `admin`, which the store refuses with 409 — so every
+    participant's reply failed. The reply must carry the admin's host."""
+    send = _wire(respx_mock, _group_parent(
+        ["meidura", "engram", "admin"], from_="admin@hostb"))
+    await _reply_as_engram(message_id="inbox/hud-parent", body="done")
+    payload = json.loads(send.calls.last.request.read())
+    assert payload["to"] == ["meidura", "admin@hostb"]
