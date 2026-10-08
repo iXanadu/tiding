@@ -19,7 +19,7 @@
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
 > **⛔ FREEZE ON TOP OF THAT (owner, 2026-08-23 18:09Z, still in force as of
-> 2026-09-25 except the partial lifts below).** After an afternoon where each messaging fix produced the next
+> 2026-10-08 except the partial lifts below).** After an afternoon where each messaging fix produced the next
 > symptom, the owner froze engram-side messaging/huddle work outright. This is
 > STRICTER than no-scab: it also covers items he had already named, including
 > PAGE-INTENT-1. Everything that shipped that evening was Projalpha's tree,
@@ -36,7 +36,12 @@
 > **SECOND PARTIAL LIFT (owner, 2026-09-25 16:31Z: "Agreed - GO").** Lifted
 > ONLY for ACK-BATCH-1 and GROUP-FYI-1, both shipped and deployed (story:
 > `fix/ack-batch-and-group-fyi-2026-09-25`). GROUP-WAKE-1 below is the
-> follow-up and still needs its own go.
+> follow-up: approved as option A on 2026-10-07, to build after the launch.
+>
+> **THIRD PARTIAL LIFT (owner, 2026-10-07).** Lifted ONLY for SEAT-DEAD-HOLDER-1
+> ("we need to fix the seat issue") and FALSE-COVERED-1 ("Go"), both shipped
+> and deployed (stories: `fix/seat-dead-holder-1-2026-10-07`,
+> `fix/false-covered-and-reply-admin-2026-10-07`).
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
@@ -599,7 +604,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   own handoff key. The existing test (`test_live_foreign_owner_still_409s`)
   says this cannot happen, so some path skips the OWN-1 check. Not yet
   reproduced. Detail in project memory `backlog/OWN-BYPASS-1`. Next: an
-  adversarial review to find the path, then a regression test.
+  adversarial review to find the path, then a regression test. Owner
+  2026-10-07: "defer maybe" — start only on his word.
 
 - **WAL-TESTDB-1** *(critical ops, measured 2026-10-07; extends SHARED-PG-1)*
   Archiving covers the whole Postgres cluster, so other projects' test
@@ -607,19 +613,23 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   store's PITR archive: 38 of 42 sampled segments from one day belonged to
   dropped test databases, 4 to the store. The archive reached ~119 GB and
   filled an onsite backup volume. Done 2026-10-07: max_wal_size 8GB,
-  checkpoint_timeout 15min, wal_compression lz4 (reload, live). Needs owner
-  decision: move dev/test databases to a separate, non-archived instance
-  (interim: STRATEGY FILE_COPY in the test runner, drop orphaned test DBs).
-  Store-side follow-up: prune `request_log` (never pruned) and drop its
-  unused indexes.
+  checkpoint_timeout 15min, wal_compression lz4 (reload, live). Decided
+  2026-10-07: dev/test databases move to a separate, non-archived test
+  instance; the store's own suites already did (TEST-PG-1). Other projects'
+  moves are their owners'. Left here: measure the archive rate once they
+  have moved. Store-side follow-up: `request_log` has never been pruned
+  (6.3M rows, oldest 44 days against a 30-day retention) because prod runs
+  with the cleanup loop disabled (`ENGRAM_CLEANUP_ENABLED=false`), and that
+  loop is the only caller of the retention prune. Decouple the prune from
+  memory expiry, or run it once by hand; then drop the unused indexes.
 
 - **SEAT-DEAD-HOLDER-2** *(the rest of a 2026-10-06 incident report; part 1
   shipped 2026-10-07)* (b) A send to a seat whose holder is certified dead
   succeeds silently. Return a recipient warning that names the project lane
   as the live alternative. (c) A seat rename at launch is announced once.
   Keep it in every status/inbox banner until resolved, and show the
-  declared seat's queued mail in the granted seat's inbox. Frozen messaging:
-  needs the owner's word.
+  declared seat's queued mail in the granted seat's inbox. Frozen messaging.
+  Owner 2026-10-07: revisit after the launch.
 
 - **ACCEPT-HF-1** *(found 2026-10-07; pre-existing, not caused by TEST-PG-1)*
   `scripts/accept.sh` errors on all 16 rows: the spawned scratch server
@@ -627,8 +637,25 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   metadata HEAD). The unit suites are unaffected. Likely the spawned env lacks
   the offline/cache settings prod uses.
 
-- **SWEEP-MACBOOK-1** The bridge sweep for af8f1b5 skipped one remote box
-  (offline at sweep time). Pull + install-mcp-wrapper.sh there when it's up.
+- **SWEEP-MACBOOK-1** The bridge sweeps for af8f1b5 and 0868bd5 skipped one
+  remote box (offline at sweep time). On hold: the owner is reviewing that
+  box's role with the launcher's team (it has no backup). Do not sweep it
+  until he says so.
+
+- **SEAT-SWEEP-1** *(measured 2026-10-08)* Seats taken by Codex sessions
+  are never released when the session exits, so seat rows pile up: 47 of 68
+  were idle over 7 days and were released by hand 2026-10-08 (evidence
+  `inferred`, so liveness guards stay on). Since SEAT-DEAD-HOLDER-1 they no
+  longer block a launch, but they clutter the roster. Fix: a periodic sweep
+  releasing seats with no seat, presence or watch activity for 7 days, with
+  evidence `inferred`. Housekeeping, after the launch.
+
+- **CODEX-ENV-DROP-1** *(blocked-external, measured 2026-10-08)* The
+  launcher passes five engram env overrides to each Codex daemon, but the
+  engram bridge it spawns receives only three. `ENGRAM_WAKE_BY_LAUNCHER` and
+  `ENGRAM_SESSION_NONCE` are missing, so every Codex respawn reads NOT
+  COVERED and mails the store a report. Launcher-side; reported to its team.
+  Store side: resolve those reports until it lands.
 
 - **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
   Postgres instance with other projects' test databases: 141 of them (2.5 GB),
@@ -1081,8 +1108,9 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **GROUP-WAKE-1** *(measured 2026-09-25; frozen messaging, owner asked
-  19:53Z for go A / go B / no)* GROUP-FYI-1 only defaults an OMITTED intent,
+- **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
+  "likely important once everything else is stable" — build after the
+  launch stabilises, not before)* GROUP-FYI-1 only defaults an OMITTED intent,
   and senders now pass `intent=action` on ~90% of group copies (sample
   16:37–19:52Z, two team projects: 289 of 320 group copies woke their
   reader; zero went out without an intent). Proposal: on a group send,
