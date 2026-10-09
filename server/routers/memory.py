@@ -53,6 +53,7 @@ from server.models import (
     RosterResponse,
 )
 from server.services.audit_service import audit
+from server.services import mail_signal
 from server.services.identity import (
     ADMIN_FLEET,
     autocorrect_address,
@@ -1561,3 +1562,33 @@ async def get_roster(req: RosterRequest, request: Request):
     except Exception as e:
         logger.exception("roster_list failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+# ── WEBPUSH-1: the mail signal ─────────────────────────────────────────────
+# The ONE unauthenticated route under /memory/. PrincipalAuthMiddleware lets
+# it through via mail_signal.is_signal_path() (exact single-segment match), so
+# no principal is attached here and none is needed: the unguessable key IS
+# the credential, and it can only ever answer "is there new waking mail, and
+# how much". Every failure is the SAME 404 FastAPI gives an unknown route, so
+# a probe cannot tell a revoked key from a mistyped one from no route at all.
+
+_SIGNAL_NOT_FOUND = HTTPException(status_code=404, detail="Not Found")
+
+
+@router.get("/signal/{key}", include_in_schema=False)
+async def mail_signal_poll(key: str):
+    from fastapi.responses import JSONResponse
+
+    key_hash = mail_signal.hash_key(key)
+    if mail_signal.rate_limited(key_hash):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too Many Requests"},
+            headers={"Retry-After": str(int(mail_signal.MIN_POLL_INTERVAL_S)),
+                     "Cache-Control": "no-store"},
+        )
+    row = await mail_signal.lookup_signal(key)
+    if row is None:
+        raise _SIGNAL_NOT_FOUND
+    state = await mail_signal.signal_state(row["address"])
+    return JSONResponse(content=state, headers={"Cache-Control": "no-store"})

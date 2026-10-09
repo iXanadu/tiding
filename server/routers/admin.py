@@ -18,6 +18,11 @@ from server.models import (
     DeletionRejectResponse,
     EstateTransferRequest,
     EstateTransferResponse,
+    MailSignalIssueRequest,
+    MailSignalIssueResponse,
+    MailSignalListResponse,
+    MailSignalRevokeResponse,
+    MailSignalRow,
     MemoryListResponse,
     MemoryStatsResponse,
     MemoryUpdateRequest,
@@ -29,6 +34,7 @@ from server.services.memory_service import (
     estate_transfer,
 )
 from server.services.principal_service import get_principal
+from server.services import mail_signal
 from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
@@ -438,3 +444,75 @@ async def cleanup_endpoint(
     except Exception as e:
         logger.exception("cleanup_expired failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")
+
+
+# ── WEBPUSH-1: the mail signal ─────────────────────────────────────────────
+# Issue/list/revoke live under /admin on purpose: the public edge never
+# forwards /admin, so a cloud agent can neither mint nor re-point its own
+# signal. The operator issues one on the owner's word and hands the URL over
+# by hand — never by engram mail, which every fleet reader can read.
+
+
+@router.post("/signal", response_model=MailSignalIssueResponse)
+async def issue_mail_signal(
+    req: MailSignalIssueRequest,
+    caller=Depends(admin_or_open),
+):
+    address = req.address.strip().lower()
+    principal_name = (req.principal or address).strip().lower()
+    principal = await get_principal(principal_name)
+    if principal is None or not principal.get("active"):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"principal '{principal_name}' is not an active principal — a "
+                f"signal is tied to a login so that deactivating the login "
+                f"kills the signal. Mint the principal first, or pass "
+                f"'principal' explicitly."
+            ),
+        )
+    row, raw_key = await mail_signal.issue_signal(
+        address=address,
+        principal=principal_name,
+        issued_by=(caller or {}).get("name") if caller else None,
+    )
+    await audit(
+        "mail_signal.issue", caller,
+        {"address": address, "principal": principal_name, "signal_id": row["id"]},
+    )
+    logger.info("MAIL SIGNAL issued address=%s principal=%s id=%s",
+                address, principal_name, row["id"])
+    return MailSignalIssueResponse(
+        status="ok",
+        signal=MailSignalRow(**row),
+        path=mail_signal.SIGNAL_PATH_PREFIX + raw_key,
+        note=(
+            "Shown once — only its hash is stored. Hand the full URL "
+            "(public base + path) to the owner to paste into the agent; do "
+            "NOT send it by engram mail. Any earlier signal for this address "
+            "is now revoked."
+        ),
+    )
+
+
+@router.get("/signal", response_model=MailSignalListResponse)
+async def list_mail_signals(
+    include_revoked: bool = Query(False),
+    _caller=Depends(admin_or_open),
+):
+    rows = await mail_signal.list_signals(include_revoked=include_revoked)
+    return MailSignalListResponse(
+        status="ok", signals=[MailSignalRow(**r) for r in rows])
+
+
+@router.delete("/signal/{address}", response_model=MailSignalRevokeResponse)
+async def revoke_mail_signal(
+    address: str,
+    caller=Depends(admin_or_open),
+):
+    revoked = await mail_signal.revoke_signal(address)
+    await audit("mail_signal.revoke", caller,
+                {"address": address.strip().lower(), "revoked": revoked})
+    logger.info("MAIL SIGNAL revoked address=%s count=%s", address, revoked)
+    return MailSignalRevokeResponse(
+        status="ok", address=address.strip().lower(), revoked=revoked)

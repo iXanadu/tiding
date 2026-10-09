@@ -141,6 +141,25 @@ CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log (created_at);
 -- once (2026-08-25) and caught by the test DB before it reached prod.
 CREATE INDEX IF NOT EXISTS idx_request_log_principal ON request_log (principal, created_at);
 CREATE INDEX IF NOT EXISTS idx_request_log_path ON request_log (path, created_at);
+
+-- WEBPUSH-1: the mail signal. One row per issued capability URL. Only the
+-- SHA-256 of the key is stored — the raw key is shown once at issue and never
+-- again, so a DB dump cannot be turned into working signal URLs. A row is
+-- dead once revoked_at is set; re-issuing for an address revokes the old row
+-- (rotation). last_polled_at/poll_count answer "is the agent's hook really
+-- polling?" without anyone having to ask the agent.
+CREATE TABLE IF NOT EXISTS mail_signal (
+    id              BIGSERIAL PRIMARY KEY,
+    address         TEXT NOT NULL,
+    principal       TEXT NOT NULL,
+    key_hash        TEXT NOT NULL UNIQUE,
+    issued_by       TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at      TIMESTAMPTZ,
+    last_polled_at  TIMESTAMPTZ,
+    poll_count      BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mail_signal_address ON mail_signal (address);
 """
 
 # Migration: add namespace column to tables created before this column existed.

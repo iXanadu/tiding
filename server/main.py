@@ -67,6 +67,32 @@ def timestamp_uvicorn_handlers() -> None:
                 fmt.datefmt = "%Y-%m-%d %H:%M:%S %z"
 
 
+class _RedactSignalKey(logging.Filter):
+    """WEBPUSH-1: keep mail-signal keys out of uvicorn's access log.
+
+    uvicorn.access records carry the request path (with query) as args[2] of
+    (client_addr, method, full_path, http_version, status_code). The key is
+    the credential for a login-free route, so it is masked here the same way
+    the request_log middleware masks it. Never drops a record.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        from server.services.mail_signal import redact_path
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            redacted = redact_path(args[2])
+            if redacted is not args[2]:
+                record.args = args[:2] + (redacted,) + args[3:]
+        return True
+
+
+def redact_signal_keys_in_access_log() -> None:
+    """Idempotent: attach the filter to uvicorn.access once."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _RedactSignalKey) for f in access.filters):
+        access.addFilter(_RedactSignalKey())
+
+
 async def _bootstrap_admin():
     """Auto-create _bootstrap admin principal when require_auth=true and no admins exist.
 
@@ -136,6 +162,7 @@ async def lifespan(app: FastAPI):
     # than at import because uvicorn configures its logging before loading
     # the app — at lifespan time its handlers exist and can be stamped.
     timestamp_uvicorn_handlers()
+    redact_signal_keys_in_access_log()
     logger.info("Starting engram service")
     check_bind_security(settings.host, settings.require_auth,
                         settings.api_token, settings.allow_insecure_bind)

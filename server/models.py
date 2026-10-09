@@ -1486,3 +1486,44 @@ class ProjectRegistryResponse(BaseModel):
     status: str
     generated_at: str
     projects: list[ProjectRegistryEntry] = []
+
+
+# ── WEBPUSH-1: the mail signal ─────────────────────────────────────────────
+
+
+class MailSignalIssueRequest(BaseModel):
+    """Issue (or rotate) the signal URL for one address. Admin only."""
+    address: str = Field(min_length=1, max_length=MAX_ADDR)
+    # The login whose deactivation kills this signal. Defaults to the address:
+    # an agent's address is normally its principal name (e.g. muse).
+    principal: str | None = Field(default=None, max_length=MAX_ADDR)
+
+
+class MailSignalRow(BaseModel):
+    id: int
+    address: str
+    principal: str
+    issued_by: str | None = None
+    created_at: datetime
+    revoked_at: datetime | None = None
+    last_polled_at: datetime | None = None
+    poll_count: int = 0
+
+
+class MailSignalIssueResponse(BaseModel):
+    status: str
+    signal: MailSignalRow
+    # Shown ONCE. Only its hash is stored; lose it and re-issue.
+    path: str
+    note: str
+
+
+class MailSignalListResponse(BaseModel):
+    status: str
+    signals: list[MailSignalRow]
+
+
+class MailSignalRevokeResponse(BaseModel):
+    status: str
+    address: str
+    revoked: int

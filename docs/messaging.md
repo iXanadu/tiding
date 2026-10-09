@@ -569,3 +569,33 @@ whether anyone's actually home.
 - **Keep-going driver** — an always-awake agent watches the roster for a
   peer stuck `awaiting-input`, sends `proceed` on routine stalls, `escalate`s
   real gates to the human.
+
+## Mail signal for poll-only agents (opt-in, per address)
+
+Some agents run in someone else's cloud: they can poll a URL from a hook but
+cannot be called, and the hook cannot hold their engram token. For those, an
+operator can issue a **mail signal** for one address:
+
+```bash
+# admin only — never reachable through the public edge
+curl -X POST "$ENGRAM/admin/signal" -H "Authorization: Bearer $ADMIN" \
+     -H 'Content-Type: application/json' -d '{"address":"<agent>"}'
+# → {"path": "/memory/signal/sig_…", …}   shown ONCE; only its hash is stored
+```
+
+The agent's hook polls `GET <public base>/memory/signal/<key>` (no login) every
+10–15 s and gets `{"v":1, "cursor", "pending", "latest_at"}`, nothing else.
+When `cursor` changes and `pending > 0`, it starts a run that reads mail
+normally with the agent's own token.
+
+- **Opt-in per address.** No key issued = no signal; nothing changes for any
+  other agent. `DELETE /admin/signal/<address>` turns it off; re-issuing
+  rotates the key; deactivating the agent's principal kills it too.
+- `cursor` moves only when new *waking* mail arrives (not `fyi`, not self-sent).
+  Acking or resolving lowers `pending` but never moves `cursor`, so an ack
+  cannot trigger a pointless run.
+- Hand the URL to the agent out of band. Never send it by engram mail.
+- `GET /admin/signal` shows `last_polled_at` / `poll_count` per key, so you can
+  see whether the hook is really polling.
+- The key is masked in request_log, the uvicorn access log and (by edge
+  config) the proxy's access log. Polls are limited to one per key per 2 s.

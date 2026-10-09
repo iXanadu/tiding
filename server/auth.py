@@ -11,7 +11,7 @@ Two modes controlled by ENGRAM_REQUIRE_AUTH:
   true — Enforcement mode:
     - Bearer token MUST match a principal → request.state.principal = principal_dict
     - No token or unrecognized token → 401
-    - Exempt paths: /health, /dashboard*, /bridge
+    - Exempt paths: /health, /dashboard*, /bridge, /memory/signal/<key>
 """
 
 import logging
@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.config import settings
+from server.services.mail_signal import is_signal_path, redact_path
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
             or path.startswith("/dashboard")
             or path == "/bridge"
             or path.startswith("/static/")
+            # WEBPUSH-1: exactly /memory/signal/<one segment>, GET only. The
+            # key in the path is the credential; anything else under
+            # /memory/ — including /memory/signal itself — still needs a
+            # bearer token.
+            or (request.method == "GET" and is_signal_path(path))
         ):
             request.state.principal = None
             request.state.auth_source = "anonymous"
@@ -127,7 +133,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         client = request.client.host if request.client else "unknown"
         logger.warning(
             "ADMIN REFUSED ON PUBLIC SURFACE: principal=%s from %s on %s %s",
-            principal.get("name"), client, request.method, request.url.path,
+            principal.get("name"), client, request.method, redact_path(request.url.path),
         )
         return JSONResponse(
             status_code=403,
@@ -140,7 +146,7 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         logger.warning(
             "UNAUTHED REQUEST: %s %s from %s — %s",
             request.method,
-            request.url.path,
+            redact_path(request.url.path),
             client,
             reason,
         )
@@ -152,6 +158,6 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
             detail,
             client,
             request.method,
-            request.url.path,
+            redact_path(request.url.path),
         )
         return JSONResponse(status_code=401, content={"detail": detail})

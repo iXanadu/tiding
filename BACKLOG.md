@@ -42,6 +42,9 @@
 > ("we need to fix the seat issue") and FALSE-COVERED-1 ("Go"), both shipped
 > and deployed (stories: `fix/seat-dead-holder-1-2026-10-07`,
 > `fix/false-covered-and-reply-admin-2026-10-07`).
+>
+> **FOURTH PARTIAL LIFT (owner, 2026-10-09: "Yes").** Lifted ONLY for
+> WEBPUSH-1 (the opt-in mail signal for poll-only cloud agents).
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
@@ -1108,15 +1111,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **WEBPUSH-1** *(spec only, 2026-10-09; messaging freeze applies)* Wake
-  poll-only cloud agents in seconds. Design of record pivoted after the
-  receiving agent tested its side: NOT an outbound webhook (it has no inbound
-  surface) but a read-only capability URL under `/memory/` returning only
-  `{latest_id, created_at, count_pending}` for one address — rotatable,
-  revocable, no body, no subject — which the agent's hook polls. No outbound
-  path, no SSRF surface. Caveat: the agent's own runs take minutes, so this
-  fixes detection, not end-to-end latency. Detail: `backlog/WEBPUSH-1` and
-  its findings addendum in project memory.
+- **WEBPUSH-1** *(BUILT 2026-10-09; freeze lifted for it by name; open until
+  the live drill passes)* Opt-in, per-address mail signal: a login-free
+  `GET /memory/signal/<key>` returning only `{v, cursor, pending, latest_at}`
+  for ONE address that an admin issued a key for. No key issued = no signal;
+  no other address is affected. Remaining: issue the first key, owner hands
+  the URL to the agent, agent's hook polls every 10-15s, measure the three
+  legs (arrival→cursor, cursor→hook, hook→reply). Detail: `backlog/WEBPUSH-1`
+  in project memory.
 
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the

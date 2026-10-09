@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.config import settings
 from server.services.request_log import record_request, should_log
+from server.services.mail_signal import redact_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
                 # PATH ONLY — url.path excludes the query string by
                 # construction, so a value a client put in a URL cannot be
                 # recorded here. Do not switch this to str(request.url).
-                path=request.url.path,
+                # WEBPUSH-1: a signal key lives in the path, so it is masked
+                # before it can land in the table.
+                path=redact_path(request.url.path),
                 status=status,
                 duration_ms=duration_ms,
                 # Same header PUBLIC-SURFACE-2 keys on. Set by the edge only,
