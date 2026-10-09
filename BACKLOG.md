@@ -1108,6 +1108,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
+- **WEBPUSH-1** *(spec only, 2026-10-09; messaging freeze applies)* Outbound
+  signed webhook on new mail for a registered address, so cloud-hosted agents
+  that can only poll get woken. Pointer-only payload, operator-only
+  registration, durable outbox, coalescing, SSRF guard. Gate before go: the
+  receiving agent must have an inbound surface that can start a turn — the
+  first candidate has none known, so a webhook alone would not wake it.
+  Spec + ramifications: `backlog/WEBPUSH-1` in project memory.
+
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the
   launch stabilises, not before)* GROUP-FYI-1 only defaults an OMITTED intent,
