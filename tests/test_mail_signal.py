@@ -135,6 +135,15 @@ class TestSignalRoute:
         for canary in ("BODY-CANARY", "SUBJ-CANARY", "SENDER-CANARY", "inbox/"):
             assert canary not in r.text
 
+    async def test_trailing_whitespace_in_the_key_is_ignored(
+            self, env, no_rate_limit):
+        """A vault value with a trailing newline arrives as %0A."""
+        client, admin_h = env
+        path = await _issue(client, admin_h)
+        for suffix in ("%0A", "%0D%0A", "%20"):
+            r = await client.get(path + suffix)
+            assert r.status_code == 200, (suffix, r.status_code)
+
     async def test_neighbours_still_require_a_token(self, env):
         client, admin_h = env
         path = await _issue(client, admin_h)

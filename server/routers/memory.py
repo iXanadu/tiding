@@ -1579,6 +1579,12 @@ _SIGNAL_NOT_FOUND = HTTPException(status_code=404, detail="Not Found")
 async def mail_signal_poll(key: str):
     from fastapi.responses import JSONResponse
 
+    # A key copied out of a vault or config file often carries a trailing
+    # newline, which a hook then sends URL-encoded (%0A) as part of the key —
+    # measured on the first live client, 2026-10-09: every poll 404'd while
+    # the same URL worked in a browser (which trims it). Whitespace is never
+    # part of a key (token_urlsafe alphabet), so stripping it loses nothing.
+    key = key.strip()
     key_hash = mail_signal.hash_key(key)
     if mail_signal.rate_limited(key_hash):
         return JSONResponse(
