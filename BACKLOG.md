@@ -1111,15 +1111,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **WEBPUSH-1** *(BUILT 2026-10-09; freeze lifted for it by name; open until
-  the live drill passes)* Opt-in, per-address mail signal: a login-free
-  `GET /memory/signal/<key>` returning only `{v, cursor, pending, latest_at}`
-  for ONE address that an admin issued a key for. No key issued = no signal;
-  no other address is affected. Remaining: issue the first key, owner hands
-  the URL to the agent, agent's hook polls every 10-15s, measure the three
-  legs (arrival→cursor, cursor→hook, hook→reply). Detail: `backlog/WEBPUSH-1`
-  in project memory.
-
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the
   launch stabilises, not before)* GROUP-FYI-1 only defaults an OMITTED intent,
