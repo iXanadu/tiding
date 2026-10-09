@@ -1108,13 +1108,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **WEBPUSH-1** *(spec only, 2026-10-09; messaging freeze applies)* Outbound
-  signed webhook on new mail for a registered address, so cloud-hosted agents
-  that can only poll get woken. Pointer-only payload, operator-only
-  registration, durable outbox, coalescing, SSRF guard. Gate before go: the
-  receiving agent must have an inbound surface that can start a turn — the
-  first candidate has none known, so a webhook alone would not wake it.
-  Spec + ramifications: `backlog/WEBPUSH-1` in project memory.
+- **WEBPUSH-1** *(spec only, 2026-10-09; messaging freeze applies)* Wake
+  poll-only cloud agents in seconds. Design of record pivoted after the
+  receiving agent tested its side: NOT an outbound webhook (it has no inbound
+  surface) but a read-only capability URL under `/memory/` returning only
+  `{latest_id, created_at, count_pending}` for one address — rotatable,
+  revocable, no body, no subject — which the agent's hook polls. No outbound
+  path, no SSRF surface. Caveat: the agent's own runs take minutes, so this
+  fixes detection, not end-to-end latency. Detail: `backlog/WEBPUSH-1` and
+  its findings addendum in project memory.
 
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the
