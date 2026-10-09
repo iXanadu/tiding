@@ -42,7 +42,7 @@ anon() {  # anon <method> <path> -> http status, no credential
   curl -s -m 20 -o /dev/null -w '%{http_code}' -X "$1" "$PUBLIC$2"
 }
 check anon-signal public "$(anon GET /memory/signal/sig_verify_junk)" 404
-check anon-bare   public "$(anon GET /memory/signal)" 401
+check anon-bare   public "$(anon GET /memory/signal/)" 401
 check anon-search public "$(anon POST /memory/search)" 401
 echo
 [ "$RC" = 0 ] && echo "ALL PASS — admin refused on the public edge, scoped principals unaffected." \
