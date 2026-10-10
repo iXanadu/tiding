@@ -1180,7 +1180,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 
 - **HOSTED-CHAT-AUTH-1** *(owner deferred 2026-09-19: useful, but the pain may
-  not justify the leverage yet.)* Three vendor-hosted chat surfaces could gain
+  not justify the leverage yet. **Evidence 2026-10-10:** first concrete demand —
+  a cloud personal assistant was onboarded on the static-token pattern that
+  works for the first one, then found its vendor's connectors accept OAuth
+  only. Its principal is minted but DEACTIVATED until this exists.)* Three vendor-hosted chat surfaces could gain
   useful project context through restricted Engram principals: read shared
   project/fleet memory, write only to a private per-surface namespace, and no
   admin or messaging tools. First-party bots already use dedicated static
