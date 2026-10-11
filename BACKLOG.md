@@ -18,33 +18,11 @@
 > also start only when the owner names them ("let me drive"). Context:
 > `decision/no-scab-rule-2026-07-28` in project memory.
 
-> **⛔ FREEZE ON TOP OF THAT (owner, 2026-08-23 18:09Z, still in force as of
-> 2026-10-08 except the partial lifts below).** After an afternoon where each messaging fix produced the next
-> symptom, the owner froze engram-side messaging/huddle work outright. This is
-> STRICTER than no-scab: it also covers items he had already named, including
-> PAGE-INTENT-1. Everything that shipped that evening was Projalpha's tree,
-> not ours — do NOT read "comms are working now" as "the freeze ended". Only
-> the owner lifts it, by name.
->
-> **PARTIAL LIFT (owner, 2026-09-22 ~21:55Z: "Code it up").** Lifted ONLY for
-> the messaging-waste fixes agreed that day, all now shipped and deployed:
-> REPLY-TARGET-1, WAKE-BODY-1, AGENT-ACTIVE-1, SEND-COST-1 (story:
-> `fix/messaging-waste-round-1-2026-09-22`). Everything else below is STILL
-> frozen. The same day the owner ruled that every room post must name its
-> recipient (`@all` for everyone) — the launcher enforces it now.
->
-> **SECOND PARTIAL LIFT (owner, 2026-09-25 16:31Z: "Agreed - GO").** Lifted
-> ONLY for ACK-BATCH-1 and GROUP-FYI-1, both shipped and deployed (story:
-> `fix/ack-batch-and-group-fyi-2026-09-25`). GROUP-WAKE-1 below is the
-> follow-up: approved as option A on 2026-10-07, to build after the launch.
->
-> **THIRD PARTIAL LIFT (owner, 2026-10-07).** Lifted ONLY for SEAT-DEAD-HOLDER-1
-> ("we need to fix the seat issue") and FALSE-COVERED-1 ("Go"), both shipped
-> and deployed (stories: `fix/seat-dead-holder-1-2026-10-07`,
-> `fix/false-covered-and-reply-admin-2026-10-07`).
->
-> **FOURTH PARTIAL LIFT (owner, 2026-10-09: "Yes").** Lifted ONLY for
-> WEBPUSH-1 (the opt-in mail signal for poll-only cloud agents).
+> **FREEZE LIFTED (owner, 2026-10-11: "That has been lifted a long time
+> ago").** The 2026-08-23 messaging freeze is over; the agents' record
+> showed it in force with four partial lifts, and the owner corrected that.
+> Frozen items are ordinary open work again, prioritized like any other.
+> The no-scab rule above still decides WHEN they start: the owner names them.
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
 
@@ -1469,11 +1447,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   collision report, merge of N sources, reverse from `moved_from`;
   (b) the bridge warns when a folder's cfg value has no rows but a
   `moved/to-*` pointer or a sibling bucket exists. A sender-side "this
-  name moved" hint is mail routing → under the messaging freeze.
+  name moved" hint is mail routing (owner-named, like the rest).
   Measured on that case: (c) a reply addresses the sender's CURRENT cfg
   project, but a session started before the cfg edit still listens only
   on the old name — the reply landed, "Woke 0 agents". Mid-rename, send
-  to the seat. Also frozen (mail routing).
+  to the seat.
   · Status: OPEN (owner drives) · Found: owner question 2026-10-11
   · Detail: project memory `fix/project-rename-porchsite-2026-10-11`
 
