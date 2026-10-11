@@ -39,6 +39,7 @@ import logging
 import re
 import time
 
+from server.config import settings
 from server.db import get_pool
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,26 @@ async def relabel(sources: list[str], target: str, dry_run: bool = True,
             f"'{target}' is itself an alias of '{canonical(target)}' — "
             f"relabel into '{canonical(target)}' instead")
     pool = await get_pool()
+    # A project name can also be a PERSON's or a login's address (the owner's
+    # own name was once a project name). Aliasing it would reroute that
+    # person's mail into the project and let the project's sessions read it.
+    # Refused — the rows can still be merged by hand; the alias cannot be.
+    async with pool.acquire() as conn:
+        clash = await conn.fetch(
+            """
+            SELECT name FROM principals WHERE lower(name) = ANY($1::text[])
+            UNION
+            SELECT alias FROM principal_aliases WHERE lower(alias) = ANY($1::text[])
+            """,
+            srcs,
+        )
+    owner = _norm(settings.owner_principal_name)
+    clashing = sorted({_norm(r[0]) for r in clash} | ({owner} & set(srcs)))
+    if clashing:
+        raise ValueError(
+            f"refusing to alias {clashing}: each is also a person's or a "
+            f"login's address, so an alias would reroute that mail into "
+            f"'{target}'. Leave it out of sources.")
     async with pool.acquire() as conn:
         async with conn.transaction():
             rows = await conn.fetch(

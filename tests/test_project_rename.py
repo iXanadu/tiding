@@ -212,3 +212,21 @@ async def test_unrelated_names_and_seats_are_untouched(client, names):
     assert project_alias.canonical_address(f"{a}@hosta") == f"{new}@hosta"
     assert project_alias.canonical_address(b) == b
     assert await project_alias.expand_listen_set([b, f"{a}-claude-2"]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_persons_address_is_never_aliased(client, db_pool, names):
+    # The first real case had an old project name equal to the OWNER's own
+    # address; aliasing it would have rerouted the owner's DMs.
+    import server.services.principal_service as ps
+    a, b, c, new = names
+    await _put(client, a, "k", "v")
+    await ps.create_principal(name=a, type="human")
+    try:
+        r = await client.post("/admin/projects/relabel", json={
+            "sources": [a], "target": new, "dry_run": True})
+        assert r.status_code == 422
+        assert "person's or a login's address" in r.json()["detail"]
+    finally:
+        async with db_pool.acquire() as conn:
+            await conn.execute("DELETE FROM principals WHERE name = $1", a)
