@@ -276,13 +276,17 @@ def ensure_project_identity(project_dir: str | None) -> str:
     while current and current not in seen:
         seen.add(current)
         # Existing cfg check (honoring $HOME boundary)
+        # Same read order as _find_cfg_path: a .tiding.cfg-only folder must
+        # pass this gate too, or every scope=project call is refused while
+        # resolve_project_name happily returns its name.
         if current != home or project_dir == home:
-            candidate = os.path.join(current, PROJECT_CFG_FILENAME)
-            if os.path.isfile(candidate):
-                parsed = _parse_engram_cfg(candidate)
-                if is_real_project_name(parsed):
-                    return parsed
-                # sentinel or malformed → treat as unset, keep walking
+            for filename in PROJECT_CFG_READ_FILENAMES:
+                candidate = os.path.join(current, filename)
+                if os.path.isfile(candidate):
+                    parsed = _parse_engram_cfg(candidate)
+                    if is_real_project_name(parsed):
+                        return parsed
+                    # sentinel or malformed → treat as unset, keep walking
         # Boundary stops
         if under_projects and current == projects_root:
             break

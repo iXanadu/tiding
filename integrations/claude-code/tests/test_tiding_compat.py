@@ -34,6 +34,21 @@ def test_cfg_walkup_engram_fallback(tmp_path):
     assert scoping.resolve_project_name(str(tmp_path)) == "oldname"
 
 
+def test_scope_project_gate_accepts_tiding_only_folder(tmp_path):
+    # PROJECT-RENAME-1 find: the walk-up read .tiding.cfg but the scope=project
+    # gate only knew .engram.cfg, so a public repo that cannot carry the word
+    # "engram" was refused on every project call.
+    (tmp_path / ".tiding.cfg").write_text("project = newname\n")
+    assert scoping.ensure_project_identity(str(tmp_path)) == "newname"
+    assert not (tmp_path / ".engram.cfg").exists()
+
+
+def test_scope_project_gate_prefers_tiding(tmp_path):
+    (tmp_path / ".engram.cfg").write_text("project = oldname\n")
+    (tmp_path / ".tiding.cfg").write_text("project = newname\n")
+    assert scoping.ensure_project_identity(str(tmp_path)) == "newname"
+
+
 def test_writes_still_produce_engram_cfg(tmp_path):
     # Deployed pre-P2 bridges can only read .engram.cfg — writes stay on the
     # legacy name until the fleet's readers have all upgraded (WIRE-1 class).
