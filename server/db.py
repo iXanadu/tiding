@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS mail_signal (
     poll_count      BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_mail_signal_address ON mail_signal (address);
+
+-- PROJECT-RENAME-1: old project name -> current name. One hop as stored;
+-- resolution follows chains, and relabel flattens them as it writes.
+CREATE TABLE IF NOT EXISTS project_aliases (
+    old_name    TEXT PRIMARY KEY,
+    new_name    TEXT NOT NULL,
+    created_by  TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 # Migration: add namespace column to tables created before this column existed.

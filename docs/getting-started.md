@@ -126,6 +126,28 @@ project = foo
   `foo/` and `foo-app/` as sibling repos of one project). It seeds the
   preference; the server still guarantees uniqueness.
 
+### Renaming a project
+
+The `project` value is an ID, not a label: editing it alone points the folder
+at a new, empty bucket. To rename, merge the old name(s) into the new one:
+
+```bash
+scripts/project-relabel.sh newname oldname            # dry run: counts + collisions
+scripts/project-relabel.sh --apply newname oldname    # move rows, alias oldname
+```
+
+Every row moves in one transaction and is stamped with its old name; where
+two names hold the same key (two `startup/next` handoffs, say), the target's
+row wins, then the first source listed, and the others are kept under
+`archive/<oldname>/<key>`. Afterwards the old name is an alias: memory calls
+and mail addressed to it reach the new project (the sender is told), and a
+session still running under the old name keeps hearing its mail. Update each
+folder's cfg when convenient — `memory_status` reminds any session whose cfg
+still names the old one. `--reverse newname oldname` undoes one source.
+
+A repo that must not carry the word "engram" can name the file `.tiding.cfg`
+instead; it is read first.
+
 ## Where to next
 
 - [daily-workflow.md](daily-workflow.md) — how a human + agents actually

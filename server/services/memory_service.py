@@ -5,6 +5,9 @@ import re
 import uuid
 
 from server.services.identity import admin_listen_expansion
+from server.services.project_alias import expand_listen_set
+from server.services.project_alias import family as project_alias_family
+from server.services.project_alias import refresh as project_alias_refresh
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -1478,6 +1481,7 @@ async def inbox_unread_by_sender(
     hit at 56 unread while having read every message by another path.
     """
     listen_set = [addr.lower() for addr in listen_set]
+    listen_set = listen_set + await expand_listen_set(listen_set)
     if not listen_set or not reader_identity:
         return []
     pool = await get_pool()
@@ -1691,6 +1695,9 @@ async def inbox_list(
     # waiting on a bridge sweep (a bridge change lands only at the next
     # session start, and admin sessions on quiet boxes live for weeks).
     listen_set = listen_set + admin_listen_expansion(listen_set)
+    # PROJECT-RENAME-1: a renamed project's old and new names are one
+    # mailbox — same read-time reasoning as the admin expansion above.
+    listen_set = listen_set + await expand_listen_set(listen_set)
     # Always select the NEWEST `limit` messages (inner DESC LIMIT), then present
     # them in the caller's reading order (outer sort). Selecting the oldest N
     # would hide the most-recent mail once the backlog exceeds `limit` — wrong
@@ -2688,11 +2695,15 @@ async def send_cost_facts(
                 "agent_last_active": md.get("agent_last_active"),
             }
         woken: set[str] = set()
+        await project_alias_refresh()
         for addr in recips:
+            # PROJECT-RENAME-1: a session started under a renamed project's
+            # old name still listens there (read-time expansion), so it counts.
+            fam = set(project_alias_family(addr)) or {addr}
             for ident, info in live.items():
                 if ident == me:
                     continue
-                if (ident == addr or info["project"] == addr
+                if (ident == addr or info["project"] in fam
                         or re.fullmatch(re.escape(addr) + r"-\d+", ident)):
                     woken.add(ident)
         out: list[str] = []
@@ -2810,6 +2821,7 @@ async def inbox_unread_count(
     them.
     """
     listen_set = [addr.lower() for addr in listen_set]
+    listen_set = listen_set + await expand_listen_set(listen_set)
     if not listen_set:
         return 0
     pool = await get_pool()
@@ -3001,6 +3013,7 @@ async def inbox_resolve_thread(
     already drained — idempotent, so a closer can call it without checking).
     """
     listen_set = [a.lower() for a in listen_set if a]
+    listen_set = listen_set + await expand_listen_set(listen_set)
     if not thread_id or not listen_set:
         return 0
     resolved_at = datetime.now(timezone.utc).isoformat()
@@ -3104,6 +3117,7 @@ async def inbox_counts(
     inbox digest. NULL/missing status counts as ``open``.
     """
     listen_set = [addr.lower() for addr in listen_set]
+    listen_set = listen_set + await expand_listen_set(listen_set)
     if not listen_set:
         return {"open": 0, "resolved": 0, "superseded": 0, "stale": 0}
     pool = await get_pool()
@@ -3209,6 +3223,7 @@ async def wake_list_fresh(
     Self-echo excluded the same way mail wakes are: your own wake must not
     wake you. `since` is the caller's cursor (arm time / last event)."""
     listen = [a.lower() for a in listen_set if a]
+    listen = listen + await expand_listen_set(listen)
     if not listen:
         return []
     # Self-echo, both forms (amendment 6, completed): mail filters on the

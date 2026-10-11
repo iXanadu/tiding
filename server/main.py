@@ -19,6 +19,7 @@ from server.routers import (
     principals,
     session,
 )
+from server.services import project_alias
 from server.services.cleanup_task import (
     expiration_cleanup_loop,
     inbox_autoresolve_loop,
@@ -157,6 +158,15 @@ def check_bind_security(host: str, require_auth: bool, api_token: str,
 
 
 @asynccontextmanager
+async def _project_alias_refresh_loop():
+    while True:
+        await asyncio.sleep(project_alias.CACHE_TTL_SECONDS)
+        try:
+            await project_alias.refresh(force=True)
+        except Exception:
+            logger.exception("project alias refresh failed (cache kept)")
+
+
 async def lifespan(app: FastAPI):
     # First, so even the startup lines below carry a date. Runs here rather
     # than at import because uvicorn configures its logging before loading
@@ -190,6 +200,9 @@ async def lifespan(app: FastAPI):
         background_tasks.append(asyncio.create_task(expiration_cleanup_loop()))
     if settings.inbox_autoresolve_enabled:
         background_tasks.append(asyncio.create_task(inbox_autoresolve_loop()))
+    # PROJECT-RENAME-1: request validators read the alias map from cache.
+    await project_alias.refresh(force=True)
+    background_tasks.append(asyncio.create_task(_project_alias_refresh_loop()))
     yield
     logger.info("Shutting down")
     for task in background_tasks:

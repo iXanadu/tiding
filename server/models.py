@@ -38,9 +38,25 @@ class _NamespacedRequest(BaseModel):
         return _canon_ns(v)
 
 
+class _ProjectAliasedRequest(_NamespacedRequest):
+    """PROJECT-RENAME-1: a memory request naming a renamed project is served
+    from the project's current bucket, so a folder whose cfg still carries
+    the old name keeps reading and writing its own history. Memory CRUD only
+    — admin bulk operations name a project deliberately and are not
+    redirected."""
+
+    @field_validator("project", mode="before", check_fields=False)
+    @classmethod
+    def _canonicalize_project(cls, v):
+        if isinstance(v, str) and v.strip():
+            from server.services.project_alias import canonical_logged
+            return canonical_logged(v)
+        return v
+
+
 # --- Request models (match original Pyscript tool interface) ---
 
-class MemorySetRequest(_NamespacedRequest):
+class MemorySetRequest(_ProjectAliasedRequest):
     # SEC-7 (locked "warn", 2026-07-27, unanimous): unknown fields are
     # ACCEPTED and REPORTED, not rejected and not silently dropped. A
     # misspelled option (`if_matched` for `if_match`) used to vanish in
@@ -80,7 +96,7 @@ class MemorySetRequest(_NamespacedRequest):
         return v
 
 
-class MemoryGetRequest(_NamespacedRequest):
+class MemoryGetRequest(_ProjectAliasedRequest):
     namespace: str
     key: str
     scope: str = "user"
@@ -88,7 +104,7 @@ class MemoryGetRequest(_NamespacedRequest):
     project: str | None = None
 
 
-class MemorySearchRequest(_NamespacedRequest):
+class MemorySearchRequest(_ProjectAliasedRequest):
     namespace: str | None = None
     namespaces: list[str] | None = None
     query: str = Field(max_length=MAX_VALUE)
@@ -128,7 +144,7 @@ class MemorySearchRequest(_NamespacedRequest):
         return None
 
 
-class MemoryForgetRequest(_NamespacedRequest):
+class MemoryForgetRequest(_ProjectAliasedRequest):
     namespace: str
     key: str
     scope: str = "user"
@@ -230,7 +246,7 @@ class MemorySearchResponse(BaseModel):
     partition_warnings: list[str] = []
 
 
-class MemoryKeysRequest(_NamespacedRequest):
+class MemoryKeysRequest(_ProjectAliasedRequest):
     """MEM-2: deterministic key enumeration — the verb between get and search."""
     namespace: str | None = None
     namespaces: list[str] | None = None
@@ -295,7 +311,7 @@ class MemoryForgetResponse(BaseModel):
     partition_warnings: list[str] = []
 
 
-class MemorySupersedeRequest(_NamespacedRequest):
+class MemorySupersedeRequest(_ProjectAliasedRequest):
     """Mark another writer's row as superseded (MEM-3; shared scope: MEM-7).
 
     scope is 'project' (default) or 'shared': user/machine scopes are personal
@@ -323,7 +339,7 @@ class MemorySupersedeResponse(BaseModel):
     guidance: str | None = None
 
 
-class MemoryFlagDeletionRequest(_NamespacedRequest):
+class MemoryFlagDeletionRequest(_ProjectAliasedRequest):
     """MEM-8: request physical destruction of a row (any namespace writer).
 
     The flag hides the row from default reads immediately and enqueues it for
@@ -1527,3 +1543,49 @@ class MailSignalRevokeResponse(BaseModel):
     status: str
     address: str
     revoked: int
+
+
+# --- PROJECT-RENAME-1 ------------------------------------------------------
+
+class ProjectRelabelRequest(BaseModel):
+    sources: list[str] = Field(min_length=1, max_length=32)
+    target: str = Field(max_length=MAX_ADDR)
+    # Default TRUE: the caller sees the collision plan before anything moves.
+    dry_run: bool = True
+
+
+class ProjectRelabelReverseRequest(BaseModel):
+    source: str = Field(max_length=MAX_ADDR)
+    target: str = Field(max_length=MAX_ADDR)
+
+
+class ProjectRename(BaseModel):
+    from_project: str
+    key: str
+    new_key: str
+    user_id: str | None = None
+
+
+class ProjectRelabelResponse(BaseModel):
+    status: str = "ok"
+    dry_run: bool
+    target: str
+    moved: dict[str, int]
+    total_moved: int
+    renamed: list[ProjectRename]
+    aliases: list[dict]
+    guidance: str = ""
+
+
+class ProjectAliasRow(BaseModel):
+    old_name: str
+    new_name: str
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class ProjectInfoResponse(BaseModel):
+    project: str
+    canonical: str
+    renamed: bool
+    old_names: list[str]

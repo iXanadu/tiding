@@ -13,6 +13,7 @@ from server.dependencies import (
     resolve_read_namespaces,
 )
 from server.models import (
+    ProjectInfoResponse,
     MemorySupersedeRequest,
     MemorySupersedeResponse,
     InboxAckRequest,
@@ -68,6 +69,7 @@ from server.services.inbox_guidance import (
     resolve_guidance,
     send_guidance,
 )
+from server.services import project_alias
 from server.services.memory_service import (
     WAKE_SCOPE,
     wake_list_fresh,
@@ -837,6 +839,23 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                 + ", ".join(_hash_targets[:8])
             ),
         )
+    # PROJECT-RENAME-1: mail to a renamed project's old name is delivered to
+    # its current name, and the sender is told — a correspondent that still
+    # holds the old address (an external assistant, a runbook) keeps working
+    # and learns the new one from its own receipt.
+    await project_alias.refresh()
+    rename_notes: list[str] = []
+    _renamed: list[tuple[str, str | None]] = []
+    for _t, _orig in corrected:
+        _c = project_alias.canonical_address(_t)
+        if _c != _t:
+            rename_notes.append(
+                f"'{_t}' was renamed to '{_c}' — delivered there. Use "
+                f"'{_c}' from now on.")
+            logger.info("PROJECT-ALIAS-HIT (send): %r -> %r", _t, _c)
+        if all(_c != _x for _x, _ in _renamed):  # old + new both named: once
+            _renamed.append((_c, _orig))
+    corrected = _renamed
     # REPLY-TARGET-1: a reply aimed at the parent sender's LANE goes to the
     # sender's own seat while that seat is live — otherwise every seat on the
     # lane is woken by mail meant for one. Dead/absent seat → lane, as before.
@@ -1049,6 +1068,7 @@ async def send_inbox(req: InboxSendRequest, request: Request):
             warnings.append(relay_warning)
         if reply_retarget_note:
             warnings.append(reply_retarget_note)
+        warnings.extend(rename_notes)
         # SEND-COST-1: what this message cost, on the receipt — advisory only,
         # in its own field so recipient_warnings keeps meaning "problem".
         cost: list[str] = []
@@ -1573,6 +1593,16 @@ async def get_roster(req: RosterRequest, request: Request):
 # a probe cannot tell a revoked key from a mistyped one from no route at all.
 
 _SIGNAL_NOT_FOUND = HTTPException(status_code=404, detail="Not Found")
+
+
+@router.get("/project/{name}", response_model=ProjectInfoResponse)
+async def project_info(name: str):
+    """PROJECT-RENAME-1: is this project name current, or an old name of
+    another? The bridge asks at status time so a folder whose cfg still
+    carries an old name is told — its calls already land in the right
+    bucket, but the cfg should be updated before the alias is retired."""
+    await project_alias.refresh()
+    return ProjectInfoResponse(**project_alias.describe(name))
 
 
 @router.get("/signal/{key}", include_in_schema=False)

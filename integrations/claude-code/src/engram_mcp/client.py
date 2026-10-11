@@ -316,6 +316,11 @@ class MemoryClient:
         bearer token; returns 401 if anonymous."""
         return await self._request("GET", "/whoami")
 
+    async def project_info(self, name: str) -> dict:
+        """PROJECT-RENAME-1: is ``name`` current, or an old name of another
+        project? Shape: ``{project, canonical, renamed, old_names}``."""
+        return await self._request("GET", f"/memory/project/{name}")
+
     async def namespaces(self) -> dict:
         """Return the namespaces the caller can read/write, with wildcards
         expanded server-side to concrete namespaces. Requires a valid token.

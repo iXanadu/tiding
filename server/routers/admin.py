@@ -27,6 +27,10 @@ from server.models import (
     MemoryStatsResponse,
     MemoryUpdateRequest,
     MemoryUpdateResponse,
+    ProjectAliasRow,
+    ProjectRelabelRequest,
+    ProjectRelabelResponse,
+    ProjectRelabelReverseRequest,
 )
 from server.services.memory_service import (
     deletion_queue_list,
@@ -35,6 +39,7 @@ from server.services.memory_service import (
 )
 from server.services.principal_service import get_principal
 from server.services import mail_signal
+from server.services import project_alias
 from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
@@ -516,3 +521,56 @@ async def revoke_mail_signal(
     logger.info("MAIL SIGNAL revoked address=%s count=%s", address, revoked)
     return MailSignalRevokeResponse(
         status="ok", address=address.strip().lower(), revoked=revoked)
+
+
+# --- PROJECT-RENAME-1: relabel a renamed project ---------------------------
+
+@router.get("/projects/aliases", response_model=list[ProjectAliasRow])
+async def list_project_aliases(caller=Depends(admin_or_open)):
+    return [ProjectAliasRow(**r) for r in await project_alias.list_aliases()]
+
+
+@router.post("/projects/relabel", response_model=ProjectRelabelResponse)
+async def relabel_project(req: ProjectRelabelRequest,
+                          caller=Depends(admin_or_open)):
+    """Merge one or more old project names into the current one.
+
+    DRY RUN BY DEFAULT: the response lists every row count and every
+    same-key collision (and the archive key it would get) without moving
+    anything. Re-send with dry_run=false to do it.
+    """
+    actor = (caller or {}).get("name") if caller else None
+    try:
+        result = await project_alias.relabel(
+            req.sources, req.target, dry_run=req.dry_run, actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if not req.dry_run:
+        await audit("admin.project_relabel", caller, {
+            "sources": [a["old_name"] for a in result["aliases"]],
+            "target": result["target"], "moved": result["moved"],
+            "renamed": len(result["renamed"]),
+        })
+    return ProjectRelabelResponse(
+        **result,
+        guidance=(
+            "DRY RUN: nothing moved. Re-send with dry_run=false to apply."
+            if req.dry_run else
+            "Done. The old names are now aliases: memory calls and mail to "
+            "them reach the target. Point each folder's cfg at the target "
+            "when convenient. Undo one source with POST "
+            "/admin/projects/relabel/reverse."
+        ),
+    )
+
+
+@router.post("/projects/relabel/reverse")
+async def reverse_project_relabel(req: ProjectRelabelReverseRequest,
+                                  caller=Depends(admin_or_open)):
+    actor = (caller or {}).get("name") if caller else None
+    try:
+        result = await project_alias.reverse(req.source, req.target, actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    await audit("admin.project_relabel_reverse", caller, result)
+    return {"status": "ok", **result}

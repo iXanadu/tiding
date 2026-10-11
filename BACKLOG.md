@@ -1432,29 +1432,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
-- **PROJECT-RENAME-1** *(pinned 2026-10-11; owner asked how the system
-  accommodates project renames.)* `class:absence-vs-failure`
-  **Changing a folder's `.engram.cfg` project value silently orphans its
-  history.** Project memory is filed under that value, so the next session
-  lands in an empty bucket with no warning; the old rows are reachable
-  only through the admin `project=` override, and mail to the old name
-  stops reaching the folder. There is no project alias (only a namespace
-  alias). First real case done BY HAND 2026-10-11: three old names merged
-  into a final one in one transaction (`moved_from` stamped on each row,
-  colliding handoffs renamed under `archive/<old>/`, a `moved/to-<new>`
-  pointer left in each old bucket, old addresses kept live with cfg
-  `groups=`). Fix shape: (a) an admin `project-relabel` script — dry-run,
-  collision report, merge of N sources, reverse from `moved_from`;
-  (b) the bridge warns when a folder's cfg value has no rows but a
-  `moved/to-*` pointer or a sibling bucket exists. A sender-side "this
-  name moved" hint is mail routing (owner-named, like the rest).
-  Measured on that case: (c) a reply addresses the sender's CURRENT cfg
-  project, but a session started before the cfg edit still listens only
-  on the old name — the reply landed, "Woke 0 agents". Mid-rename, send
-  to the seat.
-  · Status: OPEN (owner drives) · Found: owner question 2026-10-11
-  · Detail: project memory `fix/project-rename-porchsite-2026-10-11`
-
 - **DEATH-CERT-FENCE-1** *(pinned 2026-09-09 from SEAT-RELEASE-FENCE-1 peer
   review; do not fold into that ship.)* `class:absence-vs-failure`
   **A death certificate is accepted by seat name only — no process nonce.**

@@ -42,6 +42,7 @@ from engram_mcp.scoping import (
     ensure_project_identity,
     is_real_project_name,
     resolve_partition,
+    resolve_project_name,
     write_project_cfg,
 )
 
@@ -1902,6 +1903,25 @@ async def memory_declare_identity(
     )
 
 
+async def _project_rename_line(project_dir: str) -> str | None:
+    """PROJECT-RENAME-1: say so when this folder's cfg names a project that
+    was renamed. Memory calls and mail already reach the new name (the
+    server aliases it), so nothing is broken — but the alias is retired one
+    day, and the cfg is the thing to fix before then."""
+    try:
+        declared = resolve_project_name(project_dir)
+        if not declared:
+            return None
+        info = await _client.project_info(declared)
+    except Exception:
+        return None  # pre-PROJECT-RENAME-1 server, or offline: say nothing
+    if info.get("renamed"):
+        return (f"  project: '{declared}' was RENAMED to "
+                f"'{info.get('canonical')}' — your calls already reach it; "
+                f"update this folder's cfg (project = {info.get('canonical')}).")
+    return None
+
+
 @mcp.tool()
 async def memory_status() -> str:
     """Check the health of the memory service and show connection status."""
@@ -1978,6 +1998,9 @@ async def memory_status() -> str:
         else:
             lines.append("  wake stream: bridge watcher not started "
                          "(ENGRAM_BRIDGE_WATCHER=off, or no tool call yet)")
+        rename_line = await _project_rename_line(os.getcwd())
+        if rename_line:
+            lines.append(rename_line)
         return "\n".join(lines)
     except Exception as e:
         return f"Memory service unreachable: {e}\nBridge build: {VERSION} (this process)"
