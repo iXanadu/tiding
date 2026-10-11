@@ -1470,6 +1470,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (b) the bridge warns when a folder's cfg value has no rows but a
   `moved/to-*` pointer or a sibling bucket exists. A sender-side "this
   name moved" hint is mail routing → under the messaging freeze.
+  Measured on that case: (c) a reply addresses the sender's CURRENT cfg
+  project, but a session started before the cfg edit still listens only
+  on the old name — the reply landed, "Woke 0 agents". Mid-rename, send
+  to the seat. Also frozen (mail routing).
   · Status: OPEN (owner drives) · Found: owner question 2026-10-11
   · Detail: project memory `fix/project-rename-porchsite-2026-10-11`
 
