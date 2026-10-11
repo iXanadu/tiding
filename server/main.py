@@ -157,7 +157,6 @@ def check_bind_security(host: str, require_auth: bool, api_token: str,
     )
 
 
-@asynccontextmanager
 async def _project_alias_refresh_loop():
     while True:
         await asyncio.sleep(project_alias.CACHE_TTL_SECONDS)
@@ -167,6 +166,7 @@ async def _project_alias_refresh_loop():
             logger.exception("project alias refresh failed (cache kept)")
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     # First, so even the startup lines below carry a date. Runs here rather
     # than at import because uvicorn configures its logging before loading
