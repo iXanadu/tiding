@@ -636,7 +636,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   engram bridge it spawns receives only three. `ENGRAM_WAKE_BY_LAUNCHER` and
   `ENGRAM_SESSION_NONCE` are missing, so every Codex respawn reads NOT
   COVERED and mails the store a report. Launcher-side; reported to its team.
-  Store side: resolve those reports until it lands.
+  Store side: resolve those reports until it lands. 2026-10-12: the same
+  launcher also seated a Codex session in an admin workspace as
+  `maintenance-codex-N`, not the shared `admin` role. `admin@<host>` still
+  reached it (its listen set carries it), but the seat breaks the admin
+  rule. Reported to the launcher's team with this line.
 
 - **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
   Postgres instance with other projects' test databases: 141 of them (2.5 GB),
@@ -1431,6 +1435,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   silent in a way that reads as reassurance — which is now done.
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
+
+- **RENAME-ACK-1** *(measured 2026-10-12, first fresh session after the
+  first PROJECT-RENAME-1 relabel)* `class:stale-binding`
+  **A renamed project's successor inherits every old message as unread.**
+  Acks are per reader, and a renamed project's new seats carry the new name
+  (`<new>-claude-N`), so nothing the old seats handled counts as read. The
+  read-time alias expansion then shows the old name's whole mailbox to the
+  new seat: 56 open messages on the first case, most already handled. Still
+  works (one batch ack clears it) → DEGRADING. Fix shape: relabel records
+  old→new seat-lane pairs, and an ack by `<old>-<provider>-N` counts for
+  the matching `<new>-<provider>-N` reader. Or relabel offers to resolve
+  mail the old seats had acked.
+  · Status: OPEN (owner drives) · Found: successor report 2026-10-12
 
 - **DEATH-CERT-FENCE-1** *(pinned 2026-09-09 from SEAT-RELEASE-FENCE-1 peer
   review; do not fold into that ship.)* `class:absence-vs-failure`
