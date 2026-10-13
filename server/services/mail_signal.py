@@ -185,6 +185,11 @@ async def lookup_signal(raw_key: str) -> dict | None:
 async def signal_state(address: str) -> dict:
     """``{cursor, pending, latest_at}`` for one address. See module docstring."""
     address = address.strip().lower()
+    # ROLE-1: a poll-only agent that holds a role must see the role's mail
+    # too — the next chief of staff may well be one.
+    from server.services import address_roles
+    await address_roles.refresh()
+    mailboxes = [address] + address_roles.roles_held_by(address)
     pool = await get_pool()
     async with pool.acquire() as conn:
         r = await conn.fetchrow(
@@ -194,7 +199,7 @@ async def signal_state(address: str) -> dict:
                 FROM memories
                 WHERE namespace = $1
                   AND scope = $2
-                  AND user_id = $3
+                  AND user_id = ANY($5::text[])
                   AND COALESCE((metadata->>'archived')::bool, false) = false
                   AND COALESCE(metadata->>'intent', '') <> 'fyi'
                   AND lower(COALESCE(metadata->>'from', '')) <> $3
@@ -208,7 +213,7 @@ async def signal_state(address: str) -> dict:
                    AND NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $3
                 ) AS pending
             """,
-            INBOX_NAMESPACE, INBOX_SCOPE, address, INBOX_OPEN,
+            INBOX_NAMESPACE, INBOX_SCOPE, address, INBOX_OPEN, mailboxes,
         )
     latest_key = r["latest_key"]
     # Opaque on purpose: the agent only compares it for equality, and a raw

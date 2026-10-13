@@ -169,6 +169,24 @@ CREATE TABLE IF NOT EXISTS project_aliases (
     created_by  TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ROLE-1: owner-assigned roles (an address one agent holds at a time).
+CREATE TABLE IF NOT EXISTS address_roles (
+    role         TEXT PRIMARY KEY,
+    holder       TEXT NOT NULL,
+    assigned_by  TEXT,
+    assigned_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS address_role_history (
+    id           BIGSERIAL PRIMARY KEY,
+    role         TEXT NOT NULL,
+    holder       TEXT NOT NULL,
+    assigned_by  TEXT,
+    assigned_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_address_role_history_role
+    ON address_role_history (role, assigned_at);
 """
 
 # Migration: add namespace column to tables created before this column existed.

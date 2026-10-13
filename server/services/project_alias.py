@@ -142,22 +142,30 @@ def canonical_address(addr: str | None) -> str | None:
 async def expand_listen_set(listen_set: list[str]) -> list[str]:
     """Extra addresses to ADD to a reader's listen set (never a
     replacement): every other name in the family of each listened project
-    name, keeping any ``@host`` qualifier."""
+    name, keeping any ``@host`` qualifier, plus every role (ROLE-1) that a
+    listened address currently holds."""
+    from server.services import address_roles
     await refresh()
-    if not _aliases:
-        return []
+    await address_roles.refresh()
     have = {a.lower() for a in listen_set}
     extra: list[str] = []
+
+    def _add(cand: str) -> None:
+        if cand not in have:
+            have.add(cand)
+            extra.append(cand)
+
     for a in listen_set:
         base, qual = _split(a.lower())
         fam = family(base)
-        if len(fam) < 2:
-            continue
-        for m in fam:
-            cand = m + qual
-            if cand not in have:
-                have.add(cand)
-                extra.append(cand)
+        if len(fam) >= 2:
+            for m in fam:
+                _add(m + qual)
+        # ROLE-1: the holder of a role hears the role's mailbox. Roles are
+        # fleet-wide, so the bare role is added whatever qualifier the
+        # holder's own address carries.
+        for role in address_roles.roles_held_by(base):
+            _add(role)
     return extra
 
 

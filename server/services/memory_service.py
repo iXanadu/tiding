@@ -5,6 +5,7 @@ import re
 import uuid
 
 from server.services.identity import admin_listen_expansion
+from server.services import address_roles
 from server.services.project_alias import expand_listen_set
 from server.services.project_alias import family as project_alias_family
 from server.services.project_alias import refresh as project_alias_refresh
@@ -2696,14 +2697,19 @@ async def send_cost_facts(
             }
         woken: set[str] = set()
         await project_alias_refresh()
+        await address_roles.refresh()
         for addr in recips:
             # PROJECT-RENAME-1: a session started under a renamed project's
             # old name still listens there (read-time expansion), so it counts.
             fam = set(project_alias_family(addr)) or {addr}
+            # ROLE-1: mail to a role wakes its current holder.
+            _holder = address_roles.holder(addr)
+            targets = {addr} | ({_holder} if _holder else set())
+            fam |= targets
             for ident, info in live.items():
                 if ident == me:
                     continue
-                if (ident == addr or info["project"] in fam
+                if (ident in targets or info["project"] in fam
                         or re.fullmatch(re.escape(addr) + r"-\d+", ident)):
                     woken.add(ident)
         out: list[str] = []

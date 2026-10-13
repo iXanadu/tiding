@@ -1605,6 +1605,18 @@ async def project_info(name: str):
     return ProjectInfoResponse(**project_alias.describe(name))
 
 
+@router.get("/role/{name}")
+async def role_info(name: str):
+    """ROLE-1: who currently holds a role (e.g. ``hand``)? Any reader may ask
+    — the answer is who a message to that role will reach."""
+    from server.services import address_roles
+    await address_roles.refresh()
+    h = address_roles.holder(name)
+    if not h:
+        raise HTTPException(status_code=404, detail=f"'{name}' is not a role")
+    return {"role": name.strip().lower(), "holder": h}
+
+
 @router.get("/signal/{key}", include_in_schema=False)
 async def mail_signal_poll(key: str):
     from fastapi.responses import JSONResponse

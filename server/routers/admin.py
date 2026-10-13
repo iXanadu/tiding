@@ -31,6 +31,8 @@ from server.models import (
     ProjectRelabelRequest,
     ProjectRelabelResponse,
     ProjectRelabelReverseRequest,
+    RoleAssignRequest,
+    RoleRow,
 )
 from server.services.memory_service import (
     deletion_queue_list,
@@ -39,7 +41,7 @@ from server.services.memory_service import (
 )
 from server.services.principal_service import get_principal
 from server.services import mail_signal
-from server.services import project_alias
+from server.services import address_roles, project_alias
 from server.services.admin_service import (
     bulk_delete,
     cleanup_expired,
@@ -574,3 +576,42 @@ async def reverse_project_relabel(req: ProjectRelabelReverseRequest,
         raise HTTPException(status_code=422, detail=str(e))
     await audit("admin.project_relabel_reverse", caller, result)
     return {"status": "ok", **result}
+
+
+# --- ROLE-1: owner-assigned roles ------------------------------------------
+
+@router.get("/roles", response_model=list[RoleRow])
+async def list_roles(caller=Depends(admin_or_open)):
+    return [RoleRow(**r) for r in await address_roles.list_roles()]
+
+
+@router.put("/roles/{role}")
+async def assign_role(role: str, req: RoleAssignRequest,
+                      caller=Depends(admin_or_open)):
+    """Give a role to an agent — the first assignment or a handover. The new
+    holder hears the role's mailbox at once, including mail still open from
+    the previous holder's tenure."""
+    actor = (caller or {}).get("name") if caller else None
+    try:
+        result = await address_roles.assign(role, req.holder, actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if result["changed"]:
+        await audit("admin.role_assign", caller, {
+            "role": result["role"], "holder": result["holder"],
+            "previous": result["previous"]})
+    return {"status": "ok", **result}
+
+
+@router.delete("/roles/{role}")
+async def retire_role(role: str, caller=Depends(admin_or_open)):
+    actor = (caller or {}).get("name") if caller else None
+    if not await address_roles.unassign(role, actor=actor):
+        raise HTTPException(status_code=404, detail=f"no role '{role}'")
+    await audit("admin.role_retire", caller, {"role": role})
+    return {"status": "ok", "role": role, "retired": True}
+
+
+@router.get("/roles/{role}/history", response_model=list[RoleRow])
+async def role_history(role: str, caller=Depends(admin_or_open)):
+    return [RoleRow(**r) for r in await address_roles.history(role)]

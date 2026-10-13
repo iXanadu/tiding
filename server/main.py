@@ -19,7 +19,7 @@ from server.routers import (
     principals,
     session,
 )
-from server.services import project_alias
+from server.services import address_roles, project_alias
 from server.services.cleanup_task import (
     expiration_cleanup_loop,
     inbox_autoresolve_loop,
@@ -162,8 +162,9 @@ async def _project_alias_refresh_loop():
         await asyncio.sleep(project_alias.CACHE_TTL_SECONDS)
         try:
             await project_alias.refresh(force=True)
+            await address_roles.refresh(force=True)
         except Exception:
-            logger.exception("project alias refresh failed (cache kept)")
+            logger.exception("alias/role refresh failed (cache kept)")
 
 
 @asynccontextmanager
@@ -202,6 +203,7 @@ async def lifespan(app: FastAPI):
         background_tasks.append(asyncio.create_task(inbox_autoresolve_loop()))
     # PROJECT-RENAME-1: request validators read the alias map from cache.
     await project_alias.refresh(force=True)
+    await address_roles.refresh(force=True)
     background_tasks.append(asyncio.create_task(_project_alias_refresh_loop()))
     yield
     logger.info("Shutting down")

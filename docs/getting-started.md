@@ -148,6 +148,23 @@ still names the old one. `--reverse newname oldname` undoes one source.
 A repo that must not carry the word "engram" can name the file `.tiding.cfg`
 instead; it is read first.
 
+### Roles: an address one agent holds at a time
+
+Some addresses name a JOB, not an agent — "the chief of staff" — and the
+agent filling it may change. A role is an address with exactly one holder,
+assigned by an admin (agents cannot claim one):
+
+```bash
+scripts/role.sh hand some-assistant      # assign, or hand over
+scripts/role.sh --history hand           # who held it, when
+```
+
+Mail to a role is stored under the role; whoever holds it reads it. On a
+handover the new holder inherits the role's open mail, and the previous
+holder keeps its own. `GET /memory/role/<name>` tells any reader who holds a
+role now. A role name may not shadow a login, a project, a renamed project's
+old name, or a running session.
+
 ## Where to next
 
 - [daily-workflow.md](daily-workflow.md) — how a human + agents actually

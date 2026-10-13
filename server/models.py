@@ -1589,3 +1589,17 @@ class ProjectInfoResponse(BaseModel):
     canonical: str
     renamed: bool
     old_names: list[str]
+
+
+# --- ROLE-1 ---------------------------------------------------------------
+
+class RoleAssignRequest(BaseModel):
+    holder: str = Field(max_length=MAX_ADDR)
+
+
+class RoleRow(BaseModel):
+    role: str
+    holder: str
+    assigned_by: str | None = None
+    assigned_at: datetime | None = None
+    ended_at: datetime | None = None
