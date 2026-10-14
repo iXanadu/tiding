@@ -55,8 +55,8 @@ async def test_no_warning_for_owner_recipient_non_huddle_thread_lifecycle_or_uns
     await _cleanup(db_pool)
     try:
         for body, payload in [
-            ("hr1-owner", {"to": "owner", "thread_id": "huddle/hr1room"}),
-            ("hr1-owner-host", {"to": "owner@hosta", "thread_id": "huddle/hr1room"}),
+            ("hr1-owner @all", {"to": "owner", "thread_id": "huddle/hr1room"}),
+            ("hr1-owner-host @all", {"to": "owner@hosta", "thread_id": "huddle/hr1room"}),
             ("hr1-dm", {"to": "hr1-peer", "thread_id": "inbox/some-thread"}),
             ("hr1-nothread", {"to": "hr1-peer"}),
             ("hr1-lifecycle", {"to": "hr1-peer", "thread_id": "huddle/hr1room", "huddle_lifecycle": True}),

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -120,6 +121,20 @@ logger = logging.getLogger(__name__)
 # scope='inbox' explicitly and structurally cannot touch it.
 _RESERVED_SCOPES = {INBOX_SCOPE, PRESENCE_SCOPE, SEAT_SCOPE, WAKE_SCOPE}
 _READ_REJECTED_SCOPES = {WAKE_SCOPE}
+
+# ROOM-MENTION-1: an @-name anywhere in a room post — `@all`, `@PM@engram`,
+# `@admin@hosta`, `@proj-claude-2`. Not an e-mail (no word char before @).
+_ROOM_MENTION_RE = re.compile(r"(?<![\w@])@([A-Za-z0-9][\w.@-]*)")
+_ROOM_QUOTED_RE = re.compile(r"`[^`]*`|\"[^\"]*\"")
+
+
+def _room_mentions(body: str) -> list[str]:
+    """@-names in a room post, as the relay will read them. A name quoted in
+    `backticks` or "double quotes" is a name being talked ABOUT and the relay
+    ignores it, so it does not count here either. The owner's name counts:
+    `@<owner> DECIDE:` / `COMPLETE:` lines are owner-only by contract and the
+    only lines that page his phone (AB, 2026-10-14)."""
+    return _ROOM_MENTION_RE.findall(_ROOM_QUOTED_RE.sub(" ", body or ""))
 
 
 def _reject_wake_read(scope: str | None) -> None:
@@ -899,6 +914,35 @@ async def send_inbox(req: InboxSendRequest, request: Request):
                     "could not recognise as not-its-own. Refused: admin"
                 ),
             )
+    # ROOM-MENTION-1 (owner, 2026-10-14: "a huddle message without the
+    # at-mention — this happens frequently"). An agent speaking into a room
+    # replies to the owner on a `huddle/` thread; the relay then posts it only
+    # if it @-names someone, and otherwise mails back a "NOT POSTED" letter.
+    # That letter is NEW MAIL — an agent mid-turn never sees it and believes
+    # it spoke (measured: admin@hostb posted twice into a room, both dropped,
+    # while the owner asked where it was). Refuse here instead, so the
+    # refusal lands in the SAME tool result. Only checks that an @-name is
+    # present; the relay still validates the name against the room.
+    # Exempt: the owner's own words and the relay's lifecycle letters.
+    _room_owner = (_admin_settings.owner_principal_name or "").strip().lower()
+    if (_room_owner
+            and (req.thread_id or "").startswith("huddle/")
+            and not req.huddle_lifecycle
+            and ((principal or {}).get("name") or "").strip().lower() != _room_owner
+            and [t.split("@", 1)[0] for t, _ in corrected] == [_room_owner]
+            and not _room_mentions(req.body or "")):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "NOT SENT — a room post must @-name who it is for, or the "
+                "room relay drops it (it would wake every agent in the room). "
+                "Use a FULL name as the room lists it (e.g. @PM@<project>, "
+                "@admin@<host>, a seat name), the owner, or @all, then send "
+                "again. A name you only mention goes in `backticks`. Your "
+                "text was not posted: "
+                + (req.body or "")[:200]
+            ),
+        )
     # HUD-1 — private multi-party threads. A fan-out is a GROUP, so record who
     # is in it and give every copy ONE thread id. Both are load-bearing:
     #
