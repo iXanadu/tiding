@@ -699,6 +699,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
 
+- **INBOX-READ-SCOPE-1** *(DEGRADING, security, found 2026-10-14)* An
+  access-scoping gap in the inbox read path. Detail in project memory
+  (`vuln/INBOX-READ-SCOPE-1`) until it ships.
+
 - **WAKE-RECEIPT-ADMIN-1** *(DEGRADING, measured 2026-10-14)* A send to
   `admin@<host>` returns the receipt "Woke 1 agent: admin", which names the
   role and not the box. Since WATCH-ADMIN-SEAT-1 each box holds its own claim,
