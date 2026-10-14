@@ -111,3 +111,36 @@ class TestRetention:
         async with db_pool.acquire() as conn:
             survivors = await conn.fetch("SELECT principal FROM request_log")
         assert [r["principal"] for r in survivors] == ["recent"]
+
+
+@pytest.mark.asyncio
+async def test_prune_runs_in_batches_until_done(db_pool):
+    # WAL-TESTDB-1: the first prod run faced 2.5M overdue rows; the prune
+    # must keep going past one batch, and leave in-window rows alone.
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM request_log")
+        await conn.execute(
+            "INSERT INTO request_log (principal, auth_source, method, path, "
+            "status, duration_ms, created_at) "
+            "SELECT 'old', 'principal', 'GET', '/memory/get', 200, 1, "
+            "NOW() - INTERVAL '40 days' FROM generate_series(1, 25)")
+        await conn.execute(
+            "INSERT INTO request_log (principal, auth_source, method, path, "
+            "status, duration_ms, created_at) VALUES "
+            "('recent', 'principal', 'GET', '/memory/get', 200, 1, NOW())")
+    assert await prune_request_log(30, batch_size=10) == 25
+    async with db_pool.acquire() as conn:
+        left = await conn.fetch("SELECT principal FROM request_log")
+    assert [r["principal"] for r in left] == ["recent"]
+
+
+def test_retention_does_not_depend_on_memory_expiry():
+    # Prod runs with cleanup (memory expiry) DISABLED by owner ruling; the
+    # request-log prune must still be scheduled.
+    import inspect
+    import server.main as main
+    src = inspect.getsource(main.lifespan)
+    assert "request_log_prune_loop" in src
+    from server.services import cleanup_task
+    assert "prune_request_log" not in inspect.getsource(
+        cleanup_task.expiration_cleanup_loop)

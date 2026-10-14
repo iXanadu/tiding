@@ -9,9 +9,10 @@ external client was polling us were simply unanswerable.
 What is deliberately NOT here: request bodies, and query-string VALUES. The
 path is stored with its query stripped, so a token or a search term that a
 client put in a URL cannot land in this table. The rows still name principals,
-so retention is bounded (``request_log_retention_days``) and pruned by the
-existing cleanup loop rather than kept forever.
+so retention is bounded (``request_log_retention_days``) and pruned by its
+own loop (``cleanup_task.request_log_prune_loop``) rather than kept forever.
 """
+import asyncio
 import logging
 
 from server.db import get_pool
@@ -62,17 +63,31 @@ async def record_request(
         logger.exception("request_log write failed")
 
 
-async def prune_request_log(retention_days: int) -> int:
-    """Delete rows older than the retention window. Returns rows removed."""
+async def prune_request_log(retention_days: int, batch_size: int = 20000) -> int:
+    """Delete rows older than the retention window. Returns rows removed.
+
+    In batches (WAL-TESTDB-1): the first run on prod faced 2.5M overdue rows,
+    and one giant DELETE would hold its locks and land as a single burst of
+    archived WAL. Small batches keep each transaction short and spread the
+    WAL out; the loop stops when a batch comes back short.
+    """
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM request_log "
-            "WHERE created_at < NOW() - ($1 || ' days')::INTERVAL",
-            str(retention_days),
-        )
-    # asyncpg returns e.g. "DELETE 42"
-    try:
-        return int(result.split()[-1])
-    except (ValueError, IndexError):
-        return 0
+    total = 0
+    while True:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM request_log WHERE id IN ("
+                "  SELECT id FROM request_log"
+                "  WHERE created_at < NOW() - ($1 || ' days')::INTERVAL"
+                "  LIMIT $2)",
+                str(retention_days), batch_size,
+            )
+        # asyncpg returns e.g. "DELETE 42"
+        try:
+            n = int(result.split()[-1])
+        except (ValueError, IndexError):
+            n = 0
+        total += n
+        if n < batch_size:
+            return total
+        await asyncio.sleep(0.05)  # let request writes interleave

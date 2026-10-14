@@ -20,24 +20,6 @@ async def expiration_cleanup_loop() -> None:
         while True:
             await asyncio.sleep(interval_seconds)
             try:
-                # OBS-REQLOG-1 retention: the rows name principals, so the
-                # trail is bounded rather than kept forever. Pruned on the
-                # existing sweep instead of adding a second scheduler.
-                if settings.request_log_enabled:
-                    try:
-                        pruned = await prune_request_log(
-                            settings.request_log_retention_days
-                        )
-                        if pruned:
-                            logger.info(
-                                f"Request-log retention removed {pruned} rows "
-                                f"older than {settings.request_log_retention_days}d"
-                            )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.exception("Error pruning request_log")
-
                 deleted = await cleanup_expired(batch_size=settings.cleanup_batch_size)
                 if deleted:
                     logger.info(f"Scheduled cleanup removed {deleted} expired memories")
@@ -52,6 +34,35 @@ async def expiration_cleanup_loop() -> None:
                 logger.exception("Error during scheduled expiration cleanup")
     except asyncio.CancelledError:
         logger.info("Expiration cleanup task cancelled")
+
+
+async def request_log_prune_loop() -> None:
+    """WAL-TESTDB-1: request-log retention on its OWN schedule.
+
+    The prune used to ride the expiration sweep, and prod runs with that
+    sweep disabled (memory is never auto-expired, by owner ruling), so the
+    log grew unbounded: 6.9M rows / 2.4 GB against a 30-day retention the
+    owner had confirmed. Retention of request rows is not memory expiry —
+    it runs whenever the request log itself is enabled.
+    """
+    interval_seconds = settings.cleanup_interval_hours * 3600
+    days = settings.request_log_retention_days
+    logger.info(f"Request-log retention task started (keep {days}d, "
+                f"every {settings.cleanup_interval_hours}h)")
+    try:
+        while True:
+            try:
+                pruned = await prune_request_log(days)
+                if pruned:
+                    logger.info(f"Request-log retention removed {pruned} rows "
+                                f"older than {days}d")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Error pruning request_log")
+            await asyncio.sleep(interval_seconds)
+    except asyncio.CancelledError:
+        logger.info("Request-log retention task cancelled")
 
 
 async def inbox_autoresolve_loop() -> None:
