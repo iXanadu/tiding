@@ -105,6 +105,7 @@ from server.services.memory_service import (
     recipient_liveness,
     reply_seat_retarget,
     send_cost_facts,
+    reply_thread_of,
     roster_list,
 )
 
@@ -1003,6 +1004,12 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     is_fanout = len(corrected) > 1
     participants: list[str] | None = None
     thread_id = req.thread_id
+    if not thread_id and req.in_reply_to:
+        # REPLY-THREAD-1: a reply with no thread joins its parent's.
+        try:
+            thread_id = await reply_thread_of(req.in_reply_to)
+        except Exception:
+            logger.exception("reply_thread_of failed (sent unthreaded)")
     # A send with no self-asserted `from` label used to produce mail nobody
     # could REPLY to: memory_reply routes on the parent's from-address, so
     # the omission silently killed every reply loop (measured 2026-08-15 —

@@ -2819,6 +2819,30 @@ async def send_cost_facts(
     return out
 
 
+async def reply_thread_of(in_reply_to: str | None) -> str | None:
+    """REPLY-THREAD-1: the thread a reply belongs to — the parent's thread,
+    or the parent's own id when it started none. Mirrors what the bridge's
+    memory_reply computes client-side, so a client that sends only
+    `in_reply_to` (the emergency Telegram bot, measured 2026-10-14: the
+    owner's reply landed with thread_id=null) still threads. None when the
+    parent is unknown."""
+    if not in_reply_to:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT metadata FROM memories"
+            " WHERE namespace = $1 AND scope = $2 AND key = $3 LIMIT 1",
+            INBOX_NAMESPACE, INBOX_SCOPE, in_reply_to,
+        )
+    if row is None:
+        return None
+    md = row["metadata"] or {}
+    if isinstance(md, str):
+        md = json.loads(md)
+    return md.get("thread_id") or in_reply_to
+
+
 async def reply_seat_retarget(in_reply_to: str | None, to: str) -> str | None:
     """REPLY-TARGET-1: the seat a lane-addressed reply should go to, or None.
 
