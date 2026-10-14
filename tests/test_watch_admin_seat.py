@@ -185,3 +185,14 @@ def test_roster_fold_drops_a_wrapped_boxs_dead_claim():
     out = fold_shared_watches(w, metas)
     assert out["admin"]["state"] == "covered"
     assert set(out["admin"]["by_host"]) == {"hostb"}
+
+
+
+def test_roster_watch_model_keeps_by_host():
+    """The fold's by_host must survive the roster response model; it was
+    silently dropped (the model only had state/armed_by/last_beat)."""
+    from server.models import AddressWatch
+    w = AddressWatch(**{"state": "covered",
+                        "by_host": {"hosta": {"state": "covered"}}})
+    assert w.model_dump()["by_host"] == {"hosta": {"state": "covered"}}
+    assert AddressWatch(state="unheld").model_dump()["by_host"] is None

@@ -1046,6 +1046,9 @@ class AddressWatch(BaseModel):
     state: str  # covered | expired | unheld
     armed_by: str | None = None   # bridge | ab | agent — provenance, not authority
     last_beat: str | None = None
+    # WATCH-ADMIN-SEAT-1: a shared role (admin) holds one claim PER BOX; this
+    # maps each box to its own {state, armed_by, last_beat}. None for seats.
+    by_host: dict[str, dict] | None = None
 
 
 class RosterEntry(BaseModel):
