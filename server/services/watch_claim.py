@@ -50,6 +50,8 @@ from datetime import datetime, timezone
 from server.db import get_pool
 from server.services.memory_service import (
     INBOX_NAMESPACE,
+    SEAT_EXEMPT_IDENTITIES,
+    watch_host_of as _host_of,
     WATCH_EXPIRY_SECONDS as _WATCH_EXPIRY_SECONDS,
     WATCH_SCOPE as _WATCH_SCOPE,
     WATCH_USER_ID as _WATCH_USER_ID,
@@ -75,6 +77,28 @@ MUTE_GRACE_SECONDS = 600
 # never-fetched mail (predecessor estates) from making every holder
 # permanently displaceable on day one.
 MUTE_LOOKBACK_SECONDS = 6 * 3600
+
+
+def _claim_key(seat: str, listen_set: list[str] | None,
+               host: str | None = None) -> str:
+    """`watch/<seat>` for a seat; `watch/<seat>@<host>` for a shared role
+    (SEAT_EXEMPT_IDENTITIES), so each box holds its own claim. A shared-role
+    claimant whose box cannot be read falls back to the fleet-wide key —
+    the pre-fix behaviour, never worse than it."""
+    if seat in SEAT_EXEMPT_IDENTITIES:
+        h = _host_of(seat, listen_set, host)
+        if h:
+            return f"watch/{seat}@{h}"
+    return f"watch/{seat}"
+
+
+def _shared_key_clause(param: int) -> str:
+    """SQL matching a seat's claim row(s) by key. A shared role's rows are
+    `watch/<seat>` (pre-fix, still beaten by watchers that claimed before the
+    deploy) and `watch/<seat>@<host>`. Beat and release still CAS on the
+    random nonce, so widening the key match cannot touch another box's row."""
+    return (f"(key = 'watch/' || ${param} OR (${param} = ANY($EXEMPT) "
+            f"AND key LIKE 'watch/' || ${param} || '@%'))")
 
 
 def mint_nonce() -> str:
@@ -159,7 +183,7 @@ async def watch_claim(
     seat_nonce = (seat_nonce or "").strip() or None
     meta = _row_meta(seat, nonce, armed_by, project_dir, normalized, host,
                      seat_nonce)
-    key = f"watch/{seat}"
+    key = _claim_key(seat, normalized, host)
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Try the free-slot insert first; the 5-tuple unique key settles
@@ -175,7 +199,8 @@ async def watch_claim(
             WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, json.dumps(meta),
         )
         if inserted:
-            return {"verdict": "granted", "seat": seat, "expiry_seconds": WATCH_EXPIRY_SECONDS}
+            return {"verdict": "granted", "seat": seat, "key": key,
+                    "expiry_seconds": WATCH_EXPIRY_SECONDS}
 
         # Occupied. Steal iff expired OR delivery-dead — ONE CAS statement,
         # so a concurrent steal and a stalled holder's late beat cannot both
@@ -243,7 +268,7 @@ async def watch_claim(
         )
         if stole:
             return {
-                "verdict": "granted", "seat": seat, "stolen": True,
+                "verdict": "granted", "seat": seat, "key": key, "stolen": True,
                 # Why the incumbent lost, for the log line: the register
                 # says the claimant is the occupant and the incumbent was
                 # not (claim-follows-seat), vs. it simply went silent/mute.
@@ -297,6 +322,7 @@ async def watch_claim(
         return {
             "verdict": "held",
             "seat": seat,
+            "key": key,
             "holder_armed_by": held.get("armed_by"),
             "holder_since": held.get("claimed_at"),
             "holder_last_beat": held.get("last_beat"),
@@ -319,7 +345,6 @@ async def watch_beat(seat: str, nonce: str,
     watchers deliver the same mail twice.
     """
     seat = (seat or "").strip().lower()
-    key = f"watch/{seat}"
     pool = await get_pool()
     async with pool.acquire() as conn:
         beat = await conn.fetchval(
@@ -331,12 +356,13 @@ async def watch_beat(seat: str, nonce: str,
                             ELSE jsonb_build_object('fetched_through', $6::text)
                        END,
                 last_used_at = NOW()
-            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+            WHERE namespace = $1 AND scope = $3 AND user_id = $4
+              AND """ + _shared_key_clause(2).replace("$EXEMPT", "$7") + """
               AND metadata->>'nonce' = $5
             RETURNING 1
             """,
-            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, nonce,
-            fetched_through,
+            WATCH_NAMESPACE, seat, WATCH_SCOPE, WATCH_USER_ID, nonce,
+            fetched_through, sorted(SEAT_EXEMPT_IDENTITIES),
         )
     if beat:
         return {"verdict": "holder", "seat": seat}
@@ -347,22 +373,23 @@ async def watch_release(seat: str, nonce: str) -> dict:
     """Graceful exit: free the slot iff we still hold it (same CAS rule —
     releasing a watch someone else now holds would free THEIR claim)."""
     seat = (seat or "").strip().lower()
-    key = f"watch/{seat}"
     pool = await get_pool()
     async with pool.acquire() as conn:
         released = await conn.fetchval(
             """
             DELETE FROM memories
-            WHERE namespace = $1 AND key = $2 AND scope = $3 AND user_id = $4
+            WHERE namespace = $1 AND scope = $3 AND user_id = $4
+              AND """ + _shared_key_clause(2).replace("$EXEMPT", "$6") + """
               AND metadata->>'nonce' = $5
             RETURNING 1
             """,
-            WATCH_NAMESPACE, key, WATCH_SCOPE, WATCH_USER_ID, nonce,
+            WATCH_NAMESPACE, seat, WATCH_SCOPE, WATCH_USER_ID, nonce,
+            sorted(SEAT_EXEMPT_IDENTITIES),
         )
     return {"verdict": "released" if released else "not-holder", "seat": seat}
 
 
-async def watch_status(seat: str) -> dict:
+async def watch_status(seat: str, host: str | None = None) -> dict:
     """What the register can honestly say about a seat's watch.
 
     Three-valued on purpose, mirroring _watcher_state's discipline:
@@ -371,31 +398,66 @@ async def watch_status(seat: str) -> dict:
       unheld    — no claim at all. NEVER rendered as "dead"; a session may
                   be running UNHELD legitimately (store was unreachable at
                   arm time — kill K3), it is just not COVERED.
+
+    A shared role (SEAT_EXEMPT_IDENTITIES) answers FOR ONE BOX: ``host`` is
+    the asking box (the router reads it from X-Engram-Machine). Another box's
+    claim is not this box's coverage — WATCH-ADMIN-SEAT-1 / WAKE-STATUS-1:
+    admin@hostb read COVERED for weeks off admin@hosta's claim while its
+    own watcher deferred. Such a box reads ``unheld`` with ``held_elsewhere``
+    naming who does hold one. With no host (an old caller) the answer is the
+    pre-fix fleet-wide one, because nothing narrower can be said honestly.
     """
     seat = (seat or "").strip().lower()
+    h = (host or "").strip().lower().split(".", 1)[0] or None
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
+        rows = await conn.fetch(
             """
-            SELECT metadata,
+            SELECT key, metadata,
                    (metadata->>'last_beat')::timestamptz
                        >= NOW() - make_interval(secs => $5) AS fresh
             FROM memories
-            WHERE namespace=$1 AND key=$2 AND scope=$3 AND user_id=$4
+            WHERE namespace=$1 AND scope=$3 AND user_id=$4
+              AND """ + _shared_key_clause(2).replace("$EXEMPT", "$6") + """
             """,
-            WATCH_NAMESPACE, f"watch/{seat}", WATCH_SCOPE, WATCH_USER_ID,
-            WATCH_EXPIRY_SECONDS,
+            WATCH_NAMESPACE, seat, WATCH_SCOPE, WATCH_USER_ID,
+            WATCH_EXPIRY_SECONDS, sorted(SEAT_EXEMPT_IDENTITIES),
         )
-    if not row:
-        return {"state": "unheld", "seat": seat}
-    md = row["metadata"]
-    if isinstance(md, str):
-        md = json.loads(md)
-    return {
-        "state": "covered" if row["fresh"] else "expired",
+    parsed = []
+    for r in rows:
+        md = r["metadata"]
+        if isinstance(md, str):
+            md = json.loads(md)
+        md = md or {}
+        k = r["key"]
+        row_host = (k.split("@", 1)[1] if "@" in k
+                    else _host_of(seat, md.get("listen_set"), md.get("host")))
+        parsed.append((row_host, bool(r["fresh"]), md))
+    if seat in SEAT_EXEMPT_IDENTITIES and h:
+        mine = [p for p in parsed if p[0] == h]
+        elsewhere = sorted({p[0] or "unknown" for p in parsed
+                            if p[0] != h and p[1]})
+    else:
+        mine, elsewhere = parsed, []
+    if not mine:
+        out = {"state": "unheld", "seat": seat}
+        if elsewhere:
+            out["held_elsewhere"] = elsewhere
+        return out
+    # Fresh first: a box whose pre-fix fleet-wide row lingers expired beside
+    # its new per-host row is covered, not expired.
+    mine.sort(key=lambda p: not p[1])
+    row_host, fresh, md = mine[0]
+    out = {
+        "state": "covered" if fresh else "expired",
         "seat": seat,
         "armed_by": md.get("armed_by"),
         "listen_set": md.get("listen_set"),
         "project_dir": md.get("project_dir"),
         "last_beat": md.get("last_beat"),
     }
+    if seat in SEAT_EXEMPT_IDENTITIES:
+        out["host"] = row_host
+    if elsewhere:
+        out["held_elsewhere"] = elsewhere
+    return out

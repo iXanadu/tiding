@@ -48,6 +48,7 @@ from server.services.memory_service import (
     INBOX_SCOPE,
     PRESENCE_SCOPE,
     SEAT_EXEMPT_IDENTITIES,
+    fold_shared_watches,
     SEAT_SCOPE,
     SEAT_USER_ID,
     WATCH_EXPIRY_SECONDS,
@@ -1997,6 +1998,7 @@ async def address_register(project: str | None = None) -> list[dict]:
     # than this dict inventing one, so a missing row and a stale row stay
     # distinguishable at the only place that has to tell them apart.
     watch_by_seat: dict[str, dict] = {}
+    watch_metas: dict[str, dict] = {}
     for r in watch_rows:
         wmd = r["metadata"]
         if isinstance(wmd, str):
@@ -2007,6 +2009,9 @@ async def address_register(project: str | None = None) -> list[dict]:
             "armed_by": wmd.get("armed_by"),
             "last_beat": wmd.get("last_beat"),
         }
+        watch_metas[r["seat"]] = wmd
+    # WATCH-ADMIN-SEAT-1: a shared role's claims are per box.
+    fold_shared_watches(watch_by_seat, watch_metas)
     person_names = {(r["name"] or "").strip().lower() for r in human_rows}
     known_roots = ({r["project"] for r in root_rows}
                    - SEAT_EXEMPT_IDENTITIES)

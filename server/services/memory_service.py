@@ -1851,6 +1851,69 @@ SEAT_COLLISION_WINDOW_SECONDS = 300
 # by design (per the two-axis doctrine): never flagged as collisions.
 SEAT_EXEMPT_IDENTITIES = {"admin"}
 
+
+def watch_host_of(seat: str, listen_set: list[str] | None,
+                  host: str | None = None) -> str | None:
+    """The box a SHARED-role watcher serves, read from what it listens on.
+
+    WATCH-ADMIN-SEAT-1: `admin` is one seat name worn on every box, so a
+    watch claim keyed by seat alone let ONE box's watcher hold the wake
+    stream for the whole fleet; every other admin deferred forever while
+    reading COVERED (measured 2026-10-14: admin@hostb deaf behind
+    admin@hosta's claim). The listen set already names the box
+    (`machine:<host>`, `<seat>@<host>`) and every deployed bridge sends it,
+    so the host is derived server-side — no bridge sweep. `<seat>@fleet` is a
+    fleet-wide address, never a host. The explicit `host` field is a
+    fallback only: what the watcher HEARS decides. Lives here, not in
+    watch_claim, because the rosters fold per-box claims and cannot import
+    that module (cycle).
+    """
+    for a in listen_set or []:
+        a = (a or "").strip().lower()
+        if a.startswith("machine:") and a[8:]:
+            return a[8:]
+    for a in listen_set or []:
+        a = (a or "").strip().lower()
+        if a.startswith(seat + "@"):
+            h = a[len(seat) + 1:]
+            if h and h != "fleet":
+                return h
+    h = (host or "").strip().lower().split(".", 1)[0]
+    return h or None
+
+
+def fold_shared_watches(watch_by_seat: dict[str, dict],
+                        metas: dict[str, dict]) -> dict[str, dict]:
+    """Roster view of a shared role's per-box watch claims.
+
+    Claims for a shared role are keyed `<seat>@<host>` (one per box) and, for
+    watchers that claimed before WATCH-ADMIN-SEAT-1 deployed, `<seat>`. The
+    roster has ONE entry for the role, so it gets the fold: `by_host` maps
+    each box to its own state, and the role-level `state` is `covered` only
+    when every box with a claim is covered — one deaf box must not hide
+    behind another's coverage, which is the bug this replaces. ``metas``
+    maps the same keys to the claim metadata (for a pre-fix row's host).
+    """
+    for seat in SEAT_EXEMPT_IDENTITIES:
+        by_host: dict[str, dict] = {}
+        for k in [k for k in watch_by_seat
+                  if k == seat or k.startswith(seat + "@")]:
+            w = watch_by_seat.pop(k)
+            h = (k.split("@", 1)[1] if "@" in k else
+                 watch_host_of(seat, (metas.get(k) or {}).get("listen_set"),
+                               (metas.get(k) or {}).get("host"))) or "unknown"
+            # A box's lingering pre-fix row (expired) must not mask its
+            # new per-host one (covered).
+            if h not in by_host or w["state"] == "covered":
+                by_host[h] = w
+        if by_host:
+            states = {w["state"] for w in by_host.values()}
+            watch_by_seat[seat] = {
+                "state": "covered" if states == {"covered"} else "expired",
+                "by_host": by_host,
+            }
+    return watch_by_seat
+
 # MSG-5/SEAT-7: a watcher beat is fresh for this long. Window ≈ 6.6× the
 # watcher's 45s poll interval, so a slow poll or one dropped request never
 # reads as a dead ear.
@@ -2420,6 +2483,7 @@ async def roster_list(
     # row" stay distinguishable. `unheld` is never a death verdict — a
     # session can legitimately run unheld (store unreachable at arm time).
     watch_by_seat: dict[str, dict] = {}
+    watch_metas: dict[str, dict] = {}
     for wr in watch_rows:
         wmd = wr["metadata"]
         if isinstance(wmd, str):
@@ -2430,6 +2494,8 @@ async def roster_list(
             "armed_by": wmd.get("armed_by"),
             "last_beat": wmd.get("last_beat"),
         }
+        watch_metas[wr["seat"]] = wmd
+    fold_shared_watches(watch_by_seat, watch_metas)
     now = datetime.now(timezone.utc)
     entries = []
     for r in rows:

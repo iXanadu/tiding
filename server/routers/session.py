@@ -326,7 +326,11 @@ async def watch_release_endpoint(req: WatchBeatRequest, request: Request):
 async def watch_status_endpoint(seat: str, request: Request):
     check_namespace_access(get_current_principal(request), SEAT_NAMESPACE, "read")
     try:
-        return await _watch_status(seat=seat)
+        # WATCH-ADMIN-SEAT-1: a shared role's coverage is per box; every
+        # bridge stamps its box on X-Engram-Machine (client.py), so the
+        # asking box is known without a bridge sweep.
+        return await _watch_status(
+            seat=seat, host=request.headers.get("x-engram-machine"))
     except Exception:
         logger.exception("watch_status failed")
         raise HTTPException(status_code=500, detail="internal error — see server logs")

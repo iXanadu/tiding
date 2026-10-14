@@ -699,40 +699,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
 
-- **WATCH-ADMIN-SEAT-1** ★ **OWNER-NAMED, FIRST NEXT SESSION** (2026-10-14:
-  "address first on restart"). *(measured 2026-08-29 on two boxes plus a live
-  store query; re-measured 2026-10-14 00:22Z: the fleet-wide `watch/admin`
-  row was held by one box's admin, claimed during a database restart there,
-  and another box's admin went deaf for 5h+ while reading COVERED. Two owner
-  DMs woke nothing.)* `class:absence-vs-failure`
-  Build note: derive the host server-side from the claim's listen set
-  (`machine:<host>` / `admin@<host>`); the claim's `host` field is null today,
-  so a server-only fix needs no bridge sweep. Fold in WAKE-STATUS-1's
-  "held by another holder → NOT COVERED".
-  **A shared role has one watch claim for the whole fleet, so all but one of its
-  sessions are permanently deaf while reporting COVERED.** `watch_claim.py:162`
-  keys the claim `watch/<seat>`. Every ordinary seat carries an ordinal and gets
-  its own row; a SHARED ROLE does not, so one row serves every box wearing it.
-  Live query: a single `watch/admin` row against per-session rows for every other
-  seat. One holder wins fleet-wide; every other box's helper defers forever,
-  logging `watch held by 'bridge' — re-claiming in Ns`. `armed_by="bridge"` is
-  set by the helper itself, so the holder being deferred to is ANOTHER BOX'S
-  helper — the split is across the fleet, not inside one box.
-  MEASURED COST: four owner DMs over 2.5h, all `action`, zero wakes delivered;
-  the owner reached that session only by walking to a chat surface. Its log shows
-  64 consecutive defers and ZERO grants from first poll — never had a turn.
-  NOT A BUILD ISSUE: `inbox_wait.py` and `watch_claim.py` are byte-identical
-  between the deployed build and HEAD. A bridge sweep does not touch this.
-  CONTROL: an ordinary ordinal seat on the same code delivers wakes normally.
-  FIX SHAPE (same missing machine axis as ADMIN-ADDR-1, different resource): key
-  the claim `watch/<seat>@<host>` for shared roles, so each box holds its own.
-  Note `SEAT_EXEMPT_IDENTITIES = {"admin"}` deliberately ALLOWS the shared seat
-  name for collision purposes — that exemption and the per-seat watch key are in
-  direct conflict, and this is where they meet.
-  STOPGAP IN THE WILD: an affected session ran a second `inbox_wait --follow`
-  WITHOUT `--claim` as a delivery-only path. It cannot race the seat. It dies
-  with its session, so the NEXT session on that box is deaf again.
-
 - **WAKE-STATUS-1 severity raised again** *(2026-08-29: mechanism now measured,
   not merely observed. FROZEN.)* `class:absence-vs-failure`
   `memory_status` computes COVERED from claim + attach and NEVER from delivery.
@@ -741,8 +707,9 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   beat timestamp even predated the spawn of the process meant to do the
   delivering. FIX SHAPE: COVERED must require evidence that a line was actually
   WRITTEN to the FIFO — "wakes flow", not "a claim exists and a reader is
-  attached". Independent of WATCH-ADMIN-SEAT-1: fixing the key restores wakes,
-  fixing this makes the next such failure visible in minutes instead of hours.
+  attached". The shared-role half (one box reading COVERED off another box's
+  watch claim) shipped with WATCH-ADMIN-SEAT-1: status now answers for the
+  asking box. This item is what remains: COVERED from evidence that wakes flow.
   **NEW 2026-09-19:** the opposite stale state is also live: after a timed-out
   consumer reattached, the replacement reader delivered a queued wake while
   `memory_status` still reported `NOT COVERED (state=expired)` for more than
