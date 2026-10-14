@@ -598,11 +598,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   2026-10-07: dev/test databases move to a separate, non-archived test
   instance; the store's own suites already did (TEST-PG-1). Other projects'
   moves are their owners'. Left here: measure the archive rate once they
-  have moved. Store-side follow-up: `request_log` has never been pruned
-  (6.3M rows, oldest 44 days against a 30-day retention) because prod runs
-  with the cleanup loop disabled (`ENGRAM_CLEANUP_ENABLED=false`), and that
-  loop is the only caller of the retention prune. Decouple the prune from
-  memory expiry, or run it once by hand; then drop the unused indexes.
+  have moved. Store-side request-log retention: fixed (b381cb6), and its
+  unused indexes are left to drop.
 
 - **SEAT-DEAD-HOLDER-2** *(the rest of a 2026-10-06 incident report; part 1
   shipped 2026-10-07)* (b) A send to a seat whose holder is certified dead
