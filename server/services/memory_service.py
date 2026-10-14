@@ -1882,6 +1882,20 @@ def watch_host_of(seat: str, listen_set: list[str] | None,
     return h or None
 
 
+def _beat_age(w: dict) -> float:
+    """Seconds since a folded watch entry's last beat; +inf when unknown."""
+    lb = w.get("last_beat")
+    if not lb:
+        return float("inf")
+    try:
+        t = datetime.fromisoformat(str(lb).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - t).total_seconds()
+    except ValueError:
+        return float("inf")
+
+
 def fold_shared_watches(watch_by_seat: dict[str, dict],
                         metas: dict[str, dict]) -> dict[str, dict]:
     """Roster view of a shared role's per-box watch claims.
@@ -1902,6 +1916,12 @@ def fold_shared_watches(watch_by_seat: dict[str, dict],
             h = (k.split("@", 1)[1] if "@" in k else
                  watch_host_of(seat, (metas.get(k) or {}).get("listen_set"),
                                (metas.get(k) or {}).get("host"))) or "unknown"
+            # A claim silent past the presence-stale window belongs to a box
+            # whose admin session is gone (wrapped, rebooted): no live admin
+            # there to be deaf. Counting it pinned the role at `expired`
+            # forever after one box wrapped (measured 2026-10-14 23:27Z).
+            if w["state"] != "covered" and _beat_age(w) > PRESENCE_STALE_AFTER_SECONDS:
+                continue
             # A box's lingering pre-fix row (expired) must not mask its
             # new per-host one (covered).
             if h not in by_host or w["state"] == "covered":

@@ -149,10 +149,15 @@ async def test_status_never_lends_another_boxs_coverage(clean_admin_watch):
     assert (await watch_status("admin"))["state"] == "covered"
 
 
+def _ago(sec):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(seconds=sec)).isoformat()
+
+
 def test_roster_fold_one_deaf_box_is_not_covered():
     w = {
         "admin@hosta": {"state": "covered"},
-        "admin@hostb": {"state": "expired"},
+        "admin@hostb": {"state": "expired", "last_beat": _ago(200)},
         "proj-claude-2": {"state": "covered"},
     }
     out = fold_shared_watches(w, {})
@@ -163,8 +168,20 @@ def test_roster_fold_one_deaf_box_is_not_covered():
 
 
 def test_roster_fold_prefix_row_and_new_row_same_box():
-    w = {"admin": {"state": "expired"}, "admin@hosta": {"state": "covered"}}
+    w = {"admin": {"state": "expired", "last_beat": _ago(200)},
+         "admin@hosta": {"state": "covered"}}
     metas = {"admin": {"listen_set": _admin_ls("hosta")}}
     out = fold_shared_watches(w, metas)
     assert out["admin"]["state"] == "covered"
     assert out["admin"]["by_host"] == {"hosta": {"state": "covered"}}
+
+
+def test_roster_fold_drops_a_wrapped_boxs_dead_claim():
+    """A box whose admin wrapped leaves an expired claim behind; it must not
+    pin the role at `expired` once it is past the presence-stale window."""
+    w = {"admin": {"state": "expired", "last_beat": _ago(4 * 3600)},
+         "admin@hostb": {"state": "covered"}}
+    metas = {"admin": {"listen_set": _admin_ls("hosta")}}
+    out = fold_shared_watches(w, metas)
+    assert out["admin"]["state"] == "covered"
+    assert set(out["admin"]["by_host"]) == {"hostb"}
