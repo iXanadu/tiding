@@ -699,9 +699,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
 
-- **WATCH-ADMIN-SEAT-1** *(measured 2026-08-29 on two boxes plus a live store
-  query; reported by an admin session that had been deaf for 2.5h. FROZEN —
-  messaging. Owner has NOT ruled on this one.)* `class:absence-vs-failure`
+- **WATCH-ADMIN-SEAT-1** ★ **OWNER-NAMED, FIRST NEXT SESSION** (2026-10-14:
+  "address first on restart"). *(measured 2026-08-29 on two boxes plus a live
+  store query; re-measured 2026-10-14 00:22Z: the fleet-wide `watch/admin`
+  row was held by one box's admin, claimed during a database restart there,
+  and another box's admin went deaf for 5h+ while reading COVERED. Two owner
+  DMs woke nothing.)* `class:absence-vs-failure`
+  Build note: derive the host server-side from the claim's listen set
+  (`machine:<host>` / `admin@<host>`); the claim's `host` field is null today,
+  so a server-only fix needs no bridge sweep. Fold in WAKE-STATUS-1's
+  "held by another holder → NOT COVERED".
   **A shared role has one watch claim for the whole fleet, so all but one of its
   sessions are permanently deaf while reporting COVERED.** `watch_claim.py:162`
   keys the claim `watch/<seat>`. Every ordinary seat carries an ordinal and gets
@@ -1432,6 +1439,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   silent in a way that reads as reassurance — which is now done.
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
+
+- **RESOLVE-ROOT-1** *(found 2026-10-14 at wrapup)* `memory_resolve_thread`
+  given a root-only DM's own id answers "Nothing to resolve", because a
+  message nobody threaded has no thread_id. Per-message resolve works. Still
+  works → DEGRADING. Fix shape: also match `key = thread_id` for the root.
+  · Status: OPEN (owner drives) · Found: wrapup drain
 
 - **RENAME-ACK-1** *(measured 2026-10-12, first fresh session after the
   first PROJECT-RENAME-1 relabel)* `class:stale-binding`
