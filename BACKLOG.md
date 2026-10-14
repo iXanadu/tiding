@@ -699,6 +699,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
 
+- **WAKE-RECEIPT-ADMIN-1** *(DEGRADING, measured 2026-10-14)* A send to
+  `admin@<host>` returns the receipt "Woke 1 agent: admin", which names the
+  role and not the box. Since WATCH-ADMIN-SEAT-1 each box holds its own claim,
+  so the receipt can name the box; until it does, the sender cannot tell which
+  admin woke. `class:absence-vs-failure`
+
 - **WAKE-STATUS-1 severity raised again** *(2026-08-29: mechanism now measured,
   not merely observed. FROZEN.)* `class:absence-vs-failure`
   `memory_status` computes COVERED from claim + attach and NEVER from delivery.
