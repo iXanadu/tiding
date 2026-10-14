@@ -190,6 +190,14 @@ class Settings(BaseSettings):
     # default must not encode an operator's principal name; prod sets
     # ENGRAM_OWNER_PRINCIPAL_NAME in .env.
     owner_principal_name: str = ""
+    # OWNER-RELAY-1: principals that carry the OWNER's own words from a
+    # surface outside AB (the emergency Telegram bot). Comma-separated names.
+    # Such a principal may only read the owner's inbox, send as the owner
+    # (stamped relayed_from=<owner>, authority kept), ack/resolve, and read
+    # the roster — every other route is refused at the middleware. So a
+    # leaked bot token exposes the owner's mail, never the store. Empty =
+    # no relay principals (and nothing changes). Requires owner_principal_name.
+    owner_relay_principals: str = ""
 
     # ADMIN-ADDR-1: refuse mail addressed to the BARE shared role `admin` and
     # require a machine axis — `admin@<host>` for one box, `admin@fleet` for a

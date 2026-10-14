@@ -25,6 +25,33 @@ from server.services.mail_signal import is_signal_path, redact_path
 
 logger = logging.getLogger(__name__)
 
+# OWNER-RELAY-1: the only routes an owner-relay principal may call.
+_RELAY_EXACT = {("POST", "/memory/inbox"), ("POST", "/memory/send"),
+                ("POST", "/memory/roster"), ("GET", "/health")}
+_RELAY_INBOX_ACTIONS = ("/ack", "/resolve")
+
+
+def owner_relay_names() -> set[str]:
+    """Names of principals that relay the owner's words (config). Empty when
+    no owner is configured: a relay for nobody is no relay."""
+    if not (settings.owner_principal_name or "").strip():
+        return set()
+    return {n.strip().lower()
+            for n in (settings.owner_relay_principals or "").split(",")
+            if n.strip()}
+
+
+def is_owner_relay(principal: dict | None) -> bool:
+    return bool(principal) and (
+        (principal.get("name") or "").strip().lower() in owner_relay_names())
+
+
+def _relay_route_allowed(method: str, path: str) -> bool:
+    if (method, path) in _RELAY_EXACT:
+        return True
+    return (method == "POST" and path.startswith("/memory/inbox/")
+            and path.endswith(_RELAY_INBOX_ACTIONS))
+
 
 class PrincipalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -65,7 +92,8 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         if principal:
             request.state.principal = principal
             request.state.auth_source = "principal"
-            refused = self._refuse_admin_on_public(request, principal)
+            refused = (self._refuse_admin_on_public(request, principal)
+                       or self._fence_owner_relay(request, principal))
             if refused is not None:
                 return refused
             return await call_next(request)
@@ -94,7 +122,8 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
         if principal:
             request.state.principal = principal
             request.state.auth_source = "principal"
-            refused = self._refuse_admin_on_public(request, principal)
+            refused = (self._refuse_admin_on_public(request, principal)
+                       or self._fence_owner_relay(request, principal))
             if refused is not None:
                 return refused
             return await call_next(request)
@@ -139,6 +168,24 @@ class PrincipalAuthMiddleware(BaseHTTPMiddleware):
             status_code=403,
             content={"detail": "Admin credentials are not accepted on the "
                                "public surface. Use a scoped principal."},
+        )
+
+    def _fence_owner_relay(self, request: Request, principal: dict | None):
+        """OWNER-RELAY-1: an owner-relay principal (the emergency Telegram
+        bot) reaches the owner's mail and nothing else. Its namespace grant
+        would otherwise read the whole store; the route fence is what makes
+        a leaked bot token cost the owner's mail, not the fleet's memory."""
+        if not is_owner_relay(principal):
+            return None
+        if _relay_route_allowed(request.method, request.url.path):
+            return None
+        logger.warning("OWNER-RELAY refused: principal=%s %s %s",
+                       principal.get("name"), request.method,
+                       redact_path(request.url.path))
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "This principal relays the owner's mail only: "
+                               "inbox read/send/ack/resolve and the roster."},
         )
 
     def _warn_unauthed(self, request: Request, reason: str) -> None:

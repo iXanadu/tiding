@@ -108,6 +108,9 @@ from server.services.memory_service import (
     roster_list,
 )
 
+from server.auth import is_owner_relay  # noqa: E402
+from server.config import settings as _relay_settings  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # Inbox, presence and seat rows have their own lifecycle endpoints (send/ack/
@@ -1019,15 +1022,29 @@ async def send_inbox(req: InboxSendRequest, request: Request):
     principal_name = ((principal or {}).get("name") or "").strip().lower()
     relayed_from = (req.relayed_from or "").strip().lower() or None
     relay_warning: str | None = None
-    if relayed_from and not is_admin_sender:
+    # OWNER-RELAY-1: an owner-relay principal (the emergency Telegram bot)
+    # carries the OWNER's own words and nothing else. Every send is stamped
+    # relayed_from=<owner> with authority kept, whatever the body claims, so
+    # readers see "✓ VERIFIED OWNER (<bot>) [via relay]" — the same render as
+    # the huddle relay carrying his words. It cannot speak as anyone else.
+    owner_relay = is_owner_relay(principal)
+    if owner_relay:
+        _owner = (_admin_settings.owner_principal_name or "").strip().lower()
+        if relayed_from and relayed_from != _owner:
+            relay_warning = (
+                f"relayed_from='{relayed_from}' replaced with '{_owner}': this "
+                "principal relays the owner's words only.")
+        relayed_from = _owner
+        sender_label = (req.from_ or "").strip() or _owner
+    if relayed_from and not is_admin_sender and not owner_relay:
         relay_warning = (
             f"relayed_from='{relayed_from}' IGNORED: only an owner-token "
             "(admin) sender may declare relayed authorship. Your message was "
             f"stored as sent by you ({principal_name or 'anonymous'})."
         )
         relayed_from = None
-    authority = is_admin_sender and (
-        relayed_from is None or relayed_from == principal_name)
+    authority = owner_relay or (is_admin_sender and (
+        relayed_from is None or relayed_from == principal_name))
     if is_fanout:
         participants = _participant_set(
             [t for t, _ in corrected], sender=sender_label
@@ -1232,11 +1249,21 @@ async def send_inbox(req: InboxSendRequest, request: Request):
 @router.post("/inbox", response_model=InboxListResponse)
 async def list_inbox(req: InboxListRequest, request: Request):
     """List inbox messages for the given listen_set."""
-    check_namespace_access(get_current_principal(request), INBOX_NAMESPACE, "read")
+    _principal = get_current_principal(request)
+    check_namespace_access(_principal, INBOX_NAMESPACE, "read")
     try:
         listen_set = validate_listen_set(req.listen_set)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    if is_owner_relay(_principal):
+        # OWNER-RELAY-1: the relay reads the OWNER's mail, no one else's.
+        _o = (_relay_settings.owner_principal_name or "").strip().lower()
+        _foreign = [a for a in listen_set if a.split("@", 1)[0] != _o]
+        if _foreign:
+            raise HTTPException(
+                status_code=403,
+                detail="This principal may read only the owner's inbox. "
+                       "Refused addresses: " + ", ".join(_foreign[:8]))
     try:
         messages = await inbox_list(
             listen_set=listen_set,
