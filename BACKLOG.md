@@ -699,6 +699,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
 
+- **ENGRAM-DB-ROLE-1** *(DEGRADING, security, found 2026-10-15)* Prod engram
+  connects to Postgres as the host's superuser, and the superuser owns the
+  engram database. Move it to its own non-superuser role (owner of its own
+  database only) before the host's database lockdown, or that lockdown
+  breaks the store. Coordinate the cutover with the host admin.
+
 - **INBOX-READ-SCOPE-1** *(DEGRADING, security, found 2026-10-14)* An
   access-scoping gap in the inbox read path. Detail in project memory
   (`vuln/INBOX-READ-SCOPE-1`) until it ships.
