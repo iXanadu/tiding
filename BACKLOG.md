@@ -600,6 +600,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   moves are their owners'. Left here: measure the archive rate once they
   have moved. Store-side request-log retention: fixed (b381cb6), and its
   unused indexes are left to drop.
+  **Measured 2026-10-15:** the moves are done (the last dev/test databases
+  left the production instance 2026-10-14; it now holds 5 production
+  databases), yet the archive still takes ~300 segments/day, flat across
+  1, 3 and 7 days (45 GB on disk). So the remaining volume is the production
+  databases' own writes, not test churn. Next: attribute it per database
+  before tuning anything.
 
 - **SEAT-DEAD-HOLDER-2** *(the rest of a 2026-10-06 incident report; part 1
   shipped 2026-10-07)* (b) A send to a seat whose holder is certified dead
@@ -639,14 +645,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   reached it (its listen set carries it), but the seat breaks the admin
   rule. Reported to the launcher's team with this line.
 
-- **SHARED-PG-1** *(measured 2026-09-24)* The production store shares its
-  Postgres instance with other projects' test databases: 141 of them (2.5 GB),
-  137 with nobody connected. The instance allows 100 connections in total and
-  no tenant login has a cap, so a runaway test suite can take them all and
-  starve the store. Fix: `ALTER ROLE ... CONNECTION LIMIT` per tenant login,
-  or a reserved pool for the store's own role. Dropping the leftover test
-  databases is their owners' call. Same day: the store's own embedder ran the
-  host into swap until MPS-CACHE-1 (5450460). `class:absence-vs-failure`.
+- **SHARED-PG-1** *(measured 2026-09-24; re-measured 2026-10-15)* The
+  production store shares its Postgres instance with other projects. The test
+  databases are gone (141 on 2026-09-24; 0 on 2026-10-15, moved to the test
+  instance), leaving 5 production databases. The remaining risk stands: the
+  instance allows 100 connections in total and no tenant login has a cap, so
+  one runaway client can take them all and starve the store. Folds into the
+  host's database lockdown (ENGRAM-DB-ROLE-1 goes first). Fix: `ALTER ROLE ... CONNECTION LIMIT` per tenant login,
+  or a reserved pool for the store's own role. `class:absence-vs-failure`.
 
 - **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
   own fleet; the wrong answer was built and discarded before sending.)*
@@ -698,6 +704,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   shared secret fleet-wide.
   · Status: OPEN (needs owner decision) · Root: fleet credential provisioning
   · Found: peer incident report, then full live-fleet presence census
+
+- **FORK-WARN-SUPERSEDED-1** *(DEGRADING, found 2026-10-16)* A project-scope
+  store warns "ALSO exists under writer X … both now rank in search" even
+  when X's row was superseded weeks ago and no longer ranks. `partition_siblings`
+  (memory_service.py) doesn't filter HIDDEN_STATUSES. One-line fix plus a
+  test. The false alarm sends agents to retire rows that are already retired.
 
 - **ENGRAM-DB-ROLE-1** *(DEGRADING, security, found 2026-10-15)* Prod engram
   connects to Postgres as the host's superuser, and the superuser owns the
