@@ -98,6 +98,9 @@ def accept_server():
         "ENGRAM_DB_PORT": settings_target("port"),
         "ENGRAM_DB_USER": settings_target("user"),
         "ENGRAM_DB_PASSWORD": settings_target("password"),
+        # Pinned model, local HF cache, never the network — as prod and
+        # tests/conftest.py run. Without it a stale HF token 401s the boot.
+        "HF_HUB_OFFLINE": "1",
         # PROD-SHAPED, not merely convenient: require_auth=true makes the
         # server bootstrap a '_bootstrap' admin principal from
         # ENGRAM_API_TOKEN. Legacy-token mode looked simpler but 401s on
