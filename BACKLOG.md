@@ -227,6 +227,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   paths) or GRANT-1(b)'s inheritance question answered by accident — find
   which before fixing. Repro: `pytest acceptance/test_lifecycle.py -k a8`.
 
+- **CODEX-SEAT-DIVERGE-1** *(reported by a peer PM 2026-10-17; low — the
+  seats answered a direct DM within 20 s.)* Launcher-injected seat `<p>-codex`
+  resolved to `-2/-3/-4`; the roster showed every wake stream `unheld`, and
+  a room @-mention matched none of them (the room's matcher only knew the
+  injected names). Engram half: confirm whether the watcher's claim follows
+  the resolved seat. Room half belongs to the hub: match by resolved seat.
+
 - **SEAT-13b** *(found 2026-09-22 by the author of SEAT-13, an hour after
   deploying it, by demonstrating it live on his own seat.)*
   `class:a-record-that-outlives-what-it-describes`
