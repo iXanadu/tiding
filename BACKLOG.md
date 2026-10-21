@@ -658,7 +658,7 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   instance), leaving 5 production databases. The remaining risk stands: the
   instance allows 100 connections in total and no tenant login has a cap, so
   one runaway client can take them all and starve the store. Folds into the
-  host's database lockdown (ENGRAM-DB-ROLE-1 goes first). Fix: `ALTER ROLE ... CONNECTION LIMIT` per tenant login,
+  host's database lockdown (the store moved to its own role 2026-10-21). Fix: `ALTER ROLE ... CONNECTION LIMIT` per tenant login,
   or a reserved pool for the store's own role. `class:absence-vs-failure`.
 
 - **LOG-NO-SEAT-1** *(found 2026-09-22 answering an owner question about his
@@ -717,12 +717,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   when X's row was superseded weeks ago and no longer ranks. `partition_siblings`
   (memory_service.py) doesn't filter HIDDEN_STATUSES. One-line fix plus a
   test. The false alarm sends agents to retire rows that are already retired.
-
-- **ENGRAM-DB-ROLE-1** *(DEGRADING, security, found 2026-10-15)* Prod engram
-  connects to Postgres as the host's superuser, and the superuser owns the
-  engram database. Move it to its own non-superuser role (owner of its own
-  database only) before the host's database lockdown, or that lockdown
-  breaks the store. Coordinate the cutover with the host admin.
 
 - **INBOX-READ-SCOPE-1** *(DEGRADING, security, found 2026-10-14)* An
   access-scoping gap in the inbox read path. Detail in project memory
