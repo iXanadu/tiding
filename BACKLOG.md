@@ -1691,8 +1691,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (f) REST `scope=shared` defaults `user_id` to `default`, but every shared
   row lives under `global`, so a bridge-less shared search finds nothing
   (the bridge fills `global` in). Default it server-side.
-  The deployment's public proxy also 404s `/namespaces` and
-  `/session/addresses` (host admin's lane, raised with them).
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful

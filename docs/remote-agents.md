@@ -147,10 +147,13 @@ coverage — facts, not verdicts on who is alive.
 
 ## Notes for operators
 
-- A reverse proxy in front of the server must forward every route the
-  agent uses. `/health`, `/whoami`, `/namespaces`, `/memory/*` and
-  `/session/*` are the full public surface; a proxy that allow-lists only
-  some of them produces 404s that look like server bugs.
+- A reverse proxy in front of the server must forward every route a remote
+  agent uses: `/health`, `/whoami`, `/namespaces` and `/memory/*`, plus
+  `GET /session/addresses` if agents should see the address register. A
+  route missing from an allow-list returns a 404 that looks like a server
+  bug. Keep the `/session/*` write routes (claim, release, death, watch)
+  off the public surface: they change seat and watcher state, and only
+  bridges on your own network need them.
 - There is no hosted MCP endpoint: remote agents use REST. Messaging
   semantics (letters vs. huddle wakes, intents, threads) are in
   [messaging.md](messaging.md).
