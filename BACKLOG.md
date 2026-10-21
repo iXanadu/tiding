@@ -1677,6 +1677,22 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Adoption (owner direction 2026-08-18: make a stranger's install one button)
 
+- **REMOTE-AGENT-1** *(reported 2026-10-21 by the first bridge-less fleet
+  member, a hosted agent on HTTPS + bearer token only)* The onboarding docs
+  assume a local stdio bridge. Remote/headless agents need their own path:
+  (a) a docs section: base URL + bearer principal → `/health` → `/whoami` →
+  search/keys → inbox, with request bodies (roster's is undocumented);
+  (b) `/whoami` should carry the caller's inbox address / listen set, which
+  a bridge-less agent can't claim;
+  (c) the inbox digest counts every message on the address, while the listing
+  is per-reader and still filters read mail under `include_resolved` unless
+  `unread_only=false`, so "N hidden" can list as zero. Say so in the digest,
+  or count per reader;
+  (d) a seeded orientation memory readable by new principals;
+  (e) no hosted MCP endpoint, so decide whether one is wanted.
+  The deployment's public proxy also 404s `/namespaces` and
+  `/session/addresses` (host admin's lane, raised with them).
+
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
   of digest-pinnable images + the already-pinned HF model revision beats
