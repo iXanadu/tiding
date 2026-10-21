@@ -217,16 +217,6 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
-- **ACCEPT-A8-1** *(measured 2026-10-20, red on the current tree as both
-  the superuser and the `engram` test role, so not a DB-role effect.)*
-  `class:a-record-that-outlives-what-it-describes`
-  **Acceptance row a8 fails: a stranger that explicitly requests a released
-  seat name is granted it AND reads the dead session's parked mail.** R8's
-  promise is that parked seat-private mail never reaches a new holder.
-  Either a regression (suspects: the SEAT-13 / SEAT-DEAD-HOLDER-1 release
-  paths) or GRANT-1(b)'s inheritance question answered by accident — find
-  which before fixing. Repro: `pytest acceptance/test_lifecycle.py -k a8`.
-
 - **CODEX-SEAT-DIVERGE-1** *(reported by a peer PM 2026-10-17; low — the
   seats answered a direct DM within 20 s.)* Launcher-injected seat `<p>-codex`
   resolved to `-2/-3/-4`; the roster showed every wake stream `unheld`, and

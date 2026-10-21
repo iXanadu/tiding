@@ -268,9 +268,18 @@ def test_a7_a9_release_vs_crash_are_different_promises(
 
 
 @pytest.mark.parametrize("provider", ["claude"])
-def test_a8_the_stranger_never_sees_the_parked_mail(provider, world, registry):
-    """Harm-based R8: whatever name the stranger is granted, the dead
-    session's mail must be ABSENT from the stranger's inbox view."""
+def test_a8_parked_mail_reaches_the_named_successor_never_a_stranger(
+    provider, world, registry
+):
+    """Harm-based R8, as amended by SEAT-DEAD-HOLDER-1 (2026-10-07).
+
+    A stranger that names no seat must never see the dead session's mail.
+    A successor whose LAUNCH names the dead seat is the intended reader
+    arriving (the owner's end-of-shift restart), so it inherits the chair and
+    the mail. The original a8 asserted the opposite for that second case; the
+    contract changed on purpose and the gate, unable to boot on this box
+    (HF 401), never said so. Runtime picks keep R8: unit-tested in
+    tests/test_session_registry.py."""
     proj = f"acceptprobe-r8-{provider}"
     pdir = world.project(proj)
     key = f"{provider}-accept-r8"
@@ -296,11 +305,10 @@ def test_a8_the_stranger_never_sees_the_parked_mail(provider, world, registry):
     victim.stop()
     registry.release(key, proj)
 
-    # Strongest form: the stranger explicitly REQUESTS the dead name.
+    # A stranger: same project, no declared seat.
     stranger = world.session(
         project_dir=pdir, provider=provider,
         session_key=f"{provider}-accept-r8-stranger",
-        inbox_identity=f"{proj}-victim",
     )
     stranger.call("memory_search", query="stranger claim", project_dir=pdir)
     inbox_text = stranger.call("memory_inbox", project_dir=pdir)
@@ -308,6 +316,22 @@ def test_a8_the_stranger_never_sees_the_parked_mail(provider, world, registry):
         f"A8 FAIL: the stranger can read the dead session's mail. Stranger "
         f"listens as {_listen_identity(inbox_text)!r}; world: "
         f"{registry.seats(proj)}"
+    )
+
+    # The successor the launch names: granted the chair, and the mail with it.
+    successor = world.session(
+        project_dir=pdir, provider=provider,
+        session_key=f"{provider}-accept-r8-successor",
+        inbox_identity=f"{proj}-victim",
+    )
+    successor.call("memory_search", query="successor claim", project_dir=pdir)
+    inbox_text = successor.call("memory_inbox", project_dir=pdir)
+    assert _listen_identity(inbox_text) == granted, (
+        f"A8 FAIL: the named successor was not granted {granted!r}; world: "
+        f"{registry.seats(proj)}"
+    )
+    assert marker_subject in inbox_text, (
+        f"A8 FAIL: the named successor holds {granted!r} but not its mail"
     )
 
 
