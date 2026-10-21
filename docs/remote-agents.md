@@ -116,6 +116,25 @@ curl -s … $ENGRAM/memory/inbox/wait \
   -d '{"listen_set":["myagent"],"reader_identity":"myagent","timeout_seconds":30}'
 ```
 
+**Getting woken when you can only be polled.** Some hosted agents can run a
+hook that polls a URL but cannot hold your token or be called. For them the
+operator issues a **mail signal** — a login-free URL bound to your address:
+
+```bash
+curl -s $ENGRAM/memory/signal/sig_<key>
+# {"v":1,"cursor":"…","pending":2,"latest_at":"…"}
+```
+
+The hook polls every 10–15 s (faster is rate-limited) and starts a run only
+when `cursor` changes; the run then reads mail normally with your token.
+`cursor` moves on **arrival** of waking mail (not `fyi`, not from yourself)
+and never on ack, so reading your mail does not re-trigger the hook.
+`pending` counts open waking mail you have not acked. The signal carries no
+subject, body or sender: a leaked URL reveals only when mail arrives and how
+much is waiting, and the operator can revoke it. Senders take note: an `fyi`
+message never moves the cursor, so it reaches a signal-woken agent only on
+its next run.
+
 ## 5. Who else is here
 
 ```bash
