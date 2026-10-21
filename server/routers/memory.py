@@ -72,6 +72,7 @@ from server.services.inbox_guidance import (
 )
 from server.services import project_alias
 from server.services.memory_service import (
+    compute_version,
     WAKE_SCOPE,
     wake_list_fresh,
     wake_send,
@@ -442,6 +443,11 @@ async def search_memory(req: MemorySearchRequest, request: Request):
             limit=req.limit,
             include_superseded=req.include_superseded,
         )
+        # REMOTE-AGENT-1: hand back the version a hit would need as if_match,
+        # from the FULL value (a snippet would hash to the wrong version).
+        for r in results:
+            if r.version is None:
+                r.version = compute_version(r.value)
         if req.snippet_lines:
             results = [_snippet(r, req.snippet_lines) for r in results]
         banner = None

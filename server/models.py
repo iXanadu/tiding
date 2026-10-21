@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.config import settings
 
@@ -52,6 +52,18 @@ class _ProjectAliasedRequest(_NamespacedRequest):
             from server.services.project_alias import canonical_logged
             return canonical_logged(v)
         return v
+
+    @model_validator(mode="after")
+    def _shared_scope_means_global(self):
+        # REMOTE-AGENT-1(f): every shared row lives under user_id "global";
+        # the bridge always sends it, but a bare REST caller got "default" and
+        # searched an empty partition (measured 2026-10-21: 0 of 1612). An
+        # explicit user_id is left alone.
+        if (getattr(self, "scope", None) == "shared"
+                and "user_id" in type(self).model_fields
+                and "user_id" not in self.model_fields_set):
+            self.user_id = "global"
+        return self
 
 
 # --- Request models (match original Pyscript tool interface) ---
@@ -594,6 +606,14 @@ class PrincipalResponse(BaseModel):
     # AUDIT-2: when this principal was last mutated (token rotation, namespace
     # change, deactivation). Nullable only for rows predating the column.
     updated_at: datetime | None = None
+
+
+class WhoamiResponse(PrincipalResponse):
+    # REMOTE-AGENT-1(b): a caller with no seat (a bridge-less REST agent) is
+    # addressed by its principal name. Say so, with what it should listen on,
+    # instead of leaving it to convention. A bridge session's seat may differ.
+    inbox_address: str
+    listen_set: list[str]
 
 
 class PrincipalListResponse(BaseModel):

@@ -11,17 +11,21 @@ import logging
 from fastapi import APIRouter, Depends
 
 from server.dependencies import require_principal
-from server.models import NamespacesResponse, PrincipalResponse
+from server.models import NamespacesResponse, WhoamiResponse
 from server.services.admin_service import list_namespaces
+from server.services.project_alias import expand_listen_set
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["identity"])
 
 
-@router.get("/whoami", response_model=PrincipalResponse)
+@router.get("/whoami", response_model=WhoamiResponse)
 async def whoami(principal: dict = Depends(require_principal)):
-    return PrincipalResponse(**principal)
+    address = principal["name"].strip().lower()
+    listen_set = [address] + await expand_listen_set([address])
+    return WhoamiResponse(**principal, inbox_address=address,
+                          listen_set=listen_set)
 
 
 @router.get("/namespaces", response_model=NamespacesResponse)

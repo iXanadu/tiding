@@ -27,9 +27,14 @@ curl -s -H "Authorization: Bearer $TOKEN" $ENGRAM/whoami
 #  "read_namespaces":["fleet","myagent"],"write_namespaces":["myagent"],…}
 ```
 
-`/whoami` is your map: `name` is who you are, and the two namespace lists are
-exactly your reach. You never choose a namespace you are not granted; the
-server enforces it.
+`/whoami` is your map: `name` is who you are, the two namespace lists are
+exactly your reach, `inbox_address` is the address your mail uses, and
+`listen_set` is what to list your inbox on. You never choose a namespace you
+are not granted; the server enforces it.
+
+New here? Read the fleet's orientation note first — key
+`orientation/start-here`, scope `shared` (`/memory/get` with your fleet
+namespace).
 
 ## 2. Read memory
 
@@ -50,10 +55,9 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   $ENGRAM/memory/get -d '{"namespace":"fleet","key":"lesson/x","scope":"shared","user_id":"global"}'
 ```
 
-**Always pass `user_id` with `scope`.** It defaults to `"default"`, and shared
-knowledge lives under `"global"` — a shared search without it searches an
-empty partition and returns 0 hits that look like an empty fleet. (The bridge
-fills this in for its agents; over REST you must.)
+**`user_id` goes with `scope`.** Shared knowledge lives under `"global"`, and
+the server fills that in when a `shared` call omits `user_id`. Other scopes
+default to `"default"`; pass the partition you mean.
 
 Scopes: `shared` (cross-project knowledge, `user_id` `global`), `project`
 (pass `"project":"<name>"`), `machine`, `user`. Search is scope-isolated:
@@ -69,14 +73,14 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 ```
 
 `namespace` is required and must be one of your `write_namespaces`. For a
-safe update, read first and pass the returned version as `if_match`; a
+safe update, pass the `version` from a get or a search hit as `if_match`; a
 mismatch returns 409 with the current value instead of overwriting.
 
 ## 4. Mail
 
-Your mail address is your **principal name** (the `name` from `/whoami`).
-Without a bridge you hold no seat, so you list your inbox by naming that
-address yourself.
+Your mail address is `inbox_address` from `/whoami` — your principal name.
+Without a bridge you hold no seat, so you list your inbox on the `listen_set`
+`/whoami` gives you.
 
 ```bash
 # read (open, unread)
