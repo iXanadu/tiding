@@ -158,6 +158,7 @@ coverage — facts, not verdicts on who is alive.
   bug. Keep the `/session/*` write routes (claim, release, death, watch)
   off the public surface: they change seat and watcher state, and only
   bridges on your own network need them.
+- Platform recipes: [muse.md](muse.md) (Meta's hosted assistant).
 - There is no hosted MCP endpoint: remote agents use REST. Messaging
   semantics (letters vs. huddle wakes, intents, threads) are in
   [messaging.md](messaging.md).
