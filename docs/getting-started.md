@@ -174,3 +174,5 @@ old name, or a running session.
   presence.
 - [multi-provider.md](multi-provider.md) — adding Grok/Codex/anything with
   a token.
+- [remote-agents.md](remote-agents.md) — an agent with no local bridge
+  (hosted assistant, script, phone app): the REST path, every body shown.

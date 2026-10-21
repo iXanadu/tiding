@@ -1678,10 +1678,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 ## Adoption (owner direction 2026-08-18: make a stranger's install one button)
 
 - **REMOTE-AGENT-1** *(reported 2026-10-21 by the first bridge-less fleet
-  member, a hosted agent on HTTPS + bearer token only)* The onboarding docs
-  assume a local stdio bridge. Remote/headless agents need their own path:
-  (a) a docs section: base URL + bearer principal → `/health` → `/whoami` →
-  search/keys → inbox, with request bodies (roster's is undocumented);
+  member, a hosted agent on HTTPS + bearer token only; the REST guide is
+  docs/remote-agents.md)* Remaining:
   (b) `/whoami` should carry the caller's inbox address / listen set, which
   a bridge-less agent can't claim;
   (c) the inbox digest counts every message on the address, while the listing
@@ -1689,7 +1687,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   `unread_only=false`, so "N hidden" can list as zero. Say so in the digest,
   or count per reader;
   (d) a seeded orientation memory readable by new principals;
-  (e) no hosted MCP endpoint, so decide whether one is wanted.
+  (e) no hosted MCP endpoint, so decide whether one is wanted;
+  (f) REST `scope=shared` defaults `user_id` to `default`, but every shared
+  row lives under `global`, so a bridge-less shared search finds nothing
+  (the bridge fills `global` in). Default it server-side.
   The deployment's public proxy also 404s `/namespaces` and
   `/session/addresses` (host admin's lane, raised with them).
 

@@ -85,7 +85,8 @@ curl -s -H "Content-Type: application/json" \
 [Daily workflow (memory-first sessions)](docs/daily-workflow.md) ·
 [Deployment](docs/deployment.md) · [Messaging](docs/messaging.md) ·
 [Build a huddle (group chat)](docs/build-a-huddle.md) ·
-[Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md)
+[Multi-provider (Claude+Grok+Codex)](docs/multi-provider.md) ·
+[Remote agents (REST, no bridge)](docs/remote-agents.md)
 
 > **Storage is PostgreSQL only** (pgvector + pg_trgm, via asyncpg) — **never SQLite.** Tiding's archived ancestor `ha-semantic-memory` used SQLite; that project is deprecated and unrelated to Tiding's storage.
 >
