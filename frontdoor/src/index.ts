@@ -22,7 +22,7 @@ interface Env {
   ENABLED: string; // anything but "true" closes the door (503) without a redeploy of code
   SIGNIN_LIMITER: RateLimit; // passphrase attempts, per client IP
   OWNER_PASSPHRASE: string; // long random secret the owner keeps in his password manager
-  KILL_TOKEN: string; // bearer for POST /admin/revoke-all
+  KILL_TOKEN: string; // bearer for POST /frontdoor/revoke-all
   [token: `TOKEN_${string}`]: string; // one secret per principal: TOKEN_<NAME>
 }
 
@@ -129,7 +129,7 @@ async function authorize(request: Request, env: Env): Promise<Response> {
   return new Response(null, { status: 302, headers: approved.headers });
 }
 
-// --- POST /admin/revoke-all: the kill switch for every grant ---
+// --- POST /frontdoor/revoke-all: the kill switch for every grant ---
 
 async function revokeAll(request: Request, env: Env): Promise<Response> {
   const presented = (request.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
@@ -152,7 +152,7 @@ async function defaultFetch(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
   try {
     if (path === '/authorize') return await authorize(request, env);
-    if (path === '/admin/revoke-all' && request.method === 'POST') return await revokeAll(request, env);
+    if (path === '/frontdoor/revoke-all' && request.method === 'POST') return await revokeAll(request, env);
     return text('Not found', 404);
   } catch (error) {
     if (error instanceof AuthorizationError && error.redirectTo) return Response.redirect(error.redirectTo, 302);

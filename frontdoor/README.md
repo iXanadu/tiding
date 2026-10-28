@@ -11,9 +11,15 @@ Sign-in: the owner approves each client on the consent page with a long
 random passphrase kept in his password manager (5 attempts a minute per IP).
 No third-party identity provider to register or maintain. Kill switches:
 `ENABLED` var (anything but `true` → 503 everywhere) and
-`POST /admin/revoke-all` with the `KILL_TOKEN` bearer. Audit lines
+`POST /frontdoor/revoke-all` with the `KILL_TOKEN` bearer. Audit lines
 (`{"audit": …}`) go to Workers Logs; every forwarded call also lands in the
 memory server's own request log under the mapped principal.
+
+On the edge, single-use codes and the grant list live in KV, which is
+eventually consistent: a replayed code can succeed within the cache window
+(PKCE still demands the verifier), and revoke-all can miss a grant made in
+the last minute. The authoritative kill is on the memory server: deactivate
+the mapped principal, and every call the front door makes for it fails.
 
 ```bash
 npm ci && npx wrangler types
