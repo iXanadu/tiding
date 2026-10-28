@@ -2,13 +2,14 @@
 
 Plays a hosted MCP client: dynamic registration, authorize with PKCE, the
 owner's consent form, code exchange, MCP calls, refresh, revocation. Stdlib
-only. Usage: python3 test/roundtrip.py [base_url]   (reads .dev.vars)
+only. Usage: python3 test/roundtrip.py [base_url]   (reads .dev.vars, or $FRONTDOOR_VARS)
 """
 
 import base64
 import hashlib
 import http.cookiejar
 import json
+import os
 import re
 import secrets
 import sys
@@ -18,7 +19,7 @@ import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8787"
 REDIRECT = "http://localhost:9/callback"
-DEV = dict(l.split("=", 1) for l in open(".dev.vars").read().split() if "=" in l)
+DEV = dict(l.split("=", 1) for l in open(os.environ.get("FRONTDOOR_VARS", ".dev.vars")).read().split() if "=" in l)
 PASS = DEV["OWNER_PASSPHRASE"]
 
 jar = http.cookiejar.CookieJar()

@@ -1706,13 +1706,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 - **FRONTDOOR-1** *(owner GO 2026-10-28)* OAuth + remote MCP front door
   for hosted agents that can't carry a bearer token (`frontdoor/`, design
-  `docs/design/oauth-front-door.md`). BUILT: the local round trip passes
-  (22 checks: DCR, PKCE, passphrase consent, ten tools, refresh, revoke,
-  code replay, kill switch). Owner chose passphrase consent over
-  Google/Apple sign-in (no IdP to maintain). Remaining: the independent
-  security review; a deploy credential (Workers + KV + route) and a
-  hostname; deploy; first client. CIMD is still untested: it needs a
-  public https client document.
+  `docs/design/oauth-front-door.md`). DEPLOYED 2026-10-28, with no client
+  principal loaded: the round trip passes through the public edge as a
+  throwaway principal (since removed). Remaining: the independent security
+  review, then load the first client principal and connect it. Measured on
+  the edge: a replayed authorization code's tokens are revoked eventually
+  (KV consistency), not at once as in local dev. CIMD is still untested.
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
