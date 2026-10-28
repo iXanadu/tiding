@@ -62,7 +62,7 @@ def authorize(passphrase):
     verifier = secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     q = urllib.parse.urlencode({
-        "response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT, "scope": "mcp",
+        "response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT, "scope": "",
         "state": "st8", "code_challenge": challenge, "code_challenge_method": "S256",
         "resource": BASE + "/mcp",
     })
@@ -87,6 +87,29 @@ s, _, body = req("POST", "/oauth/register", {
 check("DCR registers a public client", s == 201, f"{s} {body[:200]}")
 client_id = json.loads(body)["client_id"]
 
+# 1b. the door refuses what the library alone would allow
+s, _, body = req("POST", "/oauth/register", {
+    "client_name": "evil", "redirect_uris": ["https://evil.example/cb"],
+    "token_endpoint_auth_method": "none", "grant_types": ["authorization_code"],
+})
+evil = json.loads(body)["client_id"]
+q = urllib.parse.urlencode({"response_type": "code", "client_id": evil, "redirect_uri": "https://evil.example/cb",
+                            "scope": "mcp", "state": "x", "code_challenge": "a" * 43, "code_challenge_method": "S256",
+                            "resource": BASE + "/mcp"})
+s, _, page = req("GET", "/authorize?" + q)
+check("unlisted callback host is refused before consent", s == 403 and "evil.example" in page and "handle" not in page,
+      f"{s} {page[:120]}")
+s, _, body = req("POST", "/oauth/register", {
+    "client_name": "secret-no-pkce", "redirect_uris": [REDIRECT],
+    "token_endpoint_auth_method": "client_secret_basic", "grant_types": ["authorization_code"],
+})
+conf = json.loads(body)["client_id"]
+q = urllib.parse.urlencode({"response_type": "code", "client_id": conf, "redirect_uri": REDIRECT, "scope": "mcp",
+                            "state": "x", "resource": BASE + "/mcp"})
+s, _, page = req("GET", "/authorize?" + q)
+check("a request without PKCE is refused, even for a confidential client", s == 403 and "PKCE" in page,
+      f"{s} {page[:120]}")
+
 # 2. wrong passphrase mints nothing
 s, loc, _, body = authorize("wrong-" + PASS)
 check("wrong passphrase is refused (403, no redirect)", s == 403 and not loc, f"{s} {loc}")
@@ -104,6 +127,8 @@ tok_form = {"grant_type": "authorization_code", "code": code, "redirect_uri": RE
 s, _, body = req("POST", "/oauth/token", tok_form, form=True)
 check("code exchange issues tokens", s == 200 and "access_token" in body, f"{s} {body[:200]}")
 tokens = json.loads(body)
+check("the grant's scope is set by the door, not the client (asked for none)", tokens.get("scope") == "mcp",
+      str(tokens.get("scope")))
 
 
 # 5. MCP calls

@@ -7,6 +7,12 @@ server, using OAuth. Design and security gate:
 
 Status: built, not deployed. The local end-to-end check passes (22 checks).
 
+Refused before consent: a callback host not in `REDIRECT_HOSTS` (each
+vendor's callback host; loopback only in local dev), and any request
+without S256 PKCE, confidential clients included. Every grant carries
+exactly the `mcp` scope, set by the door; the MCP handler refuses a token
+without it.
+
 Sign-in: the owner approves each client on the consent page with a long
 random passphrase kept in his password manager (5 attempts a minute per IP).
 No third-party identity provider to register or maintain. Kill switches:

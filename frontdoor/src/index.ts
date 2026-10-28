@@ -6,8 +6,8 @@
 // memory server's REST API with that principal's token, so namespace
 // enforcement stays on the server, exactly as for any other agent.
 
-import { OAuthProvider, AuthorizationError, CimdFetchError } from '@cloudflare/workers-oauth-provider';
-import type { ConsentDescription, OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import { OAuthProvider, AuthorizationError, CimdFetchError, insufficientScope } from '@cloudflare/workers-oauth-provider';
+import type { AuthRequest, ConsentDescription, OAuthHelpers, OAuthResourceAuth } from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { z } from 'zod';
@@ -19,6 +19,7 @@ interface Env {
   ENGRAM_URL: string; // memory server base URL, no trailing slash
   PUBLIC_URL: string; // this Worker's own origin, no trailing slash
   PRINCIPALS: string; // comma list of principals a client may be mapped to
+  REDIRECT_HOSTS: string; // comma list of hosts a grant may be sent to (each vendor's callback host)
   ENABLED: string; // anything but "true" closes the door (503) without a redeploy of code
   SIGNIN_LIMITER: RateLimit; // passphrase attempts, per client IP
   OWNER_PASSPHRASE: string; // long random secret the owner keeps in his password manager
@@ -34,7 +35,9 @@ interface Props {
 // revoke-all find every grant.
 const OWNER = 'owner';
 const MCP_PATH = '/mcp';
+const SCOPE = 'mcp';
 
+const safeHost = (u: string) => { try { return new URL(u).hostname; } catch { return '?'; } };
 const escape = (value: string) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const text = (body: string, status: number) =>
   new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
@@ -46,6 +49,31 @@ function allowedPrincipals(env: Env): string[] {
 
 function tokenFor(env: Env, principal: string): string | undefined {
   return env[`TOKEN_${principal.toUpperCase().replace(/-/g, '_')}`];
+}
+
+function isLocalDev(env: Env): boolean {
+  return /^http:\/\/localhost(:\d+)?$/.test(env.PUBLIC_URL);
+}
+
+// Refuse what the library would allow but this door must not: a callback
+// host the owner hasn't listed (a phished consent page would otherwise send
+// a real grant anywhere https), and a request without S256 PKCE (the library
+// lets confidential clients skip it).
+function refusal(env: Env, req: AuthRequest): string | null {
+  let host: string;
+  try {
+    const u = new URL(req.redirectUri);
+    host = u.hostname.toLowerCase();
+    const loopback = u.protocol === 'http:' && (host === 'localhost' || host === '127.0.0.1');
+    if (loopback ? !isLocalDev(env) : u.protocol !== 'https:') return `Callback ${req.redirectUri} is not allowed.`;
+    if (!loopback && !list(env.REDIRECT_HOSTS).includes(host)) {
+      return `This app wants its access sent to ${host}, which is not on the allowed list. Nothing was granted.`;
+    }
+  } catch {
+    return 'Malformed callback address.';
+  }
+  if (!req.codeChallenge || req.codeChallengeMethod !== 'S256') return 'This app did not use PKCE (S256). Nothing was granted.';
+  return null;
 }
 
 async function timingSafeEqual(a: string, b: string): Promise<boolean> {
@@ -75,7 +103,7 @@ function consentPage(d: ConsentDescription, handle: string, principals: string[]
 <h1>Allow ${name} to use Tiding?</h1>
 <p>${origin} Access will be sent to <strong>${escape(d.redirectHost)}</strong>.</p>
 ${d.redirectIsLoopback ? '<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>' : ''}
-<p>Scopes: ${d.scope.map(escape).join(', ') || '(none)'}</p>
+<p>Grants scope <strong>mcp</strong>: the ten memory tools, as the principal you pick below.</p>
 <form method="post">
   <input type="hidden" name="handle" value="${escape(handle)}">
   <label>Act as principal <select name="principal">${options}</select></label><br><br>
@@ -88,6 +116,11 @@ async function authorize(request: Request, env: Env): Promise<Response> {
   const oauth = env.OAUTH_PROVIDER;
   if (request.method === 'GET') {
     const req = await oauth.parseAuthRequest(request);
+    const refused = refusal(env, req);
+    if (refused) {
+      audit('authorize_refused', { client_id: req.clientId, redirect_host: safeHost(req.redirectUri), reason: refused });
+      return text(refused, 403);
+    }
     const details = await oauth.describeConsent(req);
     const consent = await oauth.beginConsent(req);
     consent.headers.set('Content-Type', 'text/html; charset=utf-8');
@@ -116,12 +149,16 @@ async function authorize(request: Request, env: Env): Promise<Response> {
     audit('signin_refused', { ip });
     return text('Not approved: wrong passphrase. Go back and try again.', 403);
   }
-  const approved = await oauth.approveConsent(request, handle, {});
+  // The grant's scope is set here, never taken from the client: every grant
+  // carries exactly SCOPE, and the MCP handler refuses a token without it.
+  const approved = await oauth.approveConsent(request, handle, { scope: [SCOPE] });
+  const refused = refusal(env, approved.request); // the stored request, re-checked
+  if (refused) return text(refused, 403);
   const { redirectTo } = await oauth.completeAuthorization({
     request: approved.request,
     userId: OWNER,
     metadata: { principal },
-    scope: approved.request.scope,
+    scope: [SCOPE],
     props: { principal } satisfies Props,
   });
   audit('grant', { client_id: approved.request.clientId, principal, ip });
@@ -132,6 +169,8 @@ async function authorize(request: Request, env: Env): Promise<Response> {
 // --- POST /frontdoor/revoke-all: the kill switch for every grant ---
 
 async function revokeAll(request: Request, env: Env): Promise<Response> {
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'local';
+  if (!(await env.SIGNIN_LIMITER.limit({ key: `kill:${ip}` })).success) return text('Too many attempts.', 429);
   const presented = (request.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
   if (!env.KILL_TOKEN || !(await timingSafeEqual(presented, env.KILL_TOKEN))) return text('Forbidden', 403);
   let revoked = 0;
@@ -262,7 +301,8 @@ function buildServer(env: Env, principal: string): McpServer {
 }
 
 const mcpHandler = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props: Props }): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext & { props: Props; auth: OAuthResourceAuth }): Promise<Response> {
+    if (!ctx.auth?.scope?.includes(SCOPE)) return insufficientScope(ctx.auth, [SCOPE]);
     const { success } = await env.RATE_LIMITER.limit({ key: ctx.props.principal });
     if (!success) return text('Rate limited: slow down and retry.', 429);
     const server = buildServer(env, ctx.props.principal);
@@ -284,8 +324,8 @@ function getProvider(env: Env): OAuthProvider<Env> {
     tokenEndpoint: '/oauth/token',
     clientRegistrationEndpoint: '/oauth/register',
     clientIdMetadataDocumentEnabled: true,
-    scopesSupported: ['mcp'],
-    requiredScopes: ['mcp'],
+    scopesSupported: [SCOPE],
+    requiredScopes: [SCOPE],
     resourceMetadata: { resource: `${env.PUBLIC_URL}${MCP_PATH}`, authorization_servers: [env.PUBLIC_URL] },
     accessTokenTTL: 3600,
     refreshTokenIdleTTL: 30 * 24 * 3600,

@@ -17,6 +17,7 @@
     "PUBLIC_URL": "http://localhost:8787",
     "ENGRAM_URL": "http://127.0.0.1:8920",
     "PRINCIPALS": "frontdoor-probe",
+    "REDIRECT_HOSTS": "localhost",
     "ENABLED": "true"
   }
 }
