@@ -1695,7 +1695,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   remote agent running its own watcher) to skip mail now and then, so it
   added a fallback that lists the inbox every 20 s against a set of message
   ids it has already seen. Not reproduced yet. Next: get the skipped ids from
-  the agent and replay `since` against them.
+  the agent and replay `since` against them;
+  (j) a non-admin remote agent whose sends carry `X-Engram-Project: admin`
+  *(measured 2026-10-28)* cannot be replied to: the bridge sends a
+  cross-project reply to `from_project`, which here is the bare `admin`
+  role, and the server refuses it with a 409. The header comes from the
+  agent itself (asked to fix it), but the server accepts `admin` as the
+  project from a principal that isn't an admin. Either reject that, or have
+  the reply go to the sender's principal.
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
