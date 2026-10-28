@@ -161,5 +161,19 @@ check("revocation accepted", s == 200, str(s))
 s, r = mcp("tools/list", token=fresh["access_token"])
 check("revoked token is refused", s == 401, str(s))
 
+# 8. kill switch: revoke-all refuses a wrong bearer, then revokes every grant
+s, _, _ = req("POST", "/admin/revoke-all", {}, {"Authorization": "Bearer wrong"})
+check("revoke-all refuses a wrong kill token", s == 403, str(s))
+s, loc, verifier, _ = authorize(PASS)
+code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
+s, _, body = req("POST", "/oauth/token", {**tok_form, "code": code, "code_verifier": verifier}, form=True)
+live = json.loads(body)
+s, r = mcp("tools/list", token=live["access_token"])
+check("a fresh grant works before the kill", s == 200, str(s))
+s, _, body = req("POST", "/admin/revoke-all", {}, {"Authorization": f"Bearer {DEV['KILL_TOKEN']}"})
+check("revoke-all revokes", s == 200 and json.loads(body).get("revoked", 0) >= 1, f"{s} {body}")
+s, r = mcp("tools/list", token=live["access_token"])
+check("killed grant's token is refused", s == 401, str(s))
+
 print(f"\n{len(failures)} failure(s)" if failures else "\nALL PASS")
 sys.exit(1 if failures else 0)

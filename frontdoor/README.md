@@ -5,16 +5,22 @@ local bridge or carry a bearer token) connect to Tiding as a remote MCP
 server, using OAuth. Design and security gate:
 [docs/design/oauth-front-door.md](../docs/design/oauth-front-door.md).
 
-Status: spike. The local end-to-end check passes; it is not deployed.
+Status: built, not deployed. The local end-to-end check passes (22 checks).
+
+Sign-in: the owner approves each client on the consent page with a long
+random passphrase kept in his password manager (5 attempts a minute per IP).
+No third-party identity provider to register or maintain. Kill switches:
+`ENABLED` var (anything but `true` → 503 everywhere) and
+`POST /admin/revoke-all` with the `KILL_TOKEN` bearer. Audit lines
+(`{"audit": …}`) go to Workers Logs; every forwarded call also lands in the
+memory server's own request log under the mapped principal.
 
 ```bash
 npm ci && npx wrangler types
 # .dev.vars (mode 600, never committed):
 #   TOKEN_<PRINCIPAL>=<that principal's token>   one per mappable principal
-#   OWNER_PASSPHRASE=<spike-only sign-in>
+#   OWNER_PASSPHRASE=<long random secret>
+#   KILL_TOKEN=<long random secret>
 npx wrangler dev --port 8787
-python3 test/roundtrip.py        # DCR, PKCE, consent, MCP, refresh, revoke
+python3 test/roundtrip.py        # DCR, PKCE, consent, MCP, refresh, revoke, kill
 ```
-
-The owner's passphrase sign-in is a spike stand-in. Before any client is
-approved it is replaced by an upstream identity sign-in.

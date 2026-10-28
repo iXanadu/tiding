@@ -15,10 +15,14 @@ import { z } from 'zod';
 interface Env {
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
+  RATE_LIMITER: RateLimit;
   ENGRAM_URL: string; // memory server base URL, no trailing slash
   PUBLIC_URL: string; // this Worker's own origin, no trailing slash
   PRINCIPALS: string; // comma list of principals a client may be mapped to
-  OWNER_PASSPHRASE: string; // spike-only sign-in; replaced by upstream sign-in
+  ENABLED: string; // anything but "true" closes the door (503) without a redeploy of code
+  SIGNIN_LIMITER: RateLimit; // passphrase attempts, per client IP
+  OWNER_PASSPHRASE: string; // long random secret the owner keeps in his password manager
+  KILL_TOKEN: string; // bearer for POST /admin/revoke-all
   [token: `TOKEN_${string}`]: string; // one secret per principal: TOKEN_<NAME>
 }
 
@@ -26,12 +30,18 @@ interface Props {
   principal: string;
 }
 
+// Every grant belongs to the one owner. A single user id is what lets
+// revoke-all find every grant.
+const OWNER = 'owner';
 const MCP_PATH = '/mcp';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const text = (body: string, status: number) =>
+  new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+const list = (v: string | undefined) => (v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 
 function allowedPrincipals(env: Env): string[] {
-  return env.PRINCIPALS.split(',').map((p) => p.trim()).filter(Boolean);
+  return list(env.PRINCIPALS);
 }
 
 function tokenFor(env: Env, principal: string): string | undefined {
@@ -47,9 +57,13 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   return crypto.subtle.timingSafeEqual(ha, hb);
 }
 
-// --- /authorize: owner signs in and approves one client -> one principal ---
+function audit(event: string, fields: Record<string, unknown>) {
+  console.log(JSON.stringify({ audit: event, at: new Date().toISOString(), ...fields }));
+}
 
-function consentPage(d: ConsentDescription, handle: string, principals: string[], error = ''): string {
+// --- /authorize: the owner approves one client -> one principal ---
+
+function consentPage(d: ConsentDescription, handle: string, principals: string[]): string {
   const name = escape(d.clientName);
   const origin = d.clientDomain
     ? `Published by <strong>${escape(d.clientDomain)}</strong>.`
@@ -62,7 +76,6 @@ function consentPage(d: ConsentDescription, handle: string, principals: string[]
 <p>${origin} Access will be sent to <strong>${escape(d.redirectHost)}</strong>.</p>
 ${d.redirectIsLoopback ? '<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>' : ''}
 <p>Scopes: ${d.scope.map(escape).join(', ') || '(none)'}</p>
-${error ? `<p style="color:#b00">${escape(error)}</p>` : ''}
 <form method="post">
   <input type="hidden" name="handle" value="${escape(handle)}">
   <label>Act as principal <select name="principal">${options}</select></label><br><br>
@@ -73,47 +86,79 @@ ${error ? `<p style="color:#b00">${escape(error)}</p>` : ''}
 
 async function authorize(request: Request, env: Env): Promise<Response> {
   const oauth = env.OAUTH_PROVIDER;
-  try {
-    if (request.method === 'GET') {
-      const req = await oauth.parseAuthRequest(request);
-      const details = await oauth.describeConsent(req);
-      const consent = await oauth.beginConsent(req);
-      consent.headers.set('Content-Type', 'text/html; charset=utf-8');
-      return new Response(consentPage(details, consent.handle, allowedPrincipals(env)), { headers: consent.headers });
-    }
-    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (request.method === 'GET') {
+    const req = await oauth.parseAuthRequest(request);
+    const details = await oauth.describeConsent(req);
+    const consent = await oauth.beginConsent(req);
+    consent.headers.set('Content-Type', 'text/html; charset=utf-8');
+    return new Response(consentPage(details, consent.handle, allowedPrincipals(env)), { headers: consent.headers });
+  }
+  if (request.method !== 'POST') return text('Method not allowed', 405);
 
-    const form = await request.formData();
-    const handle = String(form.get('handle') ?? '');
-    if (form.get('decision') !== 'approve') {
-      const denied = await oauth.denyConsent(request, handle);
-      return new Response(null, { status: 302, headers: denied.headers });
+  const form = await request.formData();
+  const handle = String(form.get('handle') ?? '');
+  if (form.get('decision') !== 'approve') {
+    const denied = await oauth.denyConsent(request, handle);
+    return new Response(null, { status: 302, headers: denied.headers });
+  }
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'local';
+  if (!(await env.SIGNIN_LIMITER.limit({ key: ip })).success) {
+    audit('signin_limited', { ip });
+    return text('Too many attempts. Wait a minute and try again.', 429);
+  }
+  const principal = String(form.get('principal') ?? '').toLowerCase();
+  if (!allowedPrincipals(env).includes(principal) || !tokenFor(env, principal)) {
+    return text('Not approved: unknown principal. Go back and try again.', 403);
+  }
+  // Checked before approveConsent: a wrong passphrase must not burn the
+  // handle, and must never mint a grant.
+  if (!env.OWNER_PASSPHRASE || !(await timingSafeEqual(String(form.get('passphrase') ?? ''), env.OWNER_PASSPHRASE))) {
+    audit('signin_refused', { ip });
+    return text('Not approved: wrong passphrase. Go back and try again.', 403);
+  }
+  const approved = await oauth.approveConsent(request, handle, {});
+  const { redirectTo } = await oauth.completeAuthorization({
+    request: approved.request,
+    userId: OWNER,
+    metadata: { principal },
+    scope: approved.request.scope,
+    props: { principal } satisfies Props,
+  });
+  audit('grant', { client_id: approved.request.clientId, principal, ip });
+  approved.headers.set('Location', redirectTo);
+  return new Response(null, { status: 302, headers: approved.headers });
+}
+
+// --- POST /admin/revoke-all: the kill switch for every grant ---
+
+async function revokeAll(request: Request, env: Env): Promise<Response> {
+  const presented = (request.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
+  if (!env.KILL_TOKEN || !(await timingSafeEqual(presented, env.KILL_TOKEN))) return text('Forbidden', 403);
+  let revoked = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await env.OAUTH_PROVIDER.listUserGrants(OWNER, { cursor });
+    for (const g of page.items) {
+      await env.OAUTH_PROVIDER.revokeGrant(g.id, OWNER);
+      revoked++;
     }
-    // Checked before approveConsent: a wrong passphrase must not burn the
-    // handle, and must never mint a grant.
-    const okPass = await timingSafeEqual(String(form.get('passphrase') ?? ''), env.OWNER_PASSPHRASE);
-    const principal = String(form.get('principal') ?? '');
-    if (!okPass || !allowedPrincipals(env).includes(principal) || !tokenFor(env, principal)) {
-      return new Response('Not approved: wrong passphrase or principal. Go back and try again.', {
-        status: 403,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
-    }
-    const approved = await oauth.approveConsent(request, handle, {});
-    const { redirectTo } = await oauth.completeAuthorization({
-      request: approved.request,
-      userId: 'owner',
-      metadata: { principal },
-      scope: approved.request.scope,
-      props: { principal } satisfies Props,
-    });
-    approved.headers.set('Location', redirectTo);
-    return new Response(null, { status: 302, headers: approved.headers });
+    cursor = page.cursor;
+  } while (cursor);
+  audit('revoke_all', { revoked });
+  return Response.json({ revoked });
+}
+
+async function defaultFetch(request: Request, env: Env): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  try {
+    if (path === '/authorize') return await authorize(request, env);
+    if (path === '/admin/revoke-all' && request.method === 'POST') return await revokeAll(request, env);
+    return text('Not found', 404);
   } catch (error) {
     if (error instanceof AuthorizationError && error.redirectTo) return Response.redirect(error.redirectTo, 302);
     if (error instanceof AuthorizationError || error instanceof CimdFetchError) {
       const msg = error instanceof AuthorizationError ? error.description : 'This app could not be verified.';
-      return new Response(escape(msg), { status: 400, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      return text(msg ?? 'Authorization failed.', 400);
     }
     throw error;
   }
@@ -218,6 +263,8 @@ function buildServer(env: Env, principal: string): McpServer {
 
 const mcpHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext & { props: Props }): Promise<Response> {
+    const { success } = await env.RATE_LIMITER.limit({ key: ctx.props.principal });
+    if (!success) return text('Rate limited: slow down and retry.', 429);
     const server = buildServer(env, ctx.props.principal);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
@@ -232,12 +279,7 @@ function getProvider(env: Env): OAuthProvider<Env> {
   provider ??= new OAuthProvider<Env>({
     apiRoute: MCP_PATH,
     apiHandler: mcpHandler as never,
-    defaultHandler: {
-      fetch(request: Request, env: Env) {
-        if (new URL(request.url).pathname === '/authorize') return authorize(request, env);
-        return new Response('Not found', { status: 404 });
-      },
-    } as never,
+    defaultHandler: { fetch: defaultFetch } as never,
     authorizeEndpoint: '/authorize',
     tokenEndpoint: '/oauth/token',
     clientRegistrationEndpoint: '/oauth/register',
@@ -247,12 +289,14 @@ function getProvider(env: Env): OAuthProvider<Env> {
     resourceMetadata: { resource: `${env.PUBLIC_URL}${MCP_PATH}`, authorization_servers: [env.PUBLIC_URL] },
     accessTokenTTL: 3600,
     refreshTokenIdleTTL: 30 * 24 * 3600,
+    onError: ({ code, description, status }) => audit('oauth_error', { code, description, status }),
   });
   return provider;
 }
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    if (env.ENABLED !== 'true') return text('The front door is closed.', 503);
     return getProvider(env).fetch(request, env, ctx);
   },
 };

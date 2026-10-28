@@ -3,6 +3,20 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_AT_DEPLOY" }],
-  "vars": { "PUBLIC_URL": "http://localhost:8787", "ENGRAM_URL": "http://127.0.0.1:8920", "PRINCIPALS": "frontdoor-probe" }
+  // 120 MCP requests a minute per principal.
+  // 5 passphrase attempts a minute per client IP.
+  "ratelimits": [
+    { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SIGNIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } }
+  ],
+  // Secrets (wrangler secret put): TOKEN_<PRINCIPAL> per principal, OWNER_PASSPHRASE,
+  // KILL_TOKEN. Local dev puts them in .dev.vars.
+  "vars": {
+    "PUBLIC_URL": "http://localhost:8787",
+    "ENGRAM_URL": "http://127.0.0.1:8920",
+    "PRINCIPALS": "frontdoor-probe",
+    "ENABLED": "true"
+  }
 }
