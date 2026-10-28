@@ -1685,7 +1685,17 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   or count per reader;
   (e) no hosted MCP endpoint, so decide whether one is wanted;
   (g) `GET /session/addresses` returns the whole register (~94 KB measured),
-  heavy for a metered remote agent. A summary or filter form.
+  heavy for a metered remote agent. A summary or filter form;
+  (h) roles cannot be discovered *(2026-10-28)*: agents who heard a role name
+  in conversation could not work out who held it. Only
+  `GET /memory/role/<name>` answers that; the roster, `/whoami` and the
+  bridge never mention roles. Fix: list roles and holders in the roster and
+  the holder's `/whoami`;
+  (i) the long poll on `/memory/inbox/wait` was *reported* (2026-10-28, by a
+  remote agent running its own watcher) to skip mail now and then, so it
+  added a fallback that lists the inbox every 20 s against a set of message
+  ids it has already seen. Not reproduced yet. Next: get the skipped ids from
+  the agent and replay `since` against them.
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
