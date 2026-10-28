@@ -1,0 +1,8 @@
+{
+  "name": "tiding-frontdoor",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_AT_DEPLOY" }],
+  "vars": { "PUBLIC_URL": "http://localhost:8787", "ENGRAM_URL": "http://127.0.0.1:8920", "PRINCIPALS": "frontdoor-probe" }
+}

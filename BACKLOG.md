@@ -1683,7 +1683,7 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   is per-reader and still filters read mail under `include_resolved` unless
   `unread_only=false`, so "N hidden" can list as zero. Say so in the digest,
   or count per reader;
-  (e) no hosted MCP endpoint, so decide whether one is wanted;
+  (e) hosted MCP endpoint: decided 2026-10-28, see FRONTDOOR-1;
   (g) `GET /session/addresses` returns the whole register (~94 KB measured),
   heavy for a metered remote agent. A summary or filter form;
   (h) roles cannot be discovered *(2026-10-28)*: agents who heard a role name
@@ -1703,6 +1703,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   agent itself (asked to fix it), but the server accepts `admin` as the
   project from a principal that isn't an admin. Either reject that, or have
   the reply go to the sender's principal.
+
+- **FRONTDOOR-1** *(owner GO 2026-10-28)* OAuth + remote MCP front door
+  for hosted agents that can't carry a bearer token (`frontdoor/`, design
+  `docs/design/oauth-front-door.md`). Spike DONE: the local round trip
+  passes (DCR, PKCE, consent, ten tools, refresh, revoke, code replay).
+  Remaining: upstream identity sign-in in place of the spike passphrase;
+  rate limit and kill switch; audit trail; the independent cross-model
+  security review; deploy (needs an account token and a route); first
+  client. CIMD is still untested: it needs a public https client document.
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
