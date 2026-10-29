@@ -1706,7 +1706,7 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 - **FRONTDOOR-1** *(owner GO 2026-10-28)* OAuth + remote MCP front door
   (`frontdoor/`). DEPLOYED and independently reviewed (cross-model PASS at
-  461e77e). Remaining: connect the first client; audit refresh and the
+  461e77e). First client connected 2026-10-29. Remaining: audit refresh and the
   library revocation endpoint; consider a per-URI callback allow-list and a
   global (not per-IP) passphrase limit. CIMD is still untested. Runbook and
   the KV-consistency limits are in `frontdoor/README.md`.
