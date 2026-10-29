@@ -1458,7 +1458,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   queries (measured from `request_log` and `pg_stat_statements` before and
   after); wake latency unchanged or better (send → wake p95 ≤ 2 s); no
   missed-mail regressions (the REMOTE-AGENT-1(i) replay check passes).
-  Cross-project: (c) needs the integration owner's half.
+  Cross-project: (c) needs the integration owner's half. ORDER:
+  REMOTE-AGENT-1(i) first, then (a)+(b), then (c).
 
 - **RESOLVE-ROOT-1** *(found 2026-10-14 at wrapup)* `memory_resolve_thread`
   given a root-only DM's own id answers "Nothing to resolve", because a
@@ -1710,17 +1711,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   (e) hosted MCP endpoint: decided 2026-10-28, see FRONTDOOR-1;
   (g) `GET /session/addresses` returns the whole register (~94 KB measured),
   heavy for a metered remote agent. A summary or filter form;
-  (h) roles cannot be discovered *(2026-10-28)*: agents who heard a role name
+  (h) *[medium]* roles cannot be discovered *(2026-10-28)*: agents who heard a role name
   in conversation could not work out who held it. Only
   `GET /memory/role/<name>` answers that; the roster, `/whoami` and the
   bridge never mention roles. Fix: list roles and holders in the roster and
   the holder's `/whoami`;
-  (i) the long poll on `/memory/inbox/wait` was *reported* (2026-10-28, by a
+  (i) ★ *[HIGH, owner 2026-10-29: gates PERF-POLL-1]* the long poll on
+  `/memory/inbox/wait` was *reported* (2026-10-28, by a
   remote agent running its own watcher) to skip mail now and then, so it
   added a fallback that lists the inbox every 20 s against a set of message
   ids it has already seen. Not reproduced yet. Next: get the skipped ids from
   the agent and replay `since` against them;
-  (j) a non-admin remote agent whose sends carry `X-Engram-Project: admin`
+  (j) *[medium]* a non-admin remote agent whose sends carry `X-Engram-Project: admin`
   *(measured 2026-10-28)* cannot be replied to: the bridge sends a
   cross-project reply to `from_project`, which here is the bare `admin`
   role, and the server refuses it with a 409. The header comes from the
