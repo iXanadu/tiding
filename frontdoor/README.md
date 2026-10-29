@@ -36,3 +36,23 @@ npm ci && npx wrangler types
 npx wrangler dev --port 8787
 python3 test/roundtrip.py        # DCR, PKCE, consent, MCP, refresh, revoke, kill
 ```
+
+## Runbook
+
+- **Emergency stop:** deactivate the mapped principal on the memory server
+  (`PATCH /admin/principals/<name>` with `{"active": false}`). The next call
+  the front door makes for it fails; the server re-reads `active` on every
+  token lookup. Then `POST /frontdoor/revoke-all` and set `ENABLED` to
+  anything but `true`.
+- **Reactivating is not a clean slate.** KV may still hold refresh tokens
+  that revoke-all missed (30-day idle lifetime). Before reactivating, run
+  revoke-all again after the KV window (about a minute), or rotate the
+  principal's token and update its `TOKEN_<NAME>` secret.
+- **Adding a vendor:** a refused consent shows the callback host the app
+  asked for. Add that exact host to `REDIRECT_HOSTS` and redeploy.
+
+Review: independent cross-model PASS at 461e77e (2026-10-28). Residuals
+accepted: the allow-list is per host, not per full URI; the library can
+send its own error redirect (no code) before the host check runs; refresh
+and the library's revocation endpoint aren't audited; the passphrase limit
+is per IP.

@@ -1705,17 +1705,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the reply go to the sender's principal.
 
 - **FRONTDOOR-1** *(owner GO 2026-10-28)* OAuth + remote MCP front door
-  for hosted agents that can't carry a bearer token (`frontdoor/`, design
-  `docs/design/oauth-front-door.md`). DEPLOYED 2026-10-28 as routes on the
-  memory server's own public hostname (owner: one hostname for agents), with
-  no client principal loaded. Remaining: the independent security review,
-  then load the first client principal and connect it. MEASURED ON THE EDGE:
-  the library keeps single-use codes and the grant list in KV, which is
-  eventually consistent, so (a) a replayed code can succeed inside the cache
-  window (PKCE still requires the verifier), and (b) revoke-all can miss
-  grants made in the last ~60 s. The authoritative kill is server-side:
-  deactivate the principal. Document that in the runbook. CIMD is still
-  untested.
+  (`frontdoor/`). DEPLOYED and independently reviewed (cross-model PASS at
+  461e77e). Remaining: connect the first client; audit refresh and the
+  library revocation endpoint; consider a per-URI callback allow-list and a
+  global (not per-IP) passphrase limit. CIMD is still untested. Runbook and
+  the KV-consistency limits are in `frontdoor/README.md`.
 
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
