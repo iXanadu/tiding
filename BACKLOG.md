@@ -1436,6 +1436,30 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
+- **PERF-POLL-1** ★ *(owner: medium-high priority, 2026-10-29; measured,
+  detail in project memory `backlog/PERF-POLL-1`)* Waking is pull-only and
+  mostly answers "nothing new". In one measured day, 787 messages cost
+  162,265 API requests (about 200 per message), and each held
+  `/memory/inbox/wait` re-runs two database queries every 2 s on the server,
+  so the database cost is several times the request count. About two thirds
+  of the requests come from one integration's polling loop (inbox list,
+  `/session/seats`, `/whoami`, roster); the rest from bridges' presence,
+  wake and watch beats.
+  FIX SHAPE, same client API, no webhooks (receivers can't host servers):
+  (a) event-driven waits: sends emit Postgres `NOTIFY` on the recipient
+  addresses; `/memory/inbox/wait` and `/memory/wake/poll` sleep on `LISTEN`
+  with a slow safety re-check (30–60 s) instead of a 2 s query loop;
+  (b) a cheap change cursor (per address: newest arrival) so a repeat check
+  costs one indexed read, and an unchanged answer can be "no change";
+  (c) cut the client side: the heavy integration's loop moves to the
+  long-poll; bridges stop the redundant inbox and seat re-reads that a
+  working long-poll makes pointless; `/whoami` cached per session.
+  ACCEPT: the same day-shape traffic drops ≥80% in requests and in database
+  queries (measured from `request_log` and `pg_stat_statements` before and
+  after); wake latency unchanged or better (send → wake p95 ≤ 2 s); no
+  missed-mail regressions (the REMOTE-AGENT-1(i) replay check passes).
+  Cross-project: (c) needs the integration owner's half.
+
 - **RESOLVE-ROOT-1** *(found 2026-10-14 at wrapup)* `memory_resolve_thread`
   given a root-only DM's own id answers "Nothing to resolve", because a
   message nobody threaded has no thread_id. Per-message resolve works. Still
