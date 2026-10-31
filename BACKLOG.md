@@ -217,6 +217,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Set aside — messaging / huddles / addressing (owner reopens by name)
 
+- **SEAT-RESURRECT-1** *(reported by a peer PM 2026-10-31)* `class:stale-binding`
+  A fresh team launch whose launcher assigned seats `<p>-claude-2/-3` was
+  seated by the bridge at startup as `<p>-claude-9/-5`, the PREVIOUS day's
+  wrapped seats (handoffs written). First room posts went out under the old
+  names; gates were routed to the wrong seats for ~5 min, and the old rows
+  looking "fresh" reinforced it. Expected: a launcher-assigned seat wins over
+  any seat resolved from prior state, or a wrapped seat is never reused. Same
+  family as CODEX-SEAT-DIVERGE-1. Still delivers → DEGRADING.
+  · Status: OPEN · Found: peer inbox report
+
 - **CODEX-SEAT-DIVERGE-1** *(reported by a peer PM 2026-10-17; low — the
   seats answered a direct DM within 20 s.)* Launcher-injected seat `<p>-codex`
   resolved to `-2/-3/-4`; the roster showed every wake stream `unheld`, and
