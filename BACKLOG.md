@@ -1712,6 +1712,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Adoption (owner direction 2026-08-18: make a stranger's install one button)
 
+- **BRIDGE-NS-1** *(found 2026-11-02, an off-fleet agent's first writes)*
+  `class:wrong-default` DEGRADING. The bridge writes to a hardcoded default
+  namespace whatever the token can write, so any principal without write on
+  that namespace gets a 403 on every store. `memory_whoami` then calls the
+  namespace "probably a legacy alias", which sends the user the wrong way.
+  Workaround: set `memory_namespace` in the identity file. Fix: when
+  unconfigured, take the write namespace from the server (a home namespace on
+  the principal, or the token's only non-shared write namespace), and make
+  whoami say "not writable" when no alias matches.
+
 - **REMOTE-AGENT-1** *(reported 2026-10-21 by the first bridge-less fleet
   member; guide docs/remote-agents.md)* Remaining:
   (c) the inbox digest counts every message on the address, while the listing
