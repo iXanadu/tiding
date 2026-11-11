@@ -598,9 +598,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   long-poll's full-inbox rescan is fixed (`since` pushed into SQL + composite
   index): rows read dropped 69-94% and idle CPU fell from pinned to mostly
   idle. Residual spikes (~35% of a core, ~150-230k rows/s) come from other
-  callers, not yet attributed (suspects: frequent `/memory/inbox` polling by
-  an app client, `/memory/wake/poll`). Attribute per caller, then fold into
-  PERF-POLL-1.
+  callers. Attributed: one app client lists `/memory/inbox` every ~3.4s
+  (~236 ms each, ~80% of the residual server time); the listing has no
+  cursor, so `user_id = ANY(...)` + ORDER BY sorts the whole partition
+  (~73k rows/scan). FIX (engram): rewrite `inbox_list` as a per-address
+  LATERAL (index range + LIMIT per user_id, merged) so every listing uses
+  the composite index. Client side: move that poll onto PERF-POLL-1.
 
 - **NAIVE-CURSOR-1** *(DEGRADING, found in IDLE-CPU-1 review)* The inbox
   wait request accepts a `since` without a UTC offset. The SQL side reads
