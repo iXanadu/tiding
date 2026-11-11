@@ -606,6 +606,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   add the index to the schema migration, tests, cross-provider review,
   announced restart, re-measure. Then PERF-POLL-1 (NOTIFY) removes the loop.
   Open question: why one address carries ~19k rows never marked read.
+  STATUS: fix committed and reviewed (cross-provider PASS), suite green;
+  awaiting the announced prod restart.
+
+- **NAIVE-CURSOR-1** *(DEGRADING, found in IDLE-CPU-1 review)* The inbox
+  wait request accepts a `since` without a UTC offset. The SQL side reads
+  it as server-local time while the Python post-filter raises on
+  naive-vs-aware comparison, so the same bad input either errors or times
+  out depending on the data. Normalize to UTC or reject with 422.
+
+- **IDLE-CPU-TESTS-1** *(DEGRADING, review note)* The equivalence tests for
+  the `since`-in-SQL change use distinct timestamps on one address. Add
+  tied timestamps across the LIMIT boundary, multiple addresses, non-UTC
+  offsets, and a wake backlog above 50.
 
 - **OWN-BYPASS-1** *(BLOCKING, data integrity; measured 2026-10-07 from
   the audit trail of a 2026-09-30 incident)* A non-admin principal wrote a
