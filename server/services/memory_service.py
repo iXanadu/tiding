@@ -1668,6 +1668,7 @@ async def inbox_list(
     newest_first: bool = False,
     unhandled_only: bool = False,
     mark_delivered: bool = False,
+    created_after: "datetime | None" = None,
 ) -> list[InboxMessage]:
     """List inbox messages addressed to any member of ``listen_set``.
 
@@ -1686,6 +1687,15 @@ async def inbox_list(
     out of the window once the backlog exceeds ``limit`` — the watcher would go
     blind exactly when the inbox is busy. Newest-first keeps new arrivals in
     the window regardless of backlog size (its ``seen`` set dedups the rest).
+
+    ``created_after`` (IDLE-CPU-1) adds ``created_at > created_after`` to the
+    SQL. The long-poll (/inbox/wait) used to fetch the newest ``limit`` unread
+    rows and drop the ones at or before its cursor in Python, so every 2s poll
+    sorted the reader's whole unread inbox. Rows newer than the cursor are
+    always a prefix of the ``created_at DESC`` order, so filtering before the
+    inner LIMIT returns exactly the rows the Python filter used to keep — and
+    the range predicate lets the planner use idx_memories_ns_scope_uid_created
+    for the ``user_id = ANY(...)`` shape. None = no predicate (unchanged).
     """
     listen_set = [addr.lower() for addr in listen_set]
     if not listen_set:
@@ -1707,6 +1717,11 @@ async def inbox_list(
     # the newest N oldest-first for reading; the watcher (newest_first) keeps
     # newest-first.
     display_order = "DESC" if newest_first else "ASC"
+    # The clause is spliced in only when set (not `$9 IS NULL OR ...`): a
+    # cached generic plan for the OR form cannot turn it into an index range
+    # bound, which is the whole point. Without it the SQL is byte-identical.
+    after_clause = "AND created_at > $9" if created_after is not None else ""
+    after_args = (created_after,) if created_after is not None else ()
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -1727,6 +1742,7 @@ async def inbox_list(
                       OR $5::text IS NULL
                       OR NOT COALESCE(metadata->'read_by', '[]'::jsonb) ? $5::text
                   )
+                  {after_clause}
                 ORDER BY created_at DESC
                 LIMIT $6
             ) recent
@@ -1740,6 +1756,7 @@ async def inbox_list(
             limit,
             include_resolved,
             INBOX_OPEN,
+            *after_args,
         )
         messages = [_row_to_inbox_message(dict(r)) for r in rows]
         # Step 12: annotate ask-class letters with the structural verdict —
@@ -3350,18 +3367,25 @@ async def wake_list_fresh(
     if reader_identity:
         r = reader_identity.strip().lower()
         own.update({r, r.split("@", 1)[0]})
+    # IDLE-CPU-1: the cursor goes into the SQL (same reasoning as
+    # inbox_list's created_after) — rows newer than `since` are a prefix of
+    # the DESC order, so the LIMIT window keeps exactly what the Python check
+    # below used to keep. That check stays as belt-and-braces.
+    since_clause = "AND created_at > $4" if since else ""
+    since_args = (since,) if since else ()
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT key, value, user_id, metadata, created_at FROM memories
             WHERE namespace = $1 AND scope = $2
               AND user_id = ANY($3::text[])
               AND expires_at > NOW()  -- amendment 3: served only inside TTL;
                   -- physical DELETE is the hourly cleanup's business
+              {since_clause}
             ORDER BY created_at DESC LIMIT 50
             """,
-            INBOX_NAMESPACE, WAKE_SCOPE, listen,
+            INBOX_NAMESPACE, WAKE_SCOPE, listen, *since_args,
         )
     out = []
     for r in rows:

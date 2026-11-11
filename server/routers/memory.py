@@ -1527,6 +1527,8 @@ async def wait_inbox(req: InboxWaitRequest, request: Request):
                 unread_only=True,
                 limit=50,
                 newest_first=True,
+                # IDLE-CPU-1: cursor in SQL, not after it — see inbox_list.
+                created_after=since,
             )
             fresh = [
                 m for m in msgs

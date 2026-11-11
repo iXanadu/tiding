@@ -41,6 +41,10 @@ CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories (scope);
 CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories (user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories (namespace);
 CREATE INDEX IF NOT EXISTS idx_memories_ns_scope_uid ON memories (namespace, scope, user_id);
+-- IDLE-CPU-1: lets the inbox/wake long-poll's `created_at > cursor` range
+-- predicate walk the index instead of sorting the reader's whole inbox.
+CREATE INDEX IF NOT EXISTS idx_memories_ns_scope_uid_created
+    ON memories (namespace, scope, user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memories_search_text_trgm ON memories
     USING gin (search_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories (expires_at)
