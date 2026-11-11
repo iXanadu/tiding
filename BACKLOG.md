@@ -594,6 +594,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Blocking-ish — ops gaps that cost live sessions today
 
+- **IDLE-CPU-1** *(DEGRADING, measured 2026-11-11; owner: important — gates
+  a hardware purchase)* With sessions idle, Postgres burns ~85-95% of a core.
+  Cause: `/memory/inbox/wait` re-runs `inbox_list` + `wake_list_fresh` every
+  2s per open long-poll and applies `since` in Python AFTER the SQL, so each
+  poll index-scans and top-N-sorts the recipient's whole unread inbox (~19k
+  rows for the busiest address; ~30 ms, ~12k buffers). Pool reset statements
+  are NOT the cost. Composite index `(namespace, scope, user_id, created_at
+  DESC)` is live in prod but unused by the `user_id = ANY(...)` shape on PG17.
+  FIX: push `created_at > since` into both queries' SQL (identical semantics),
+  add the index to the schema migration, tests, cross-provider review,
+  announced restart, re-measure. Then PERF-POLL-1 (NOTIFY) removes the loop.
+  Open question: why one address carries ~19k rows never marked read.
+
 - **OWN-BYPASS-1** *(BLOCKING, data integrity; measured 2026-10-07 from
   the audit trail of a 2026-09-30 incident)* A non-admin principal wrote a
   project key in ANOTHER writer's partition while that writer's row was live
