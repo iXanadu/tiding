@@ -1,0 +1,25 @@
+# Replace __USER__ (the owner of the config and secret files), __HOME__ (that
+# user's home directory), __PYTHON__ (a python3 path) and __REPO__ (this
+# repository's path). Create the state directory before the first start:
+#   mkdir -p __HOME__/.local/state/tiding-signal-relay
+[Unit]
+Description=Tiding signal relay (calls an assistant's webhook when its mail signal moves)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=__PYTHON__ __REPO__/integrations/signal-relay/relay.py --config __HOME__/.config/tiding/signal-relay.json
+Restart=on-failure
+RestartSec=60
+# exit 2 = bad config; restarting would only fail the same way again
+RestartPreventExitStatus=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__HOME__/.local/state/tiding-signal-relay
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

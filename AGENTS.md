@@ -27,6 +27,7 @@ Generic semantic memory service for AI agents. FastAPI + pgvector + in-process s
   - `server/dependencies.py` — auth helpers (get_current_principal, require_admin, check_namespace_access)
 - `integrations/homeassistant/` — Pyscript client + Blueprint for HA voice assistants
 - `integrations/claude-code/` — MCP bridge (engram-mcp) for Claude Code
+- `integrations/signal-relay/` — stdlib sidecar that calls a hosted assistant's webhook when its mail signal moves (assistants that cannot poll); assistant-facing guide is `docs/assistants.md`
 - `scripts/` — install/start/restart/uninstall + migrate_ha_memory
 - `launchd/` + `systemd/` — Service templates
 - `tests/` — 400+ server tests (API, auth, admin, embeddings, e2e, memory_service, principal_service, permissions, bootstrap, seats/registry, inbox/wake, channels-rip); plus 340+ MCP-bridge tests under `integrations/claude-code/tests/`

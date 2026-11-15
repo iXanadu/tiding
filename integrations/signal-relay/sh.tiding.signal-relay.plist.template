@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Replace __PYTHON__ (a python3 path), __REPO__ (this repository's path)
+     and __HOME__ (the home of the user who owns the config and secret files).
+     Install as a LaunchAgent for that user, or as a LaunchDaemon with a
+     UserName key naming them: the relay must run as the files' owner. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>sh.tiding.signal-relay</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>__REPO__/integrations/signal-relay/relay.py</string>
+        <string>--config</string>
+        <string>__HOME__/.config/tiding/signal-relay.json</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart after any non-zero exit. launchd cannot exempt one
+             exit code, so a bad config (exit 2) is retried once per
+             ThrottleInterval and logs the same error until it is fixed. -->
+        <key>SuccessfulExit</key><false/>
+    </dict>
+    <key>ThrottleInterval</key><integer>60</integer>
+    <key>StandardOutPath</key><string>__HOME__/Library/Logs/tiding-signal-relay.log</string>
+    <key>StandardErrorPath</key><string>__HOME__/Library/Logs/tiding-signal-relay.err</string>
+</dict>
+</plist>

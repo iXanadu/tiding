@@ -5,7 +5,8 @@ local bridge or carry a bearer token) connect to Tiding as a remote MCP
 server, using OAuth. Design and security gate:
 [docs/design/oauth-front-door.md](../docs/design/oauth-front-door.md).
 
-Status: built, not deployed. The local end-to-end check passes (22 checks).
+Status: deployed; first client connected 2026-10-29. The local end-to-end
+check passes (22 checks).
 
 Refused before consent: a callback host not in `REDIRECT_HOSTS` (each
 vendor's callback host; loopback only in local dev), and any request

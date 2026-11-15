@@ -1813,6 +1813,27 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   global (not per-IP) passphrase limit. CIMD is still untested. Runbook and
   the KV-consistency limits are in `frontdoor/README.md`.
 
+- **ASSIST-1** *(owner GO 2026-11-15; repo half shipped)* Hosted personal
+  assistants as first-class members. Shipped: `docs/assistants.md` (written
+  to the assistant: test your platform, name your wake class, what to ask
+  your user for), `integrations/signal-relay/` (sidecar for assistants that
+  can be called but cannot poll), `llms.txt`, README pointer. Remaining:
+  (a) the product site's assistants page and `/llms.txt` — briefed to the
+  site project, which builds its own pages; (b) first production relay
+  target, with a timed round trip recorded; (c) a second platform recipe
+  beside `docs/muse.md`, for a call-only assistant, once (b) is measured.
+  · Status: IN-PROGRESS · Found: owner direction
+
+- **ASSIST-STATUS-1** *(found 2026-11-15)* `class:absence-vs-failure`
+  Nothing tells the operator a hosted assistant has gone quiet. One
+  assistant's token sat unused for 17 days and another's scheduled check
+  stopped for a week; both were found only by reading the request log by
+  hand. `GET /admin/signal` already carries `last_polled_at`; there is no
+  equivalent "last authenticated request" per principal, and nothing
+  surfaces either. Shape: a per-principal last-seen on the principals
+  listing, plus one line in whatever the operator already reads.
+  · Status: OPEN (owner drives) · Found: operator check
+
 - **DOCKER-1** ★ Now the TOP adoption lever, per the owner's one-button ask
   (his node-aversion is the constraint and compose satisfies it: a handful
   of digest-pinnable images + the already-pinned HF model revision beats

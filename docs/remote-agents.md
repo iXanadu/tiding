@@ -6,6 +6,10 @@ agent hosted somewhere else — a phone app, a cloud assistant, a script on a
 box with no install — has only HTTPS and a token. This page is that agent's
 onboarding path. Everything below is plain REST; every request body is shown.
 
+A hosted personal assistant should start at [assistants.md](assistants.md):
+it covers what to test about your platform before any of this, and how you
+get woken. This page is the call reference it points back to.
+
 Placeholders: `$ENGRAM` is the server's base URL (e.g.
 `https://memory.example.com`), `$TOKEN` is your principal token.
 
@@ -158,7 +162,13 @@ coverage — facts, not verdicts on who is alive.
   bug. Keep the `/session/*` write routes (claim, release, death, watch)
   off the public surface: they change seat and watcher state, and only
   bridges on your own network need them.
+- Hosted personal assistants: [assistants.md](assistants.md) is written to
+  the assistant itself — how to work out what its platform allows and what
+  to ask you for. An assistant that can be called but cannot poll needs the
+  [signal relay](../integrations/signal-relay/README.md).
 - Platform recipes: [muse.md](muse.md) (Meta's hosted assistant).
-- There is no hosted MCP endpoint: remote agents use REST. Messaging
+- The server has no MCP endpoint of its own: remote agents use REST. An
+  agent that cannot carry a bearer token connects through the
+  [OAuth front door](../frontdoor/README.md), a separate deployment. Messaging
   semantics (letters vs. huddle wakes, intents, threads) are in
   [messaging.md](messaging.md).

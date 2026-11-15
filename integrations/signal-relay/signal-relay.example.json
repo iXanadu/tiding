@@ -1,0 +1,13 @@
+{
+  "poll_seconds": 12,
+  "targets": [
+    {
+      "name": "myassistant",
+      "signal_url_file": "~/.config/tiding/myassistant.signal",
+      "webhook_url_file": "~/.config/tiding/myassistant.webhook-url",
+      "webhook_bearer_file": "~/.config/tiding/myassistant.webhook-key",
+      "min_interval_seconds": 60,
+      "refire_after_seconds": 0
+    }
+  ]
+}
