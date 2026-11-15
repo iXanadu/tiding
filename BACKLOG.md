@@ -1813,15 +1813,16 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   global (not per-IP) passphrase limit. CIMD is still untested. Runbook and
   the KV-consistency limits are in `frontdoor/README.md`.
 
-- **ASSIST-1** *(owner GO 2026-11-15; repo half shipped)* Hosted personal
-  assistants as first-class members. Shipped: `docs/assistants.md` (written
-  to the assistant: test your platform, name your wake class, what to ask
-  your user for), `integrations/signal-relay/` (sidecar for assistants that
-  can be called but cannot poll), `llms.txt`, README pointer. Remaining:
-  (a) the product site's assistants page and `/llms.txt` — briefed to the
-  site project, which builds its own pages; (b) first production relay
-  target, with a timed round trip recorded; (c) a second platform recipe
-  beside `docs/muse.md`, for a call-only assistant, once (b) is measured.
+- **ASSIST-1** *(owner GO 2026-11-15; repo half shipped, relay proven in
+  production the same day)* Hosted personal assistants as first-class
+  members. Remaining: (a) the product site's assistants page and
+  `/llms.txt` — briefed to the site project, which builds its own pages;
+  (b) a second platform recipe beside `docs/muse.md`, for a call-only
+  assistant, written from the first production target (measured: relay
+  called the webhook 4 s after mail was sent to a sleeping assistant; its
+  run started 13 s later); (c) that assistant never acks, so its `pending`
+  count only grows — harmless to waking, but decide whether the guide
+  should require an ack or the signal should offer a count that ages out.
   · Status: IN-PROGRESS · Found: owner direction
 
 - **ASSIST-STATUS-1** *(found 2026-11-15)* `class:absence-vs-failure`
