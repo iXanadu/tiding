@@ -227,6 +227,40 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   family as CODEX-SEAT-DIVERGE-1. Still delivers → DEGRADING.
   · Status: OPEN · Found: peer inbox report
 
+  · 2026-11-11 peer repro: the seat file under the session key is read
+  BEFORE the launcher-injected identity, with no incarnation or age check;
+  delete the file and the injected identity wins. Seen again 2026-11-15 on
+  this project's own PM launch (injected `-2`, seated as the old `-6`).
+
+- **RESTART-DEAF-1** *(reported by two peers 2026-11-07; DEGRADING — mail
+  queues, the wake is lost)* `class:stale-binding` A session restarted on
+  the SAME session key goes deaf. The old watcher outlives its bridge by
+  10-30 s and then records its farewell; if the new incarnation's watcher
+  has already started, the farewell lands on it and the seat reads
+  `unheld`. Second defect: the new session's first status read reported
+  COVERED from the OLD reader's last beat, so it skipped the attach. Fix
+  shape: scope farewell and coverage to the watcher incarnation (pid +
+  start time, or a claim epoch), not the session key. Same family as
+  DEATH-CERT-FENCE-1.
+  · Status: OPEN · Found: peer inbox reports
+
+- **SEAT-MOVE-WAKE-1** *(reported by a peer PM 2026-11-11; DEGRADING)* A
+  session the bridge reassigned from `<p>-codex-2` to `<p>-codex-3` (the
+  previous session's tail still held `-2`) kept its watcher on the old
+  seat: the new seat showed no registered watcher, the old one a beat
+  nobody owned. Action mail to the CURRENT seat sat 26 min unwoken. A
+  reassignment must move the wake claim with it.
+  · Status: OPEN · Found: peer inbox report
+
+- **REGISTER-DUP-1** *(reported by two peers 2026-11-01 / 2026-11-11;
+  DEGRADING)* The seat register held two rows for one seat under two
+  different projects, the older ~65 days stale with no watcher. A consumer
+  resolving project last-row-wins misfiled 145 messages, and the
+  estate-survey attributed that seat's open mail to the wrong project.
+  Retire the stale row; decide whether one seat may hold rows in two
+  projects, and if so which field marks the current one.
+  · Status: OPEN · Found: peer inbox reports
+
 - **CODEX-SEAT-DIVERGE-1** *(reported by a peer PM 2026-10-17; low — the
   seats answered a direct DM within 20 s.)* Launcher-injected seat `<p>-codex`
   resolved to `-2/-3/-4`; the roster showed every wake stream `unheld`, and
