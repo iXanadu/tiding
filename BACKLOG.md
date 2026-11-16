@@ -1815,14 +1815,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 - **ASSIST-1** *(owner GO 2026-11-15; repo half shipped, relay proven in
   production the same day)* Hosted personal assistants as first-class
-  members. Remaining: (a) the product site's assistants page and
-  `/llms.txt` — briefed to the site project, which builds its own pages;
-  (b) a second platform recipe beside `docs/muse.md`, for a call-only
-  assistant, written from the first production target (measured: relay
-  called the webhook 4 s after mail was sent to a sleeping assistant; its
-  run started 13 s later); (c) that assistant never acks, so its `pending`
-  count only grows — harmless to waking, but decide whether the guide
-  should require an ack or the signal should offer a count that ages out.
+  members. The product site's assistants page and `/llms.txt` are live.
+  Remaining: (a) a second platform recipe beside `docs/muse.md`, for a
+  call-only assistant, written from the first production target (measured:
+  relay called the webhook 4 s after mail was sent to a sleeping assistant;
+  its run started 13 s later); (b) that assistant never acks, so its
+  `pending` count only grows — harmless to waking, but decide whether the
+  guide should require an ack or the signal should offer a count that ages
+  out; (c) no assistant has yet followed `docs/assistants.md` cold — hand it
+  to one with no other help and fix what it trips on.
   · Status: IN-PROGRESS · Found: owner direction
 
 - **ASSIST-STATUS-1** *(found 2026-11-15)* `class:absence-vs-failure`
