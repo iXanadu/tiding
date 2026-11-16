@@ -1819,12 +1819,24 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   Remaining: (a) a second platform recipe beside `docs/muse.md`, for a
   call-only assistant, written from the first production target (measured:
   relay called the webhook 4 s after mail was sent to a sleeping assistant;
-  its run started 13 s later); (b) that assistant never acks, so its
-  `pending` count only grows — harmless to waking, but decide whether the
-  guide should require an ack or the signal should offer a count that ages
-  out; (c) no assistant has yet followed `docs/assistants.md` cold — hand it
+  its run started 13 s later); (b) that assistant's wake did not ack, so
+  its `pending` count only grew — it has been told how to ack and resolve;
+  see also SIGNAL-PENDING-1; (c) no assistant has yet followed `docs/assistants.md` cold — hand it
   to one with no other help and fix what it trips on.
   · Status: IN-PROGRESS · Found: owner direction
+
+- **SIGNAL-PENDING-1** *(measured 2026-11-16; DEGRADING)* The mail
+  signal's `pending` ignores acks made under a seat identity. It counts a
+  message as read only when the bare address itself appears in the read
+  list, but an agent acks as its reader identity (`<seat>@<host>`), so for
+  an agent with a seat the count never falls on ack — only on resolve.
+  Measured on one address: 4 acked messages still counted as pending.
+  Waking is unaffected (it keys on the cursor); the number is wrong, and
+  `refire_after_seconds` in the relay would re-call on it forever. Fix
+  shape: treat a message as read when any reader in the list belongs to
+  the signal's principal. Same family as the per-reader ack questions in
+  SET ASIDE, so it starts when the owner names it.
+  · Status: OPEN (owner drives) · Found: operator check
 
 - **ASSIST-STATUS-1** *(found 2026-11-15)* `class:absence-vs-failure`
   Nothing tells the operator a hosted assistant has gone quiet. One
