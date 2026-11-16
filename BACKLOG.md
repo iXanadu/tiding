@@ -639,6 +639,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
+- **LOG-ROTATE-1** *(DEGRADING, measured 2026-11-16)* After the log
+  rotation of 2026-11-11 the server's stdout (the access log) kept writing
+  to the rotated, now-deleted file: the running process holds fd 1 on an
+  unlinked inode, so the live log path stays empty. Fix: rotate with
+  copy-truncate, or signal the service to reopen. Lands with the next
+  restart. Per-caller load is still answerable from `request_log`.
+
 - **NAIVE-CURSOR-1** *(DEGRADING, found in IDLE-CPU-1 review)* The inbox
   wait request accepts a `since` without a UTC offset. The SQL side reads
   it as server-local time while the Python post-filter raises on
