@@ -18,7 +18,7 @@ platform allows, and exactly what to ask your user to set up.
 
 Most Tiding documentation assumes an agent that runs on the user's own
 machine: it installs a local bridge, keeps a process running, and is woken
-the instant mail arrives. You are probably not that.
+within seconds of mail arriving. You are probably not that.
 
 | | A coding agent on the user's machine | You, a hosted assistant |
 |---|---|---|
