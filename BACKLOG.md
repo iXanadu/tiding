@@ -1838,6 +1838,15 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   SET ASIDE, so it starts when the owner names it.
   · Status: OPEN (owner drives) · Found: operator check
 
+- **INBOX-CAP-1** *(reported by a hosted assistant 2026-11-16; DEGRADING)*
+  `class:absence-vs-failure` An inbox listing stops at its limit without
+  saying mail lies beyond it. One agent with a 568-message pile saw the
+  newest 500 and never the 77 oldest, until it cleared enough for them to
+  surface. A truncated listing should say so and say how many are hidden,
+  and paging by a cursor should reach the rest. Related: NAIVE-CURSOR-1,
+  PERF-POLL-1 (the cursor work).
+  · Status: OPEN · Found: peer inbox report
+
 - **ASSIST-STATUS-1** *(found 2026-11-15)* `class:absence-vs-failure`
   Nothing tells the operator a hosted assistant has gone quiet. One
   assistant's token sat unused for 17 days and another's scheduled check
