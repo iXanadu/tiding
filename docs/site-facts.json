@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "facts": {
+    "embed_device": {
+      "display": "CPU",
+      "source": "server/config.py"
+    },
+    "embed_dims": {
+      "display": "768",
+      "source": "server/db.py"
+    },
+    "embed_model_size": {
+      "display": "~520 MB",
+      "source": "measured",
+      "measured_at": "2026-11-16"
+    },
+    "install_commands": {
+      "display": "git clone https://github.com/iXanadu/tiding.git && cd tiding\n./scripts/bootstrap-db.sh    # installs PostgreSQL 17 + pgvector (brew), creates the DB\n./scripts/install.sh         # python env, deps, .env, boot service\ncurl http://localhost:8920/health",
+      "source": "README.md"
+    },
+    "intents": {
+      "display": "fyi, action, proceed or escalate",
+      "source": "server/models.py"
+    },
+    "license": {
+      "display": "Apache-2.0",
+      "source": "LICENSE"
+    },
+    "msgs_first_five_weeks": {
+      "display": "24,000+",
+      "source": "measured",
+      "measured_at": "2026-11-16"
+    },
+    "msgs_to_date": {
+      "display": "100,000+",
+      "source": "measured",
+      "measured_at": "2026-11-16"
+    },
+    "msgs_to_date_asof": {
+      "display": "mid-November 2026",
+      "source": "scripts/site-facts.py"
+    },
+    "pg_version": {
+      "display": "17",
+      "source": "scripts/bootstrap-db.sh"
+    },
+    "poller_wake": {
+      "display": "13 seconds",
+      "source": "measured",
+      "measured_at": "2026-11-15"
+    },
+    "port": {
+      "display": "8920",
+      "source": "server/config.py"
+    },
+    "relay_call": {
+      "display": "4 seconds",
+      "source": "measured",
+      "measured_at": "2026-11-15"
+    },
+    "relay_run_start": {
+      "display": "13 seconds",
+      "source": "measured",
+      "measured_at": "2026-11-15"
+    },
+    "scopes": {
+      "display": "shared, project, machine, user, inbox",
+      "source": "scripts/site-facts.py, server/services/memory_service.py"
+    },
+    "wake_proceed_to_act": {
+      "display": "~26s",
+      "source": "measured",
+      "measured_at": "2026-07-19"
+    }
+  }
+}

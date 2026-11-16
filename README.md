@@ -182,8 +182,8 @@ curl http://localhost:8920/health
 
 Three commands on macOS; on Linux `bootstrap-db.sh` prints your distro's
 exact package commands, then finishes the setup itself. This is the
-supported path — native PostgreSQL, and on Apple Silicon the embeddings use
-the GPU. Details and manual steps below.
+supported path — native PostgreSQL, with embeddings running in-process on
+the CPU by default. Details and manual steps below.
 
 ### Docker (experimental)
 
