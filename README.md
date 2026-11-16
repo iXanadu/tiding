@@ -5,7 +5,9 @@
 > **Tiding is the new name for engram** (renamed August 2026). The rename is
 > rolling out outside-in: GitHub URLs redirect, and configuration prefixes
 > (`ENGRAM_*`), package names, and install paths keep their current names
-> until the compatibility layer ships. Everything below works as written.
+> for now. The first step has shipped: `TIDING_*` environment variables are
+> accepted and win over `ENGRAM_*` when both are set (`.env` files still use
+> `ENGRAM_*` keys). Everything below works as written.
 
 Tiding (formerly engram) gives every agent you run — Claude Code, Grok, Codex, a Home Assistant
 voice pipeline, anything that speaks HTTP — one persistent memory it can search
@@ -43,7 +45,7 @@ the owner, command the whole team with verified authority from a single message.
   other's recorded contracts — the human involved only at real approval
   gates. That collaboration predates the inbox: it ran on shared memory
   alone. Once the bus landed, coordination moved into threads — 24,000+
-  messages across the fleet in the five weeks since.
+  messages across the fleet in its first five weeks.
 - **Nobody stalls.** A worker idle at a task boundary is woken by one inbox
   message and continues — measured live at ~26s from an independent sender's
   `proceed` to the worker acting, zero keystrokes. An always-awake driver
@@ -223,7 +225,7 @@ cp .env.example .env
 uvicorn server.main:app --port 8920   # loopback by default; see security posture before exposing
 ```
 
-The embedding model (nomic-ai/nomic-embed-text-v1.5, ~270MB) is downloaded automatically on first start and cached in `~/.cache/huggingface/`. No external services required — embeddings run in-process using MPS (Apple Silicon GPU) or CPU.
+The embedding model (nomic-ai/nomic-embed-text-v1.5, ~520MB) is downloaded automatically on first start and cached in `~/.cache/huggingface/`. No external services required — embeddings run in-process, on CPU by default (`ENGRAM_EMBED_DEVICE` selects another device).
 
 
 ## API Reference
