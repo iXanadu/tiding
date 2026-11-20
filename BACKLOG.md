@@ -639,6 +639,25 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
+- **SEAT-EXHAUST-1** *(DEGRADING, measured 2026-11-20; reported by a peer
+  PM)* `class:absence-vs-failure` A project ran out of seat numbers for one
+  provider: all 63 ordinals (2..64) were parked by the mail guard, 62 of
+  them with no seat row at all, so every new launch for that provider fell
+  back to the bare lane address and two concurrent launches would share one
+  inbox identity. Cause: a seat name holding ANY open mail is never
+  reallocated (correct: a stranger must not read a dead seat's mail), and
+  the briefs a manager sends to short-lived seats stay `open` forever
+  unless someone resolves the thread. Two other projects sit at 46 and 32
+  of 63 for the same provider. The code comment that justified the 64 cap
+  ("no exhaustion pressure exists") is no longer true. WORKAROUND, no
+  server change: the sender resolves a seat's threads when it closes the
+  seat. FIX SHAPE (needs a design pass, touches the mail guard): (a) the
+  exhaustion refusal names the cause and the count parked by mail, so it
+  is not read as a missing seat; (b) closing a certified-dead seat lets
+  its sender-resolved or aged briefs drain, or a certified-dead seat's
+  mail moves to the lane on release; (c) the roster/register reports
+  ordinals remaining per provider so a manager sees it coming.
+
 - **LOG-ROTATE-1** *(DEGRADING, measured 2026-11-16)* After the log
   rotation of 2026-11-11 the server's stdout (the access log) kept writing
   to the rotated, now-deleted file: the running process holds fd 1 on an
