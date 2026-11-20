@@ -814,6 +814,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   access-scoping gap in the inbox read path. Detail in project memory
   (`vuln/INBOX-READ-SCOPE-1`) until it ships.
 
+- **INBOX-LIFECYCLE-AUTHZ-1** *(DEGRADING, security, found 2026-11-20;
+  reported by a peer, confirmed by reading the code)* An access-scoping gap
+  in the inbox lifecycle path; the documented rule and the enforced rule
+  differ. Detail in project memory (`vuln/INBOX-LIFECYCLE-AUTHZ-1`) until
+  it ships. Design it together with SEAT-EXHAUST-1.
+
 - **WAKE-RECEIPT-ADMIN-1** *(DEGRADING, measured 2026-10-14)* A send to
   `admin@<host>` returns the receipt "Woke 1 agent: admin", which names the
   role and not the box. Since WATCH-ADMIN-SEAT-1 each box holds its own claim,
