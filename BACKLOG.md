@@ -658,6 +658,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   mail moves to the lane on release; (c) the roster/register reports
   ordinals remaining per provider so a manager sees it coming.
 
+- **RESOLVE-BATCH-1** *(IN-PROGRESS 2026-11-20; requested by a peer PM)*
+  The bridge's resolve tool takes one message id per call, while the ack
+  tool takes a comma-separated list. Clearing the backlog behind
+  SEAT-EXHAUST-1 is hundreds of single calls. Make resolve accept a list:
+  per-id server check unchanged, per-id result, one failure does not stop
+  the rest. Bridge only; reaches a session at its next start.
+
 - **LOG-ROTATE-1** *(DEGRADING, measured 2026-11-16)* After the log
   rotation of 2026-11-11 the server's stdout (the access log) kept writing
   to the rotated, now-deleted file: the running process holds fd 1 on an
