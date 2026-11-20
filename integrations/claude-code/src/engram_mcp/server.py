@@ -2554,6 +2554,16 @@ async def memory_inbox(
     return _append_guidance(head, result)
 
 
+def _parse_inbox_message_ids(message_id: str) -> dict[str, bool]:
+    """Map each distinct ID to its validity, in input order."""
+    parts = (message_id or "").replace(",", "\n").splitlines()
+    return {
+        mid: mid.isprintable() and not any(char.isspace() for char in mid)
+        for mid in map(str.strip, parts)
+        if mid
+    }
+
+
 @mcp.tool()
 async def memory_ack(
     message_id: str,
@@ -2569,21 +2579,20 @@ async def memory_ack(
 
     Args:
         message_id: The inbox message id (e.g. "inbox/abc-123"), or a
-            comma-separated list of ids to ack together
+            comma-separated or newline-separated list of IDs to ack together
         project_dir: Your working directory path (required for identity)
     """
     reader_identity, _ = compute_identity(project_dir or None)
-    ids: list[str] = []
-    for raw in (message_id or "").replace("\n", ",").split(","):
-        mid = raw.strip()
-        if mid and mid not in ids:
-            ids.append(mid)
+    ids = _parse_inbox_message_ids(message_id)
     if not ids:
         return "Error: 'message_id' is required."
     acked: list[str] = []
     failed: list[str] = []
     result: dict = {}
-    for mid in ids:
+    for mid, valid in ids.items():
+        if not valid:
+            failed.append(f"{mid!r}: invalid message id")
+            continue
         try:
             result = await _client.inbox_ack(
                 message_id=mid,
@@ -2838,8 +2847,7 @@ async def memory_resolve(
             comma-separated or newline-separated list of IDs
         project_dir: Your working directory path (required for identity)
     """
-    parts = (message_id or "").replace("\n", ",").split(",")
-    ids = list(dict.fromkeys(mid for mid in map(str.strip, parts) if mid))
+    ids = _parse_inbox_message_ids(message_id)
     if not ids:
         return "Error: 'message_id' is required."
 
@@ -2847,7 +2855,10 @@ async def memory_resolve(
     lines: list[str] = []
     resolved = 0
     result: dict = {}
-    for mid in ids:
+    for mid, valid in ids.items():
+        if not valid:
+            lines.append(f"- Failed {mid!r} (invalid message id)")
+            continue
         try:
             result = await _client.inbox_resolve(
                 message_id=mid,
@@ -2863,16 +2874,19 @@ async def memory_resolve(
             resolved += 1
             lines.append(f"- Resolved {mid}")
 
-    if len(ids) == 1:
+    if len(ids) == 1 and resolved:
         head = f"Resolved {result['id']} as {reader_identity}"
-    elif resolved:
+        return _append_guidance(head, result)
+
+    if resolved:
         head = f"Resolved {resolved} of {len(ids)} as {reader_identity}"
     else:
         head = f"Resolve failed (0 of {len(ids)} resolved)"
 
-    if len(ids) > 1:
-        head = "\n".join([head, *lines])
-    return _append_guidance(head, result)
+    head = "\n".join([head, *lines])
+    if resolved == len(ids):
+        return _append_guidance(head, result)
+    return head
 
 
 @mcp.tool()
