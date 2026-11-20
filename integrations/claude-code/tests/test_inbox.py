@@ -724,6 +724,79 @@ async def test_memory_resolve_forwards_guidance(respx_mock):
     assert "GUIDANCE_SENTINEL" in result
 
 
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve_batch_deduplicates_and_forwards_guidance_once(respx_mock):
+    ids = ("inbox/m1", "inbox/m2", "inbox/m3")
+    guidance = "BATCH_GUIDANCE_SENTINEL: resolve is reversible"
+    routes = [
+        respx_mock.post(f"/memory/inbox/{mid}/resolve").mock(
+            return_value=httpx.Response(200, json={"id": mid, "guidance": guidance})
+        )
+        for mid in ids
+    ]
+    with patch.dict("os.environ", {"HOME": "/Users/dev"}), \
+         patch("engram_mcp.identity.hostname", return_value="hosta"):
+        result = await memory_resolve(
+            message_id=" inbox/m1, inbox/m2\n\n inbox/m3, inbox/m1, ",
+            project_dir="/Users/dev/projects/engram",
+        )
+
+    assert all(route.call_count == 1 for route in routes)
+    assert "Resolved 3 of 3 as engram@hosta\n" + "\n".join(
+        f"- Resolved {mid}" for mid in ids
+    ) in result
+    assert result.count(guidance) == 1
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve_batch_continues_after_a_denial(respx_mock):
+    denied = respx_mock.post("/memory/inbox/inbox/denied/resolve").mock(
+        return_value=httpx.Response(403, json={"detail": "Only a party\nmay resolve"})
+    )
+    allowed = respx_mock.post("/memory/inbox/inbox/m1/resolve").mock(
+        return_value=httpx.Response(200, json={"id": "inbox/m1"})
+    )
+    with patch.dict("os.environ", {"HOME": "/Users/dev"}), \
+         patch("engram_mcp.identity.hostname", return_value="hosta"):
+        result = await memory_resolve(
+            message_id="inbox/denied, inbox/m1",
+            project_dir="/Users/dev/projects/engram",
+        )
+
+    assert denied.call_count == allowed.call_count == 1
+    assert "Resolved 1 of 2 as engram@hosta" in result.splitlines()
+    assert "- Failed inbox/denied (403: Only a party may resolve)" in result.splitlines()
+    assert "- Resolved inbox/m1" in result.splitlines()
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve_batch_reports_total_failure(respx_mock):
+    for mid in ("inbox/gone1", "inbox/gone2"):
+        respx_mock.post(f"/memory/inbox/{mid}/resolve").mock(
+            return_value=httpx.Response(404, json={"detail": "not found"})
+        )
+    with patch.dict("os.environ", {"HOME": "/Users/dev"}), \
+         patch("engram_mcp.identity.hostname", return_value="hosta"):
+        result = await memory_resolve(
+            message_id="inbox/gone1\ninbox/gone2",
+            project_dir="/Users/dev/projects/engram",
+        )
+
+    assert (
+        "Resolve failed (0 of 2 resolved)\n"
+        "- Failed inbox/gone1 (404: not found)\n"
+        "- Failed inbox/gone2 (404: not found)"
+    ) in result
+
+
+@respx.mock(base_url="http://localhost:8920")
+async def test_memory_resolve_rejects_empty_ids(respx_mock):
+    for message_id in ("", " \t\n ", " ,\n, "):
+        result = await memory_resolve(message_id=message_id)
+        assert result == "Error: 'message_id' is required."
+    assert not respx_mock.calls
+
+
 # --- group-chat reply routing (channel-aware memory_reply) -------------------
 
 def _parent(to, msg_id="inbox/gc-parent"):

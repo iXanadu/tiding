@@ -2819,8 +2819,9 @@ async def memory_resolve(
     message_id: str,
     project_dir: str = "",
 ) -> str:
-    """Resolve an inbox thread so it drains from the default view once the
-    loop is closed. Response includes resolve-vs-archive semantics — read it.
+    """Resolve one or more inbox messages so they drain from the default
+    view once the loop is closed. Response includes resolve-vs-archive
+    semantics — read it.
 
     Unlike archive (a global hard-hide for noise/mistakes), resolve records
     who closed the thread and when, and the message stays retrievable via
@@ -2829,20 +2830,48 @@ async def memory_resolve(
     FYIs whose loop is closed, wrong-session noise — so inboxes don't pile
     up as stale-but-open. Keep only threads that still need you to act.
 
+    Use one tool call per batch. Pass all message IDs separated by commas or
+    newlines. The result reports which messages resolved and any failures.
+
     Args:
-        message_id: The inbox message id (e.g. "inbox/abc-123")
+        message_id: A single inbox message ID (e.g. "inbox/abc-123"), or a
+            comma-separated or newline-separated list of IDs
         project_dir: Your working directory path (required for identity)
     """
+    parts = (message_id or "").replace("\n", ",").split(",")
+    ids = list(dict.fromkeys(mid for mid in map(str.strip, parts) if mid))
+    if not ids:
+        return "Error: 'message_id' is required."
+
     reader_identity, _ = compute_identity(project_dir or None)
-    try:
-        result = await _client.inbox_resolve(
-            message_id=message_id,
-            reader_identity=reader_identity,
-            project_dir=project_dir or None,
-        )
-    except Exception as e:
-        return f"Resolve failed: {e}"
-    head = f"Resolved {result['id']} as {reader_identity}"
+    lines: list[str] = []
+    resolved = 0
+    result: dict = {}
+    for mid in ids:
+        try:
+            result = await _client.inbox_resolve(
+                message_id=mid,
+                reader_identity=reader_identity,
+                project_dir=project_dir or None,
+            )
+        except Exception as exc:
+            if len(ids) == 1:
+                return f"Resolve failed: {exc}"
+            reason = " ".join(str(exc).splitlines())
+            lines.append(f"- Failed {mid} ({reason})")
+        else:
+            resolved += 1
+            lines.append(f"- Resolved {mid}")
+
+    if len(ids) == 1:
+        head = f"Resolved {result['id']} as {reader_identity}"
+    elif resolved:
+        head = f"Resolved {resolved} of {len(ids)} as {reader_identity}"
+    else:
+        head = f"Resolve failed (0 of {len(ids)} resolved)"
+
+    if len(ids) > 1:
+        head = "\n".join([head, *lines])
     return _append_guidance(head, result)
 
 
