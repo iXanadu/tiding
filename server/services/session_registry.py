@@ -596,7 +596,9 @@ async def _breathing_at(conn, seats: list[str], project: str,
                     continue          # said its own goodbye; name is free
             except (TypeError, ValueError):
                 pass                  # unparseable stamp is not a release
-        sessions = md.get("sessions") or {}
+        # A later watcher beat can still invalidate an address-wide release
+        # stamp. Keep the original nonce timestamps for that allocation check.
+        sessions = (md.get("retired_sessions") or {}) | (md.get("sessions") or {})
         if not sessions:
             # Legacy row with no nonce map: fall back to row freshness, minus
             # the claimant when we cannot tell them apart at all.
@@ -1303,8 +1305,9 @@ async def death_certify(
     Effects, deliberately narrow: (1) a durable cert row; (2) the lane
     read-cursor gains the union of the dead occupant's acks on addresses
     that outlive sessions, so a certified SUCCESSOR can inherit read-state
-    instead of drowning in a predecessor's history. It does NOT free the
-    seat or accelerate reclamation — SEAT-13 stays the owner's question.
+    instead of drowning in a predecessor's history. An exact-nonce
+    certificate also retires that process's earlier collision heartbeat.
+    The certificate does not delete the seat row.
 
     Idempotent on session_key, falling back to (seat, died_at) when the
     spawner never had a key (SEAT-6). The cursor union re-runs on repeats —
@@ -1342,41 +1345,51 @@ async def death_certify(
     }
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO memories
-                (namespace, key, value, scope, user_id, project,
-                 tags, tags_search, search_text, embedding, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, '', '', $3, NULL, $7::jsonb)
-            ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
-                SET metadata = EXCLUDED.metadata,
-                    value = EXCLUDED.value
-                WHERE (memories.metadata->>'died_at')::timestamptz
-                      < (EXCLUDED.metadata->>'died_at')::timestamptz
-            RETURNING key, (xmax = 0) AS inserted
-            """,
-            SEAT_NAMESPACE, key, idem, DEATH_SCOPE, SEAT_USER_ID,
-            project, json.dumps(meta),
-        )
-        created = bool(row is not None and row["inserted"])
-        updated = bool(row is not None and not row["inserted"])
-
-        # Cert-beats-heartbeat, recorded as a FACT consumers may weigh: the
-        # seat row (if it still exists) is marked, never deleted or aged.
-        if seat:
-            await conn.execute(
+        async with conn.transaction():
+            row = await conn.fetchrow(
                 """
-                UPDATE memories
-                SET metadata = metadata
-                    || jsonb_build_object('death_certified', true,
-                                          'death_certified_at', $6::text,
-                                          'death_certified_nonce', $7::text)
-                WHERE namespace = $1 AND scope = $2 AND user_id = $3
-                  AND project = $4 AND key = $5
+                INSERT INTO memories
+                    (namespace, key, value, scope, user_id, project,
+                     tags, tags_search, search_text, embedding, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, '', '', $3, NULL, $7::jsonb)
+                ON CONFLICT (namespace, key, scope, user_id, project) DO UPDATE
+                    SET metadata = EXCLUDED.metadata,
+                        value = EXCLUDED.value
+                    WHERE (memories.metadata->>'died_at')::timestamptz
+                          < (EXCLUDED.metadata->>'died_at')::timestamptz
+                RETURNING key, (xmax = 0) AS inserted
                 """,
-                SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
-                f"seat/{seat}", meta["died_at"], meta["session_nonce"],
+                SEAT_NAMESPACE, key, idem, DEATH_SCOPE, SEAT_USER_ID,
+                project, json.dumps(meta),
             )
+            created = bool(row is not None and row["inserted"])
+            updated = bool(row is not None and not row["inserted"])
+
+            # Cert-beats-heartbeat, recorded as a FACT consumers may weigh: the
+            # seat row (if it still exists) is marked, never deleted or aged.
+            if seat:
+                await conn.execute(
+                    """
+                    UPDATE memories
+                    SET metadata = metadata
+                        || jsonb_build_object('death_certified', true,
+                                              'death_certified_at', $6::text,
+                                              'death_certified_nonce', $7::text)
+                    WHERE namespace = $1 AND scope = $2 AND user_id = $3
+                      AND project = $4 AND key = $5
+                    """,
+                    SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
+                    f"seat/{seat}", meta["died_at"], meta["session_nonce"],
+                )
+
+            # The persisted certificate can identify its own heartbeat
+            # even after release has removed the seat row. An older cert
+            # or a heartbeat after the certified death cannot retire it.
+            if row is not None and seat and meta["session_nonce"]:
+                cutoff = died_at if died_at.tzinfo else died_at.replace(tzinfo=timezone.utc)
+                await _remove_presence_session(
+                    conn, seat, project, meta["session_nonce"], died_at=cutoff,
+                )
 
         cursor_updated = False
         cursor_size = 0
@@ -1655,7 +1668,7 @@ async def seat_release(session_key: str, project: str,
                     WHERE namespace = $1 AND scope = $2 AND user_id = $3
                       AND project = $4
                       AND metadata->>'session_key' = $5
-                    RETURNING key
+                    RETURNING key, metadata->>'session_nonce' AS session_nonce
                     """,
                     SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
                     session_key,
@@ -1668,7 +1681,7 @@ async def seat_release(session_key: str, project: str,
                       AND project = $4
                       AND metadata->>'session_key' = $5
                       AND metadata->>'session_nonce' = $6
-                    RETURNING key
+                    RETURNING key, metadata->>'session_nonce' AS session_nonce
                     """,
                     SEAT_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID, project,
                     session_key, nonce,
@@ -1691,7 +1704,35 @@ async def seat_release(session_key: str, project: str,
                 await _stamp_presence_released(
                     conn, seat, project, session_nonce=nonce,
                 )
+                # A peer's live beat can block the address-wide stamp. The
+                # deleted seat still tells us exactly whose beat to remove.
+                if row["session_nonce"]:
+                    await _remove_presence_session(
+                        conn, seat, project, row["session_nonce"],
+                    )
     return row["key"].removeprefix("seat/") if row else None
+
+
+async def _remove_presence_session(
+    conn, seat: str, project: str, nonce: str, *, died_at: datetime | None = None,
+) -> None:
+    """Retire one tracked heartbeat and preserve all peers at the address."""
+    await conn.execute(
+        """
+        UPDATE memories
+           SET metadata = jsonb_set(metadata, '{sessions}',
+                                    (metadata->'sessions') - $5::text)
+                       || jsonb_build_object(
+                            'retired_sessions',
+                            COALESCE(metadata->'retired_sessions', '{}'::jsonb)
+                            || jsonb_build_object($5, metadata->'sessions'->$5))
+         WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND key = $4
+           AND metadata->'sessions' ? $5
+           AND ($6::timestamptz IS NULL
+                OR (metadata->'sessions'->$5->>'last_seen')::timestamptz <= $6)
+        """,
+        SEAT_NAMESPACE, PRESENCE_SCOPE, project, f"presence/{seat}", nonce, died_at,
+    )
 
 
 async def _stamp_presence_released(
@@ -1701,11 +1742,10 @@ async def _stamp_presence_released(
 
     Two guards (SEAT-RELEASE-FENCE-1):
     1. NOT EXISTS seat/<seat> — successor already reclaimed the name.
-    2. When ``session_nonce`` is set — presence must POSITIVELY name that
-       incarnation (``sessions ? nonce`` or top-level ``session_nonce``)
-       and advertise no foreign sessions keys. Empty/anonymous presence
-       does NOT count as attributable — skip the stamp. Legacy (nonce
-       omitted) keeps guard (1) only.
+    2. When ``session_nonce`` is set — presence must name that incarnation
+       and advertise no foreign nonce. A beat already retired by a death
+       certificate still identifies the process being released. Legacy
+       (nonce omitted) keeps guard (1) only.
     """
     nonce = (session_nonce or "").strip() or None
     if nonce is None:
@@ -1746,6 +1786,7 @@ async def _stamp_presence_released(
            -- positive attribution: presence must name THIS incarnation
            AND (
                 (metadata->'sessions' ? $9)
+                OR (metadata->'retired_sessions' ? $9)
                 OR metadata->>'session_nonce' = $9
            )
            -- top-level, if present, must not contradict (sessions={A}
@@ -1758,7 +1799,8 @@ async def _stamp_presence_released(
            AND NOT EXISTS (
                SELECT 1
                  FROM jsonb_object_keys(
-                          COALESCE(metadata->'sessions', '{}'::jsonb)) AS k
+                          COALESCE(metadata->'sessions', '{}'::jsonb)
+                          || COALESCE(metadata->'retired_sessions', '{}'::jsonb)) AS k
                 WHERE k <> $9
            )
         """,

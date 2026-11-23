@@ -2020,17 +2020,31 @@ async def presence_update(
     """
     identity = identity.lower()
     project = project.lower()
-    now = datetime.now(timezone.utc)
     key = f"presence/{identity}"
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        # SEAT-8: refresh and lock the seat before locking presence, in the same
+        # order as release and death certification. A heartbeat must merge
+        # into the nonce map after any preceding retirement has committed.
+        seat_row = await conn.fetchrow(
+            """
+            UPDATE memories SET last_used_at = NOW()
+            WHERE namespace = $1 AND scope = $2 AND user_id = $3
+              AND project = $4 AND key = $5
+            RETURNING metadata
+            """,
+            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
+            project, f"seat/{identity}",
+        )
         prior = await conn.fetchrow(
             """
             SELECT metadata FROM memories
             WHERE namespace = $1 AND scope = $2 AND user_id = $3 AND key = $4
+            FOR UPDATE
             """,
             PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
         )
+        now = datetime.now(timezone.utc)
         prior_md = {}
         if prior and prior["metadata"]:
             prior_md = prior["metadata"]
@@ -2040,15 +2054,6 @@ async def presence_update(
         # corpses, not rivals. Read them here so the collision check below
         # cannot count a restarted session's dead predecessor as a second live
         # session — the false positive that fired on EVERY restart.
-        seat_row = await conn.fetchrow(
-            """
-            SELECT metadata FROM memories
-            WHERE namespace = $1 AND scope = $2 AND user_id = $3
-              AND project = $4 AND key = $5
-            """,
-            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
-            project, f"seat/{identity}",
-        )
         superseded = _superseded_from_seat(seat_row["metadata"] if seat_row else None)
         # Merge this beat into the pruned nonce map. Legacy clients (no nonce)
         # don't participate in collision tracking but keep normal presence.
@@ -2178,27 +2183,6 @@ async def presence_update(
             """,
             value, json.dumps(metadata),
             PRESENCE_NAMESPACE, PRESENCE_SCOPE, project, key,
-        )
-        # SEAT-8: a presence heartbeat is THE liveness signal, so the seat row
-        # must inherit it. Without this the seat kept its own clock — set once
-        # at claim time and never refreshed — and the two disagreed about the
-        # same session: observed live 2026-07-24, the roster reporting a
-        # session fresh at 374s while its seat read is_live=false and
-        # reclaimable=true, at which point a new session could have been
-        # granted an address a running one still held.
-        #
-        # Server-side on purpose: the client-side refresh only reaches a
-        # session once its bridge restarts, so it cannot rescue the sessions
-        # already running. This one takes effect for every heartbeating
-        # session the moment it deploys.
-        await conn.execute(
-            """
-            UPDATE memories SET last_used_at = NOW()
-            WHERE namespace = $1 AND scope = $2 AND user_id = $3
-              AND project = $4 AND key = $5
-            """,
-            PRESENCE_NAMESPACE, SEAT_SCOPE, SEAT_USER_ID,
-            project, f"seat/{identity}",
         )
         if updated == "UPDATE 0":
             embedding = await embed(value)
@@ -2561,7 +2545,11 @@ async def roster_list(
             continue
         ident = r["key"].removeprefix("presence/")
         fresh = _fresh_sessions(md, now, superseded_by_ident.get(ident))
-        live = max(len(fresh), 1)
+        # Legacy presence without nonces still counts as one. A release or
+        # certificate that removed the last tracked nonce establishes zero.
+        live = len(fresh)
+        if live == 0 and not md.get("retired_sessions"):
+            live = 1
         watcher_alive, watcher_seen = _watcher_state(md, now)
         # FACTS, NEVER VERDICTS (decision/roster-should-report-facts-not-
         # judgments, 2026-07-27; `state` dropped from the payload 2026-08-01).
