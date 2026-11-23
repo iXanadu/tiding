@@ -406,6 +406,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   project directory.** Either allocation must preserve the watcher's project
   invariant or WATCH-1 must accept a server grant tied to the same session
   key. Today a valid grant can produce a mail-deaf session.
+  SEEN AGAIN 2026-11-22: a launcher-named seat for a worktree folder whose
+  project config names a different project was granted, then its watcher
+  refused to start 117 times over almost nine hours. The wake FIFO
+  was never created, so the documented attach step cannot cover it. Mail
+  queued; no wake fired.
   · Status: OPEN (frozen) · Root: allocator/watch identity contract
   · Found: live granted-seat watcher refusal
 
@@ -662,8 +667,25 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   rotation of 2026-11-11 the server's stdout (the access log) kept writing
   to the rotated, now-deleted file: the running process holds fd 1 on an
   unlinked inode, so the live log path stays empty. Fix: rotate with
-  copy-truncate, or signal the service to reopen. Lands with the next
-  restart. Per-caller load is still answerable from `request_log`.
+  copy-truncate, or signal the service to reopen. A restart does NOT fix
+  it (measured 2026-11-23: the service restarted on 2026-11-21, the next
+  size-triggered rotation came under 12 hours later, and fd 1 was on an
+  unlinked inode again). The rotation rule renames the file and tells
+  nobody, so it recurs on every rotation. Per-caller load is still
+  answerable from `request_log`.
+
+- **VER-BOOT-1** *(DEGRADING, measured 2026-11-23)*
+  `class:absence-vs-failure` After a cold boot of the host, `/health`
+  serves `"sha": "unknown"` for the whole life of the process. The hash is
+  computed once at import by shelling out to git with a 5-second timeout,
+  and any failure is swallowed into the string `unknown`. The same command
+  from the same directory as the same user succeeds once the host is up,
+  so the boot-time call failed or timed out; which one is not known,
+  because nothing is logged. Cost: "is my fix live?" cannot be answered
+  from `/health` after a reboot, which is the question the field exists
+  for. Fix shape: log the failure with its reason; retry lazily on a later
+  `/health` call while the value is `unknown`, or read the hash from a
+  file the deploy step writes.
 
 - **NAIVE-CURSOR-1** *(DEGRADING, found in IDLE-CPU-1 review)* The inbox
   wait request accepts a `since` without a UTC offset. The SQL side reads
