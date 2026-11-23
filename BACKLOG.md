@@ -22,6 +22,9 @@
 > ago").** The 2026-08-23 messaging freeze is over; the agents' record
 > showed it in force with four partial lifts, and the owner corrected that.
 > Frozen items are ordinary open work again, prioritized like any other.
+> Items below still carry inline "FROZEN" wording written before the lift
+> (about fifteen places, mostly in the Set-aside section). That wording is
+> history, not status: none of those items is frozen.
 > The no-scab rule above still decides WHEN they start: the owner names them.
 
 ## Immortal addresses — engram half SHIPPED (2026-08-15, production-proven)
@@ -395,7 +398,7 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   that joins death certificates to grants by seat can then let the stale row
   hide the live occupant. Re-grant must retire or release the prior binding,
   with an explicit compatibility decision for grant-history readers.
-  · Status: OPEN (frozen) · Root: session registry re-grant lifecycle
+  · Status: OPEN · Root: session registry re-grant lifecycle
   · Found: live `/session/seats` duplicate binding
 
 - **WATCH-GRANT-CONSISTENCY-1** *(reported 2026-09-15; launcher retry storm
@@ -411,7 +414,9 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   refused to start 117 times over almost nine hours. The wake FIFO
   was never created, so the documented attach step cannot cover it. Mail
   queued; no wake fired.
-  · Status: OPEN (frozen) · Root: allocator/watch identity contract
+  · Status: OPEN, owner-named 2026-11-23 (second in the queue, after
+  INBOX-LIFECYCLE-AUTHZ-1; not started) · Root: allocator/watch identity
+  contract
   · Found: live granted-seat watcher refusal
 
 - **HUDDLE-ATTACH-1** *(reported 2026-08-28 by a peer seat on another project;
@@ -721,6 +726,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   `/health` call while the value is `unknown`, or read the hash from a
   file the deploy step writes.
 
+- **RESOLVE-BATCH-2** *(DEGRADING, two notes from the review of the batch
+  resolve tool, 2026-11-20, pinned 2026-11-23)* (a) When a single message
+  id is resolved through the bridge and the server refuses, the server's
+  error text is passed to the caller unprocessed. (b) The tool caps
+  neither the length of one id nor the number of ids in a list. Both are
+  as the reviewer reported them; not re-measured since.
+
 - **NAIVE-CURSOR-1** *(DEGRADING, found in IDLE-CPU-1 review)* The inbox
   wait request accepts a `since` without a UTC offset. The SQL side reads
   it as server-local time while the Python post-filter raises on
@@ -877,13 +889,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   in the inbox lifecycle path; the documented rule and the enforced rule
   differ. Detail in project memory (`vuln/INBOX-LIFECYCLE-AUTHZ-1`) until
   it ships. Design it together with SEAT-EXHAUST-1.
-  · Status: IN-PROGRESS since 2026-11-23. A review of the whole lifecycle
-  and seat-authority path ran before any build and widened the scope: the
-  same root (the server believes identity fields the caller supplies)
-  reaches the seat register as well as mail. One order now covers this
-  item and INBOX-READ-SCOPE-1 (`order/INBOX-LIFECYCLE-AUTHZ-1` in project
-  memory). Ships behind a three-mode switch (off, report, enforce),
-  report first.
+  · Status: IN-PROGRESS since 2026-11-23, NOT SHIPPED. A review of the
+  whole lifecycle and seat-authority path ran before any build and widened
+  the scope: the same root (the server believes identity fields the caller
+  supplies) reaches the seat register as well as mail. One order covers
+  this item and INBOX-READ-SCOPE-1 (`order/INBOX-LIFECYCLE-AUTHZ-1` in
+  project memory). Built through four review rounds on a local branch that
+  is deliberately not pushed until it ships. Open before it can ship: one
+  rule (who holds a seat name that has records under two projects) has no
+  safe wording yet, and the last build has had a source review but no
+  independent attack pass. Ships behind a three-mode switch (off, report,
+  enforce), report first. Next steps are in project memory
+  (`startup/next`).
 
 - **TOKEN-BIND-1** *(DEGRADING, security, found 2026-11-23 by the same
   review)* `class:two-validations-disagree` A token identifies a principal
@@ -1627,7 +1644,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Owner's drivable menu — store & ops (start when the owner names one)
 
-- **PERF-POLL-1** ★ *(owner: medium-high priority, 2026-10-29; measured,
+- **PERF-POLL-1** ★ *(owner: medium-high priority, 2026-10-29; owner-named
+  2026-11-23 for the service half, third in the queue, not started; measured,
   detail in project memory `backlog/PERF-POLL-1`)* Waking is pull-only and
   mostly answers "nothing new". In one measured day, 787 messages cost
   162,265 API requests (about 200 per message), and each held
