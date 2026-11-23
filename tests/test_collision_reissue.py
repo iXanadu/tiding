@@ -117,6 +117,17 @@ async def test_confirmed_release_preserves_live_peer_and_resumed_beat(client):
     await beat(client, seat, OLD_NONCE, 2)
 
 
+@pytest.mark.asyncio
+async def test_released_nonce_can_send_the_first_heartbeat_after_release(client):
+    seat = await claim(client, "old-key", OLD_NONCE)
+    await beat(client, seat, OLD_NONCE, 1)
+    await beat(client, seat, NEW_NONCE, 2)
+
+    await release(client, seat, {"evidence": "observed", "session_nonce": OLD_NONCE})
+    await assert_roster(client, seat, 1)
+    await beat(client, seat, OLD_NONCE, 2)
+
+
 @pytest.mark.parametrize("release_order", [None, "before", "after"],
                          ids=["takeover", "release-first", "cert-first"])
 @pytest.mark.asyncio
