@@ -842,12 +842,31 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 - **INBOX-READ-SCOPE-1** *(DEGRADING, security, found 2026-10-14)* An
   access-scoping gap in the inbox read path. Detail in project memory
   (`vuln/INBOX-READ-SCOPE-1`) until it ships.
+  · Status: IN-PROGRESS since 2026-11-23, built under the
+  INBOX-LIFECYCLE-AUTHZ-1 order.
 
 - **INBOX-LIFECYCLE-AUTHZ-1** *(DEGRADING, security, found 2026-11-20;
   reported by a peer, confirmed by reading the code)* An access-scoping gap
   in the inbox lifecycle path; the documented rule and the enforced rule
   differ. Detail in project memory (`vuln/INBOX-LIFECYCLE-AUTHZ-1`) until
   it ships. Design it together with SEAT-EXHAUST-1.
+  · Status: IN-PROGRESS since 2026-11-23. A review of the whole lifecycle
+  and seat-authority path ran before any build and widened the scope: the
+  same root (the server believes identity fields the caller supplies)
+  reaches the seat register as well as mail. One order now covers this
+  item and INBOX-READ-SCOPE-1 (`order/INBOX-LIFECYCLE-AUTHZ-1` in project
+  memory). Ships behind a three-mode switch (off, report, enforce),
+  report first.
+
+- **TOKEN-BIND-1** *(DEGRADING, security, found 2026-11-23 by the same
+  review)* `class:two-validations-disagree` A token identifies a principal
+  and its namespace grants, nothing narrower: not a project, not a seat,
+  not a session. Every check that should be per project or per seat is
+  therefore per provider at best. The order above closes what principal
+  level proof can close; what remains needs a credential bound to a
+  project or a session. Needs a design pass and an owner decision on how
+  launchers obtain such credentials. Detail in project memory
+  (`threat/inbox-lifecycle-2026-11-23`, section 3).
 
 - **WAKE-RECEIPT-ADMIN-1** *(DEGRADING, measured 2026-10-14)* A send to
   `admin@<host>` returns the receipt "Woke 1 agent: admin", which names the
