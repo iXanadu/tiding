@@ -1266,21 +1266,23 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **STANDBY-1** *(owner direction 2026-11-23: DOCUMENT, DO NOT IMPLEMENT
-  the separation of private memory from the rest, for now. Design note:
+- **STANDBY-1** *(owner direction 2026-11-23: a backup copy of the whole
+  store on a separate server, no separation of private memory for now;
+  separation is documented only, in
   [docs/design/memory-separation.md](docs/design/memory-separation.md).
-  An order is drafted and stays unreleased until the owner asks for the
-  build; it would also need a threat model first.)* A second,
-  read-only instance that answers reads for agent knowledge when the
-  primary or its network is down. It carries an allow-listed subset only
-  (one namespace, the three knowledge scopes): no private namespaces, no
-  mail, no registry rows, no request log, no primary tokens, and it is
-  never promoted. Needs: a server standby mode that performs no writes at
-  all (reads set a last-used timestamp today), a stable refusal for every
-  write and mail endpoint, its own principals, a filtered-replication
-  recipe proven without full-row replica identity, schema-change ordering,
-  and an optional second address in the bridge for reads only. Order in
-  project memory (`order/STANDBY-1`).
+  Order drafted, not released: waits on the standby host existing, on a
+  threat model, and on the INBOX-LIFECYCLE-AUTHZ-1 merge.)* A second,
+  read-only instance that answers reads from a restored copy when the
+  primary or its network is down. The copy is refreshed by restoring the
+  primary's regular dump (the operator's side, outside this repo). Needs
+  in this repo: a server standby mode that performs no writes at all
+  (reads set a last-used timestamp today), one stable refusal for every
+  write, admin, seat and session endpoint, mail endpoints off by a setting
+  until the mail-path permission fix is live, a "data as of" time on
+  health and on read results, no schema creation or migration at start,
+  survival of the database being swapped underneath it, and an optional
+  second address in the bridge for reads only. Order in project memory
+  (`order/STANDBY-1`).
 
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the
