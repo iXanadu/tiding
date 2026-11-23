@@ -662,6 +662,22 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   its sender-resolved or aged briefs drain, or a certified-dead seat's
   mail moves to the lane on release; (c) the roster/register reports
   ordinals remaining per provider so a manager sees it coming.
+  · Status: order drafted 2026-11-23 (`order/SEAT-EXHAUST-1` in project
+  memory), not released: it builds on the INBOX-LIFECYCLE-AUTHZ-1 branch
+  and waits on the launcher owner's comments on the close operation.
+  Scope: exhaustion counts and a truthful refusal, a sender's listing of
+  its own open mail, numbers remaining in the roster, and one authorised
+  close call for an ended occupancy with a receipt.
+
+- **SEAT-EXHAUST-2** *(DEGRADING, design direction accepted 2026-11-23,
+  not ordered)* `class:two-validations-disagree` The mail guard protects a
+  new holder from an earlier holder's mail by withholding the seat name,
+  so privacy is paid for with availability, and anyone who may send mail
+  can hold seat numbers. Direction: bind each message to a server-issued
+  occupancy of the recipient seat and filter a seat's inbox by it, then
+  retire the guard. Depends on TOKEN-BIND-1 (a holder must be able to
+  prove its occupancy) and on launcher changes outside this repo. Design
+  note in project memory (`design/SEAT-EXHAUST-1`).
 
 - **LOG-ROTATE-1** *(DEGRADING, measured 2026-11-16)* After the log
   rotation of 2026-11-11 the server's stdout (the access log) kept writing
