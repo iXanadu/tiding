@@ -681,6 +681,17 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   the rename rule removed in the same step. Per-caller load is still
   answerable from `request_log`.
 
+- **TEST-PG-2** *(DEGRADING, measured 2026-11-23)* `class:unsafe-default`
+  In a checkout with no local env file (a fresh clone, a new worktree) the
+  server test suite does not know the test instance's port, falls back to
+  the configured database port, and tries to create its test database
+  there. Where that port is the production instance, the only thing that
+  stops it is the service role lacking the right to create databases
+  (that is what happened: every test errored at setup, nothing was
+  created). Fix shape: the suite refuses to start unless the test port is
+  set explicitly, and never issues a create-database on the configured
+  production port.
+
 - **VER-BOOT-1** *(DEGRADING, measured 2026-11-23)*
   `class:absence-vs-failure` After a cold boot of the host, `/health`
   serves `"sha": "unknown"` for the whole life of the process. The hash is
