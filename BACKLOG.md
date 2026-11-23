@@ -670,24 +670,34 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   that a launcher started can rename its own seat, and the collision
   banner tells it to. Its launcher and its manager keep the first name.
   Independent of the ruling, the banner will stop printing the rename
-  command to a launched session. The ruling decides whether the rename
-  tool also refuses for launched sessions, is removed, or stays. Needs
-  one marker in the launch environment that says a launcher owns the
-  name; the launcher owner is asked which variable is set on every launch.
-  Bridge change: one sweep per box.
+  command to a launched session. The owner's ruling of 2026-09-22 (an
+  assigned seat is fixed) already excludes renaming an assigned seat;
+  the open question is whether the rename tool refuses only for launched
+  sessions or is removed for everyone. A launched session is recognised
+  by the session key its launcher injects (present on every harness,
+  per the launcher owner). Bridge change: one sweep per box.
   · Status: waiting on the owner's ruling · Root: bridge banner and
   rename tool · Found: peer report
 
-- **IDENT-DIVERGE-1** *(DEGRADING, measured 2026-11-23)*
-  `class:two-validations-disagree` A session whose launch environment
-  names one seat while its seat file (kept from an earlier session under
-  the same reused session key) names another runs under the file's name,
-  and nothing reports the difference. The precedence is intended; the
-  silence is the defect. Seen on two manager seats. FIX: report the
-  disagreement once at start, in the status tool and the first tool
-  result. Same family as WATCH-GRANT-CONSISTENCY-1.
-  · Status: OPEN · Root: bridge identity resolution · Found: this
-  session's own start
+- **SEAT-ASSIGN-2** *(DEGRADING, measured 2026-11-23; finishes the owner
+  ruling of 2026-09-22, "seats are assigned, not claimed")*
+  `class:two-validations-disagree` **A seat a launcher assigns is not
+  binding here.** The launcher's marker for an assignment is read
+  nowhere; the assigned name is treated as an ordinary preference. If a
+  live session holds it, the newcomer is given a number with a notice (a
+  rename, where the ruling asks for a loud refusal). And a seat file kept
+  from an earlier session under the same reused session key outranks the
+  assignment with no report: two manager seats were assigned one number
+  and ran under another. Two allocators are therefore live. ORDER OF
+  WORK, each step safe alone: (1) the launcher's assignment for a
+  restarted seat equals the seat it reads back from the store; (2) here,
+  an assignment outranks a leftover seat file and a held name is refused
+  loudly, never renumbered; (3) assignment for the remaining harnesses.
+  Absorbs IDENT-DIVERGE-1 (the silent disagreement at start). Same
+  family as WATCH-GRANT-CONSISTENCY-1.
+  · Status: OPEN, order not written; joint with the launcher owner, who
+  goes first · Root: bridge identity resolution and claim path · Found:
+  peer report and this session's own start
 
 - **SEAT-EXHAUST-1** *(DEGRADING, measured 2026-11-20; reported by a peer
   PM)* `class:absence-vs-failure` A project ran out of seat numbers for one
