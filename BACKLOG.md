@@ -1266,8 +1266,11 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
 
 ## Needs-decision
 
-- **STANDBY-1** *(owner direction 2026-11-23; order drafted, not released:
-  waits on the owner approving the shape and on a threat model)* A second,
+- **STANDBY-1** *(owner direction 2026-11-23: DOCUMENT, DO NOT IMPLEMENT
+  the separation of private memory from the rest, for now. Design note:
+  [docs/design/memory-separation.md](docs/design/memory-separation.md).
+  An order is drafted and stays unreleased until the owner asks for the
+  build; it would also need a threat model first.)* A second,
   read-only instance that answers reads for agent knowledge when the
   primary or its network is down. It carries an allow-listed subset only
   (one namespace, the three knowledge scopes): no private namespaces, no
