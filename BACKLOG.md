@@ -649,6 +649,46 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
+- **COLLISION-REISSUE-1** *(DEGRADING with a workaround, reported by a peer
+  PM and reproduced on the test instance 2026-11-23)*
+  `class:absence-vs-failure` **A session given a just-released seat number
+  is told it collides with a live session.** The collision check counts
+  every session that heartbeat a name in the last 300 seconds. A release
+  deletes the seat record, the only place displaced sessions are listed,
+  and leaves the departed session in the name's presence record, so the
+  next holder's first heartbeat counts two. The banner then prints a
+  rename command; a session that follows it leaves its manager's brief
+  unread at the first name. FIX: a session that released its seat or was
+  certified dead is not counted as a rival at that name; the immediate
+  reissue stays. Server only. WORKAROUND: the launcher waits six minutes
+  after closing a seat before launching the next for that provider.
+  · Status: order drafted 2026-11-23 (`order/COLLISION-REISSUE-1` in
+  project memory), no seat launched yet · Root: collision check /
+  release path · Found: peer report
+
+- **TAKE-SEAT-LAUNCHED-1** *(NEEDS-DECISION, asked 2026-11-23)* A session
+  that a launcher started can rename its own seat, and the collision
+  banner tells it to. Its launcher and its manager keep the first name.
+  Independent of the ruling, the banner will stop printing the rename
+  command to a launched session. The ruling decides whether the rename
+  tool also refuses for launched sessions, is removed, or stays. Needs
+  one marker in the launch environment that says a launcher owns the
+  name; the launcher owner is asked which variable is set on every launch.
+  Bridge change: one sweep per box.
+  · Status: waiting on the owner's ruling · Root: bridge banner and
+  rename tool · Found: peer report
+
+- **IDENT-DIVERGE-1** *(DEGRADING, measured 2026-11-23)*
+  `class:two-validations-disagree` A session whose launch environment
+  names one seat while its seat file (kept from an earlier session under
+  the same reused session key) names another runs under the file's name,
+  and nothing reports the difference. The precedence is intended; the
+  silence is the defect. Seen on two manager seats. FIX: report the
+  disagreement once at start, in the status tool and the first tool
+  result. Same family as WATCH-GRANT-CONSISTENCY-1.
+  · Status: OPEN · Root: bridge identity resolution · Found: this
+  session's own start
+
 - **SEAT-EXHAUST-1** *(DEGRADING, measured 2026-11-20; reported by a peer
   PM)* `class:absence-vs-failure` A project ran out of seat numbers for one
   provider: all 63 ordinals (2..64) were parked by the mail guard, 62 of
