@@ -671,7 +671,14 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   it (measured 2026-11-23: the service restarted on 2026-11-21, the next
   size-triggered rotation came under 12 hours later, and fd 1 was on an
   unlinked inode again). The rotation rule renames the file and tells
-  nobody, so it recurs on every rotation. Per-caller load is still
+  nobody, so it recurs on every rotation. The error log is on the same
+  rule and will go the same way at its next rotation. There is no
+  one-line rotation-config fix: the rotation tool can only rename and
+  signal, and the server does not reopen its output on a signal. Both
+  descriptors are open in append mode (measured), so copy-then-truncate
+  is safe. FIX SHAPE: a rotate script the service owns (copy, truncate,
+  compress, keep N) on a timer, shipped with the service templates, and
+  the rename rule removed in the same step. Per-caller load is still
   answerable from `request_log`.
 
 - **VER-BOOT-1** *(DEGRADING, measured 2026-11-23)*
@@ -1212,6 +1219,19 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   let it become permanent clutter.
 
 ## Needs-decision
+
+- **STANDBY-1** *(owner direction 2026-11-23; order drafted, not released:
+  waits on the owner approving the shape and on a threat model)* A second,
+  read-only instance that answers reads for agent knowledge when the
+  primary or its network is down. It carries an allow-listed subset only
+  (one namespace, the three knowledge scopes): no private namespaces, no
+  mail, no registry rows, no request log, no primary tokens, and it is
+  never promoted. Needs: a server standby mode that performs no writes at
+  all (reads set a last-used timestamp today), a stable refusal for every
+  write and mail endpoint, its own principals, a filtered-replication
+  recipe proven without full-row replica identity, schema-change ordering,
+  and an optional second address in the bridge for reads only. Order in
+  project memory (`order/STANDBY-1`).
 
 - **GROUP-WAKE-1** *(measured 2026-09-25; owner chose **A** on 2026-10-07:
   "likely important once everything else is stable" — build after the
