@@ -659,11 +659,13 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   stops printing the rename command to a launched session. A launched
   session is recognised by the session key its launcher injects (present
   on every harness, per the launcher owner). Bridge change: one sweep
-  per box, effective at each session's next start. Enforcement makes a
-  launcher's assignment binding, so it ships after step 1 of
-  SEAT-ASSIGN-2.
-  · Status: ruled, order not written · Root: bridge banner and rename
-  tool · Found: peer report
+  per box, effective at each session's next start. It fixes the seat the
+  store registered, not the launcher's assignment, so it does not wait
+  for SEAT-ASSIGN-2.
+  · Status: ruled; order drafted 2026-11-24 (`order/TAKE-SEAT-LAUNCHED-1`
+  in project memory), not released: its criteria get a paper attack and
+  the launcher owner's read first · Root: bridge banner and rename tool
+  · Found: peer report
 
 - **SEAT-ASSIGN-2** *(DEGRADING, measured 2026-11-23; finishes the owner
   ruling of 2026-09-22, "seats are assigned, not claimed")*
