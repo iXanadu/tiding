@@ -690,8 +690,8 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   store registered, not the launcher's assignment, so it does not wait
   for SEAT-ASSIGN-2.
   · Status: ruled; order drafted 2026-11-24 (`order/TAKE-SEAT-LAUNCHED-1`
-  in project memory), not released: its criteria get a paper attack and
-  the launcher owner's read first · Root: bridge banner and rename tool
+  in project memory), paper-attacked and revised, not released: it waits
+  on the launcher owner's answers to two questions · Root: bridge banner and rename tool
   · Found: peer report
 
 - **SEAT-ASSIGN-2** *(DEGRADING, measured 2026-11-23; finishes the owner
@@ -962,8 +962,12 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   project memory). Built through four review rounds on a local branch that
   is deliberately not pushed until it ships. Open before it can ship: one
   rule (who holds a seat name that has records under two projects) has no
-  safe wording yet, and the last build has had a source review but no
-  independent attack pass. Ships behind a three-mode switch (off, report,
+  safe wording yet (a fifth wording, drafted 2026-11-24, reads the owning
+  project off an allocator-made seat name; it has not been attacked on
+  paper and is not in the order), and the last build has had a source
+  review but no independent attack pass. The branch must also take in
+  the COLLISION-REISSUE-1 change (same two server files) before its next
+  build. Ships behind a three-mode switch (off, report,
   enforce), report first. Next steps are in project memory
   (`startup/next`).
 
@@ -1353,7 +1357,10 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   separation is documented only, in
   [docs/design/memory-separation.md](docs/design/memory-separation.md).
   Order drafted, not released: waits on the standby host existing, on a
-  threat model, and on the INBOX-LIFECYCLE-AUTHZ-1 merge.)* A second,
+  threat model, and on the INBOX-LIFECYCLE-AUTHZ-1 merge. ON HOLD since
+  2026-11-24: the owner parked the standby host and wants a design where
+  both copies serve and failover is automatic compared with this warm
+  copy first; do not build until he decides.)* A second,
   read-only instance that answers reads from a restored copy when the
   primary or its network is down. The copy is refreshed by restoring the
   primary's regular dump (the operator's side, outside this repo). Needs
