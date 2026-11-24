@@ -649,6 +649,18 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
+- **BACKUP-MANIFEST-1** *(DEGRADING, reported by the box admin with
+  measurements 2026-11-24)* `class:two-validations-disagree` The backup
+  script writes its manifest counts with separate queries after the dump
+  has finished, outside the dump's snapshot, so on a live database the
+  counts run ahead of what the dump holds (measured: 7 and 3 rows of
+  about 176 thousand). The script's header says a restore that does not
+  match the manifest is incomplete, which is false for such a dump. FIX,
+  one of: take the counts before the dump inside one exported snapshot
+  and dump from that snapshot; or document the counts as "at or after"
+  and state a tolerance for restorers.
+  · Status: OPEN · Root: scripts/backup-db.sh · Found: restore rehearsal
+
 - **SEND-ADVISORY-STALE-1** *(DEGRADING, reported by a peer PM 2026-11-24,
   cause not yet measured here)* `class:absence-vs-failure` **A send to a
   seat whose number was reissued seconds earlier describes the previous
