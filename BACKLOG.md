@@ -649,6 +649,21 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
+- **SEND-ADVISORY-STALE-1** *(DEGRADING, reported by a peer PM 2026-11-24,
+  cause not yet measured here)* `class:absence-vs-failure` **A send to a
+  seat whose number was reissued seconds earlier describes the previous
+  holder.** The send result said the session's exit had been observed
+  and no reply should be expected, and reported no wake, while a new
+  session already held the seat; the mail reached it 28 seconds later.
+  Likely the exit evidence of the earlier occupant is still on the
+  name's presence record until the new holder's first heartbeat; to be
+  confirmed. Not caused by COLLISION-REISSUE-1 (that fix does not touch
+  the send advisory). Related: the new holder was also handed the
+  earlier holder's unread mail, which is SEAT-EXHAUST-2's subject; the
+  reporter asks for a send bound to one session.
+  · Status: OPEN · Root: send-time advisory / presence record · Found:
+  peer report
+
 - **TAKE-SEAT-LAUNCHED-1** *(DEGRADING, owner ruling 2026-11-24)* A
   session that a launcher started can rename its own seat, and the
   collision banner tells it to. Its launcher and its manager keep the
