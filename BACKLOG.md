@@ -649,18 +649,21 @@ project memory (`fix/immortal-addresses-COMPLETE-2026-08-15`,
   LATERAL (index range + LIMIT per user_id, merged) so every listing uses
   the composite index. Client side: move that poll onto PERF-POLL-1.
 
-- **TAKE-SEAT-LAUNCHED-1** *(NEEDS-DECISION, asked 2026-11-23)* A session
-  that a launcher started can rename its own seat, and the collision
-  banner tells it to. Its launcher and its manager keep the first name.
-  Independent of the ruling, the banner will stop printing the rename
-  command to a launched session. The owner's ruling of 2026-09-22 (an
-  assigned seat is fixed) already excludes renaming an assigned seat;
-  the open question is whether the rename tool refuses only for launched
-  sessions or is removed for everyone. A launched session is recognised
-  by the session key its launcher injects (present on every harness,
-  per the launcher owner). Bridge change: one sweep per box.
-  · Status: waiting on the owner's ruling · Root: bridge banner and
-  rename tool · Found: peer report
+- **TAKE-SEAT-LAUNCHED-1** *(DEGRADING, owner ruling 2026-11-24)* A
+  session that a launcher started can rename its own seat, and the
+  collision banner tells it to. Its launcher and its manager keep the
+  first name. OWNER RULING: a session a launcher started can never
+  rename itself and the rename tool refuses; sessions started by hand
+  keep the tool. One case stays allowed for a launched session: taking
+  the name its launcher assigned (a repair in use today). The banner
+  stops printing the rename command to a launched session. A launched
+  session is recognised by the session key its launcher injects (present
+  on every harness, per the launcher owner). Bridge change: one sweep
+  per box, effective at each session's next start. Enforcement makes a
+  launcher's assignment binding, so it ships after step 1 of
+  SEAT-ASSIGN-2.
+  · Status: ruled, order not written · Root: bridge banner and rename
+  tool · Found: peer report
 
 - **SEAT-ASSIGN-2** *(DEGRADING, measured 2026-11-23; finishes the owner
   ruling of 2026-09-22, "seats are assigned, not claimed")*
